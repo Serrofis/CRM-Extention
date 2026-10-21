@@ -22709,8 +22709,10 @@ async function wpTransferAssistantExtensionEnabled() {
                     Object.assign(count.style, { color: 'inherit', fontWeight: 'inherit', marginLeft: '6px' });
                     wpTodayHeading.appendChild(count);
                 }
-                count.textContent = '· ' + t.pending;
-                count.title = 'Transfers of today not assigned yet (Today panel)';
+                // 1.7.298: the rows in the list right now — t.pending also kept
+                // transfers that left the list but were not re-checked yet.
+                count.textContent = '· ' + wpTodayVisible.size;
+                count.title = 'Transfers in this list right now';
             }
         } catch (_) {}    }
 
