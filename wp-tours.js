@@ -788,7 +788,7 @@
     // 1.7.298: Send to drivers (the city's "available for tours" drivers)
     const tourDriversBtn = document.createElement('span');
     tourDriversBtn.id = 'liveops-tour-drivers-btn';
-    tourDriversBtn.textContent = 'Send to drivers';
+    tourDriversBtn.textContent = 'Send to group + drivers';
     Object.assign(tourDriversBtn.style, {
       marginLeft: '8px', cursor: 'pointer', display: 'none',
       background: BRAND.emerald, color: BRAND.graphite, fontWeight: '700',
@@ -796,7 +796,7 @@
     });
     tourDriversBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      openTourDrivers(header);
+      sendTourAll(header, loadTasks); // 1.7.301: note, group, drivers in one press
     });
     title.appendChild(tourDriversBtn);
 
@@ -1229,7 +1229,7 @@
   // One WhatsApp Web job, waits for its result (like mod's hero sends)
   const tourWaWaiters = {};
   let tourWaListening = false;
-  function tourWaSend(phone, label, text) {
+  function tourWaSend(phone, label, text, extra) {
     if (!tourWaListening) {
       tourWaListening = true;
       chrome.runtime.onMessage.addListener((m) => {
@@ -1240,7 +1240,7 @@
     }
     return new Promise((resolve) => {
       try {
-        chrome.runtime.sendMessage({ type: 'WP_WA_SEND', city: label, phone, text, label }, (r) => {
+        chrome.runtime.sendMessage(Object.assign({ type: 'WP_WA_SEND', city: label, phone, text, label }, extra || {}), (r) => {
           if (chrome.runtime.lastError || !r || !r.ok) {
             resolve({ ok: false, info: chrome.runtime.lastError?.message || r?.error || 'no answer — refresh this tab (F5)' });
             return;
@@ -1267,76 +1267,91 @@
     return panel;
   }
 
-  async function openTourDrivers(anchor) {
+  // 1.7.301: one press — LiveOps note "Sent to bc, group and individuals",
+  // then the city's S-rides group, then each "available for tours" driver
+  // (drivers already messaged for this order are skipped).
+  const TOUR_SENT_NOTE = 'Sent to bc, group and individuals';
+  let tourSendRunning = false;
+  async function sendTourAll(anchor, afterNote) {
+    if (tourSendRunning) return; // a press while it runs does nothing
+    tourSendRunning = true;
+    try { await sendTourAllRun(anchor, afterNote); } finally { tourSendRunning = false; }
+  }
+  async function sendTourAllRun(anchor, afterNote) {
     const panel = buildTourDriversPanel(anchor);
     if (!panel) return;
-    panel.textContent = 'Reading the tour info and the drivers list…';
+    const log = (line) => {
+      const div = document.createElement('div');
+      div.textContent = line;
+      panel.appendChild(div);
+      return div;
+    };
+    panel.textContent = '';
     const orderId = getOrderId() || '';
     let summary;
     let found;
+    const reading = log('Reading the tour info and the drivers list…');
     try {
       summary = await buildTourSummary();
-      if (!summary) { panel.textContent = 'Tour info not found on this page.'; return; }
-      if (!summary.city) { panel.textContent = 'No city on this transfer.'; return; }
+      if (!summary) { reading.textContent = 'Tour info not found on this page — nothing sent.'; return; }
+      if (!summary.city) { reading.textContent = 'No city on this transfer — nothing sent.'; return; }
       found = await findTourDrivers(summary.city);
     } catch (e) {
-      panel.textContent = 'Could not read the tour drivers: ' + (e && e.message || e) +
-        '. Open the drivers list, filter the city and the tours part, then click "mod: use this list for tour drivers" there.';
+      reading.textContent = 'Could not read the tour drivers: ' + (e && e.message || e) + ' — nothing sent.';
       return;
     }
-    const text = summary.text.replace(/^Hey team! Anyone available for this tour\?/, 'Hi! Are you available for this tour?');
-    const sentAll = await storeGet(TOUR_DRIVERS_SENT_KEY, {});
-    const sent = sentAll[orderId] || {};
-    panel.textContent = '';
-    const head = document.createElement('div');
-    head.style.marginBottom = '6px';
+    reading.textContent = '';
     const listLink = document.createElement('a');
     listLink.href = found.url; listLink.target = '_blank'; listLink.textContent = 'list';
-    head.append(`${found.drivers.length} tour driver(s) in ${summary.city} (`, listLink, ')');
-    panel.appendChild(head);
-    if (!found.drivers.length) return;
-    const rows = found.drivers.map(d => {
-      const line = document.createElement('label');
-      line.style.display = 'block';
-      const box = document.createElement('input');
-      box.type = 'checkbox';
-      box.disabled = !d.phone;
-      box.checked = Boolean(d.phone) && !sent[d.phone];
-      const status = document.createElement('span');
-      status.style.marginLeft = '6px';
-      status.style.opacity = '0.7';
-      status.textContent = !d.phone ? 'no phone' : sent[d.phone] ? 'sent ' + new Date(sent[d.phone]).toLocaleTimeString().slice(0, 5) : '';
-      line.append(box, ' ' + d.name + (d.phone ? ' (…' + d.phone.slice(-4) + ')' : ''), status);
-      panel.appendChild(line);
-      return { d, box, status };
-    });
-    const preview = document.createElement('pre');
-    Object.assign(preview.style, { whiteSpace: 'pre-wrap', margin: '6px 0', fontFamily: 'inherit', opacity: '0.8' });
-    preview.textContent = text;
-    panel.appendChild(preview);
-    const go = document.createElement('button');
-    go.type = 'button';
-    go.textContent = 'Send to the ticked drivers';
-    Object.assign(go.style, { background: BRAND.turquoise, color: BRAND.graphite, fontWeight: '700', border: '0', borderRadius: '999px', padding: '4px 12px', cursor: 'pointer' });
-    panel.appendChild(go);
-    go.addEventListener('click', async () => {
-      go.disabled = true;
-      for (const r of rows) {
-        if (!r.box.checked || !r.d.phone) continue;
-        r.box.checked = false;
-        r.status.textContent = 'sending…';
-        const res = await tourWaSend(r.d.phone, r.d.name, text);
-        r.status.textContent = res.ok ? 'sent' : 'failed: ' + (res.info || '');
-        if (res.ok) {
-          const all = await storeGet(TOUR_DRIVERS_SENT_KEY, {});
-          (all[orderId] = all[orderId] || {})[r.d.phone] = Date.now();
-          const keys = Object.keys(all);
-          if (keys.length > 300) keys.slice(0, keys.length - 300).forEach(k => delete all[k]);
-          await storeSet(TOUR_DRIVERS_SENT_KEY, all);
-        }
+    reading.append(`${found.drivers.length} tour driver(s) in ${summary.city} (`, listLink, ')');
+    const driverText = summary.text.replace(/^Hey team! Anyone available for this tour\?/, 'Hi! Are you available for this tour?');
+
+    // 1. the note
+    const noteLine = log('Note: saving…');
+    try {
+      await apiRequest('POST', null, { action: 'add', orderId, note: TOUR_SENT_NOTE, author: AUTHOR_NAME });
+      noteLine.textContent = `Note: "${TOUR_SENT_NOTE}" saved`;
+      if (afterNote) afterNote();
+    } catch (e) {
+      noteLine.textContent = 'Note: failed (' + (e && e.message || e) + ') — add it by hand';
+    }
+
+    // 2. the group
+    const groupLine = log('Group: looking up…');
+    const group = await findSridesGroup(summary.city);
+    const code = group.status === 'ok' ? (String(group.url || '').match(/chat\.whatsapp\.com\/(?:invite\/)?([A-Za-z0-9]+)/) || [])[1] : '';
+    if (code) {
+      const name = group.title || 'S-rides ' + group.city;
+      groupLine.textContent = `Group: sending to ${name}…`;
+      const res = await tourWaSend('', name, summary.text, { city: group.city || summary.city, code, expect: [group.city || summary.city] });
+      groupLine.textContent = `Group: ${name} — ` + (res.ok ? 'sent' : 'failed: ' + (res.info || ''));
+    } else if (group.status === 'not-synced') {
+      groupLine.textContent = 'Group: not sent — open the WhatsApp groups page once to sync';
+      openInTab(WA_GROUPS_PAGE_URL);
+    } else {
+      groupLine.textContent = `Group: not sent — no S-rides group for ${summary.city}`;
+    }
+
+    // 3. the drivers, one at a time
+    const sentAll = await storeGet(TOUR_DRIVERS_SENT_KEY, {});
+    const sent = sentAll[orderId] || {};
+    for (const d of found.drivers) {
+      const line = log(d.name + (d.phone ? ' (…' + d.phone.slice(-4) + ')' : '') + ': ');
+      if (!d.phone) { line.textContent += 'no phone'; continue; }
+      if (sent[d.phone]) { line.textContent += 'already sent ' + new Date(sent[d.phone]).toLocaleTimeString().slice(0, 5); continue; }
+      const base = line.textContent;
+      line.textContent = base + 'sending…';
+      const res = await tourWaSend(d.phone, d.name, driverText);
+      line.textContent = base + (res.ok ? 'sent' : 'failed: ' + (res.info || ''));
+      if (res.ok) {
+        const all = await storeGet(TOUR_DRIVERS_SENT_KEY, {});
+        (all[orderId] = all[orderId] || {})[d.phone] = Date.now();
+        const keys = Object.keys(all);
+        if (keys.length > 300) keys.slice(0, keys.length - 300).forEach(k => delete all[k]);
+        await storeSet(TOUR_DRIVERS_SENT_KEY, all);
       }
-      go.disabled = false;
-    });
+    }
+    log('Done.');
   }
 
   // On the drivers list: remember the filtered address (the city in it is
