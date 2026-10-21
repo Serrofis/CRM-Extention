@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -14,6 +14,15 @@
         --shadow: 0 1px 2px rgba(18,26,58,.05), 0 4px 16px rgba(18,26,58,.05);
         --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
         color-scheme: light;
+        --input: #f7f8fc; --chip: #f3f4f8; --th: #ffffff;
+    }
+    /* 1.7.304: dark mode (default; the moon / sun button switches) */
+    :root[data-theme="dark"] {
+        --bg: #0e1220; --card: #171c2e; --navy: #0b0f1c; --navy-2: #1c2338; --indigo: #6f7ff0;
+        --text: #e6e9f2; --muted: #9aa1b8; --faint: #5f6680; --line: #262d45; --hover: #20263c;
+        --red: #ff6b6b; --red-bg: rgba(255,107,107,.15); --amber: #f5b544; --amber-bg: rgba(245,181,68,.15); --green: #3ccf8e; --green-bg: rgba(60,207,142,.14);
+        --shadow: 0 1px 2px rgba(0,0,0,.3); --input: #1c2338; --chip: #20263c; --th: #171c2e;
+        color-scheme: dark;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--font); }
@@ -56,7 +65,7 @@
     .chart .b { width: 100%; max-width: 34px; background: var(--navy); border-radius: 4px 4px 0 0; min-height: 3px; }
     .chart .col.worst .b { background: var(--red); }
     .chart .d { font-size: 12px; color: var(--muted); }
-    .callout { display: inline-block; background: #fff; box-shadow: var(--shadow); border-radius: 10px; padding: 6px 12px; font-size: 13px; margin-bottom: 4px; }
+    .callout { display: inline-block; background: var(--card); box-shadow: var(--shadow); border-radius: 10px; padding: 6px 12px; font-size: 13px; margin-bottom: 4px; }
     .callout b { font-weight: 600; }
     .callout span { color: var(--faint); }
 
@@ -75,7 +84,7 @@
     .alert .t { flex: 1; }
     .alert .t b { display: block; font-size: 18px; font-weight: 600; }
     .alert .t span { color: var(--muted); }
-    .btn-out { background: #f7f8fc; border: 1px solid #d9ddec; color: var(--indigo); border-radius: 10px; padding: 10px 22px; font-weight: 600; }
+    .btn-out { background: var(--input); border: 1px solid #d9ddec; color: var(--indigo); border-radius: 10px; padding: 10px 22px; font-weight: 600; }
     .btn-out:hover { background: var(--hover); }
 
     .row3 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
@@ -103,14 +112,14 @@
 
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 10px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
-    th { color: var(--muted); font-weight: 500; font-size: 12.5px; position: sticky; top: 0; background: var(--card); z-index: 1; }
+    th { color: var(--muted); font-weight: 500; font-size: 12.5px; position: sticky; top: 0; background: var(--th); z-index: 1; }
     tr.city { cursor: pointer; }
     tr.city:hover td { background: var(--hover); }
     td.day { text-align: center; }
     .chip { display: inline-block; min-width: 46px; border-radius: 8px; padding: 3px 6px; font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; }
     .chip.red { background: var(--red-bg); color: var(--red); }
     .chip.amber { background: var(--amber-bg); color: var(--amber); }
-    .chip.ok { background: #f3f4f8; color: var(--muted); font-weight: 500; }
+    .chip.ok { background: var(--chip); color: var(--muted); font-weight: 500; }
     .chip small { display: block; font-weight: 500; font-size: 11px; opacity: .85; }
     .ev { display: block; font-size: 11px; color: var(--indigo); font-weight: 600; margin-top: 2px; }
     .tablecard { padding: 8px 12px; overflow: auto; max-height: calc(100vh - 170px); }
@@ -121,7 +130,7 @@
     .drawer .dh { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
     .drawer .dh h2 { margin: 0; font-size: 24px; font-weight: 600; flex: 1; }
     .drawer .dh .sub { color: var(--muted); font-size: 13px; }
-    .drawer .close { background: #fff; border: 1px solid var(--line); border-radius: 8px; width: 34px; height: 34px; font-size: 18px; line-height: 1; }
+    .drawer .close { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 8px; width: 34px; height: 34px; font-size: 18px; line-height: 1; }
     .drawer .card { margin-bottom: 14px; padding: 18px 20px; }
     .drawer .card h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
     .act { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); }
@@ -130,7 +139,7 @@
     .act .w { color: var(--muted); font-size: 13px; }
     .act.done b { text-decoration: line-through; color: var(--faint); }
     .days { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
-    .days button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 4px 10px; font-size: 13px; }
+    .days button { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 8px; padding: 4px 10px; font-size: 13px; }
     .days button.on { background: var(--navy); color: #fff; border-color: var(--navy); }
     .hours { display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; align-items: end; height: 90px; }
     .hours div { background: var(--navy); border-radius: 3px 3px 0 0; opacity: .85; }
@@ -150,6 +159,39 @@
     details.log div { white-space: pre-wrap; }
     .err { color: var(--red); }
 
+    /* 1.7.304: period switch, where-to-act table, hour grid */
+    .seg { display: flex; align-items: center; gap: 6px; margin-bottom: 18px; }
+    .seg button { border: 1px solid var(--line); background: var(--card); color: var(--muted); border-radius: 10px; padding: 8px 18px; font-size: 15px; font-weight: 600; }
+    .seg button.on { background: var(--indigo); border-color: var(--indigo); color: #fff; }
+    .seg .note { margin-left: 10px; }
+    .home2 > * + * { margin-top: 20px; }
+    #main > .card, #main > .row3 { margin-top: 20px; }
+    .card .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+    .card .head h2 { margin: 0; }
+    .kpi { cursor: default; }
+    .kpi.warnv .num { color: var(--amber); }
+    .kpi.badv .num { color: var(--red); }
+    .s { color: var(--muted); font-size: 12.5px; }
+    .bad { color: var(--red); font-weight: 600; }
+    .act-table td { vertical-align: top; white-space: normal; }
+    .act-table td:first-child { white-space: nowrap; }
+    .mini { display: inline-block; width: 24px; text-align: center; border-radius: 5px; font-size: 11px; margin-right: 2px; padding: 1px 0; background: var(--chip); color: var(--muted); }
+    .mini.red { background: var(--red-bg); color: var(--red); font-weight: 700; }
+    .mini.amber { background: var(--amber-bg); color: var(--amber); font-weight: 700; }
+    .grid { display: grid; grid-template-columns: 150px repeat(24, minmax(22px, 1fr)); gap: 3px; overflow-x: auto; }
+    .gh { font-size: 11px; color: var(--faint); text-align: center; }
+    .gl { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 6px; cursor: pointer; align-self: center; }
+    .gc { height: 26px; border-radius: 5px; background: var(--chip); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--muted); }
+    .gc.red { background: var(--red); color: #fff; }
+    .gc.amber { background: var(--amber-bg); color: var(--amber); }
+    .gc.ok { background: var(--green-bg); color: var(--green); }
+    .gc.blk { background: repeating-linear-gradient(45deg, var(--chip), var(--chip) 4px, var(--amber-bg) 4px, var(--amber-bg) 8px); }
+    .htable { margin-top: 10px; }
+    .htable summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+    .htable td, .htable th { padding: 4px 8px; font-size: 13px; }
+    .htable tr.shortrow td { color: var(--red); font-weight: 600; }
+    .theme { background: transparent !important; color: #fff !important; border: 1px solid #3a4677 !important; min-width: 38px; }
+
     @media (max-width: 1250px) { .home { grid-template-columns: 1fr; } .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media (max-width: 800px) { .row1, .row3 { grid-template-columns: 1fr; } .wrap, .bar { padding-left: 16px; padding-right: 16px; } }
 </style>
@@ -167,6 +209,7 @@
             <option value="cov">Fewest drivers per job</option>
             <option value="name">A to Z</option>
         </select>
+        <button id="theme" class="theme" title="Dark / light">Light</button>
         <button id="refresh" title="Read the hub, sheets, Slack and the CRM hours for the top cities now">Refresh</button>
         <button id="full" class="ghost" title="Read the CRM hours for all cities (about 20 minutes)">Read all cities</button>
     </div>
