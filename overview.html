@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mod overview</title>
+<style>
+    /* 1.7.302: the big-picture page (separate from the CRM tabs) */
+    :root {
+        --bg: #0b0d0c; --glass: rgba(255,255,255,.04); --glass-2: rgba(255,255,255,.07); --line: rgba(143,255,213,.14);
+        --text: #e9f5ef; --muted: #8fa39a; --faint: #5d6b65;
+        --mint: #8fffd5; --red: #ff8a8a; --amber: #f2c27b; --ok: #8fd6a8;
+        --font: Consolas, "Cascadia Mono", Menlo, monospace;
+        color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 var(--font); }
+    body { padding: 14px 18px 40px; }
+    button, input, select { font: inherit; color: inherit; }
+    button { background: var(--glass-2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+    button:hover { border-color: var(--mint); }
+    button.on { background: var(--mint); color: #0b0d0c; border-color: var(--mint); }
+    input, select { background: var(--glass); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; }
+    h1 { margin: 0; font-size: 20px; color: var(--mint); font-weight: 700; }
+    .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+    .top .grow { flex: 1; }
+    .status { color: var(--muted); font-size: 12px; }
+    .card { background: var(--glass); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(8px); }
+    .strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+    .stat { padding: 10px 12px; }
+    .stat b { display: block; font-size: 22px; color: var(--mint); }
+    .stat span { color: var(--muted); font-size: 11.5px; }
+    .tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 12px; align-items: start; }
+    @media (max-width: 1200px) { .layout { grid-template-columns: 1fr; } }
+    .tablewrap { overflow: auto; max-height: calc(100vh - 230px); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 5px 7px; border-bottom: 1px solid rgba(255,255,255,.05); text-align: left; white-space: nowrap; }
+    th { position: sticky; top: 0; background: #101513; color: var(--muted); font-weight: 400; font-size: 11.5px; z-index: 1; }
+    tr.city { cursor: pointer; }
+    tr.city:hover td { background: var(--glass-2); }
+    tr.city.sel td { background: rgba(143,255,213,.08); }
+    td.day { font-size: 12px; min-width: 78px; }
+    td.day .g { font-weight: 700; }
+    td.red { background: rgba(255,138,138,.14); }
+    td.amber { background: rgba(242,194,123,.11); }
+    .badge { display: inline-block; border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; font-size: 10.5px; margin-left: 3px; color: var(--muted); }
+    .badge.hi { border-color: var(--red); color: var(--red); }
+    .badge.md { border-color: var(--amber); color: var(--amber); }
+    .badge.sl { border-color: var(--mint); color: var(--mint); }
+    .muted { color: var(--muted); } .faint { color: var(--faint); }
+    .panel { padding: 12px 14px; max-height: calc(100vh - 120px); overflow: auto; position: sticky; top: 10px; }
+    .panel h2 { margin: 0 0 4px; font-size: 17px; color: var(--mint); }
+    .panel h3 { margin: 14px 0 6px; font-size: 12px; color: var(--muted); font-weight: 400; text-transform: uppercase; letter-spacing: .06em; }
+    .item { padding: 6px 8px; border-radius: 8px; background: var(--glass); margin-bottom: 5px; white-space: normal; }
+    .act { display: flex; gap: 8px; align-items: flex-start; }
+    .act input { margin-top: 3px; accent-color: #8fffd5; }
+    .act.done span { text-decoration: line-through; color: var(--faint); }
+    .hours { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; align-items: end; height: 70px; }
+    .hours div { background: rgba(143,255,213,.35); border-radius: 2px 2px 0 0; position: relative; }
+    .hours div.short { background: var(--red); }
+    .hours div.blk { outline: 1px dashed var(--amber); }
+    .hlabels { display: grid; grid-template-columns: repeat(24, 1fr); font-size: 9.5px; color: var(--faint); }
+    .spark { width: 100%; height: 46px; }
+    .log { font-size: 11.5px; color: var(--muted); max-height: 120px; overflow: auto; white-space: pre-wrap; padding: 8px 10px; margin-top: 12px; }
+    .err { color: var(--red); }
+    [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+    <div class="top">
+        <h1>mod overview</h1>
+        <span class="status" id="status">loading…</span>
+        <span class="grow"></span>
+        <input id="search" placeholder="city…" size="16">
+        <select id="sort">
+            <option value="action">sort: needs action</option>
+            <option value="gap">sort: hub gap</option>
+            <option value="loss">sort: loss / wk</option>
+            <option value="cov">sort: worst coverage</option>
+            <option value="name">sort: name</option>
+        </select>
+        <button id="refresh" title="Read the hub, sheets, Slack and the CRM dashboard for the top cities now">Refresh</button>
+        <button id="full" title="Read the CRM dashboard for all cities (takes a while)">Read all cities</button>
+    </div>
+    <div class="strip" id="strip"></div>
+    <div class="tabs">
+        <button class="on" data-tab="overview">Overview</button>
+        <button data-tab="slack">Slack</button>
+        <button data-tab="retro">Event retro</button>
+        <button data-tab="month">Month</button>
+    </div>
+    <div class="layout">
+        <div class="card tablewrap" id="main"></div>
+        <div class="card panel" id="panel"><span class="muted">Click a city.</span></div>
+    </div>
+    <div class="card log" id="log"></div>
+    <script src="overview.js"></script>
+</body>
+</html>

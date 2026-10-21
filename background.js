@@ -633,6 +633,30 @@ function wpWaSendToTab(tabId, message, fallbackUrl) {
     });
 }
 
+// 1.7.302: the overview page's nightly read (every city, saved to its
+// history): at 03:30, overview.html?snapshot=1 in a background tab that
+// closes itself when done.
+const WP_OV_ALARM = 'wp_overview_nightly';
+function wpOverviewAlarm() {
+    chrome.alarms.get(WP_OV_ALARM, (existing) => {
+        if (existing) return;
+        const next = new Date();
+        next.setHours(3, 30, 0, 0);
+        if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
+        chrome.alarms.create(WP_OV_ALARM, { when: next.getTime(), periodInMinutes: 1440 });
+    });
+}
+chrome.runtime.onInstalled.addListener(wpOverviewAlarm);
+chrome.runtime.onStartup.addListener(wpOverviewAlarm);
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (!alarm || alarm.name !== WP_OV_ALARM) return;
+    const url = chrome.runtime.getURL('overview.html');
+    chrome.tabs.query({ url: url + '?snapshot=1' }, (tabs) => {
+        if ((tabs || []).length) return;
+        chrome.tabs.create({ url: url + '?snapshot=1', active: false });
+    });
+});
+
 // Installed / updated: WhatsApp tabs that are already open get the scripts now.
 chrome.runtime.onInstalled.addListener(() => {
     chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (tabs) => {
