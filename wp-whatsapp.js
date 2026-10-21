@@ -931,6 +931,46 @@
         wpWaGo('https://web.whatsapp.com/accept?code=' + encodeURIComponent(code));
     }
 
+    // 1.7.297: "Copy tour info" on a CRM tour page (wp-tours.js, was the
+    // Tampermonkey script) opens the city's S-rides group the way mod opens
+    // groups, and leaves the message here. It is put in that group's message
+    // box once — NEVER sent. Only in the group: the page was loaded for its
+    // link, or the open chat has the group's learned name. Fresh for 2 min.
+    const TOUR_PENDING_KEY = 'wp_tour_wa_pending_v1';
+    const START_URL = location.href;
+    let tourPasteBusy = false;
+    async function tourPaste() {
+        if (tourPasteBusy) return;
+        let pending = await getStore(TOUR_PENDING_KEY);
+        if (!pending || !pending.text || !pending.code || Date.now() - Number(pending.at || 0) > 2 * 60 * 1000) return;
+        tourPasteBusy = true;
+        try {
+            const codeTitles = (await getStore(CODE_TITLES_KEY)) || {};
+            const known = codeTitles[pending.code] || '';
+            const fromLink = START_URL.indexOf(pending.code) >= 0;
+            const box = await waitFor(function() {
+                if (running) return null;
+                const ready = composer();
+                if (!ready) return null;
+                if (known) return norm(headerTitle()) === norm(known) ? ready : null;
+                return fromLink ? ready : null;
+            }, 60000, 500);
+            if (!box) return;
+            // still waiting (not taken by another WhatsApp page meanwhile)
+            const still = await getStore(TOUR_PENDING_KEY);
+            if (!still || still.at !== pending.at) return;
+            await chrome.storage.local.remove(TOUR_PENDING_KEY);
+            box.focus();
+            const data = new DataTransfer();
+            data.setData('text/plain', String(pending.text));
+            box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+            await sleep(300);
+            if (!norm(box.textContent)) document.execCommand('insertText', false, String(pending.text));
+        } finally {
+            tourPasteBusy = false;
+        }
+    }
+
     // (1.7.157) Names are no longer learned from any chat opened from a link —
     // only from a send that confirmed the city's group.
 
@@ -948,6 +988,7 @@
     });
     chrome.storage.onChanged.addListener(function(changes, area) {
         if (area === 'local' && changes[JOBS_KEY] && Array.isArray(changes[JOBS_KEY].newValue) && changes[JOBS_KEY].newValue.length) runJobs();
+        if (area === 'local' && changes[TOUR_PENDING_KEY] && changes[TOUR_PENDING_KEY].newValue) tourPaste();
     });
     // 1.7.282: the side panel's copy says it is there (logged in or not),
     // and takes the panel page's messages (a group / a send to run).
@@ -1010,4 +1051,5 @@
         });
     }
     runJobs();
+    tourPaste();
 })();

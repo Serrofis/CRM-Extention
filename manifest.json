@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "mod",
-  "version": "1.7.296",
+  "version": "1.7.297",
   "description": "Welcome Pickups CRM transfer tools with transfer details collection, WhatsApp image copy, batch task tools, and city vehicle capacity info.",
   "permissions": [
     "storage",
@@ -27,7 +27,8 @@
     "https://docs.google.com/*",
     "https://drive.google.com/*",
     "https://*.googleusercontent.com/*",
-    "https://*.slack.com/*"
+    "https://*.slack.com/*",
+    "https://script.google.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -60,6 +61,16 @@
       ],
       "run_at": "document_start",
       "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://crm.welcomepickups.com/admin/tour_transfers/*",
+        "https://welcomepickups.atlassian.net/wiki/spaces/IKB/pages/3862102017/*"
+      ],
+      "js": [
+        "wp-tours.js"
+      ],
+      "run_at": "document_idle"
     },
     {
       "matches": [

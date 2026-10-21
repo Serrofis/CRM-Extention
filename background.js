@@ -459,6 +459,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }, (error) => sendResponse({ ok: false, error: String(error && error.message || error) }));
         return true;
     }
+    // 1.7.297: the tour pages' LiveOps notepad (wp-tours.js, was the
+    // Tampermonkey script): its Google Sheet web app, with this Chrome's own
+    // Google sign-in. Only that web app, only GET / POST.
+    if (message.type === 'WP_TOUR_SHEET') {
+        const base = 'https://script.google.com/a/macros/welcomepickups.com/s/AKfycbxi1hSJroLQ5hWRlowdoAMQ_-A61EKVio7EJYkYXZC6g6XFso4LGapHzbMMNt9CF5hr/exec';
+        const url = String(message.url || '');
+        const method = message.method === 'POST' ? 'POST' : 'GET';
+        if (url !== base && url.indexOf(base + '?') !== 0) {
+            sendResponse({ ok: false, error: 'only the LiveOps notes web app' });
+            return;
+        }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+        fetch(url, {
+            method: method,
+            credentials: 'include',
+            redirect: 'follow',
+            cache: 'no-store',
+            headers: method === 'POST' ? { 'Content-Type': 'application/json' } : {},
+            body: method === 'POST' ? String(message.body || '') : undefined,
+            signal: controller.signal
+        })
+            .then((response) => response.text().then((text) => ({ status: response.status, text: text })))
+            .then((result) => {
+                clearTimeout(timer);
+                if (result.status !== 200) sendResponse({ ok: false, error: 'HTTP ' + result.status });
+                else sendResponse({ ok: true, text: result.text.slice(0, 2000000) });
+            }, (error) => { clearTimeout(timer); sendResponse({ ok: false, error: String(error && error.message || error) }); });
+        return true;
+    }
     // mod / Autopilot sound (1.7.179): played by the offscreen page.
     if (message.type === 'WP_PLAY_SOUND') {
         wpPlaySound(message.kind === 'urgent' ? 'urgent' : 'found');
