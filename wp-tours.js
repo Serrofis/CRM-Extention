@@ -559,10 +559,6 @@
       (detailsDoc ? findTourDate(detailsDoc) : null)
     );
 
-    // Price: Welcome Order "Amount", else a "Price" field on this page
-    const price = formatMoney(rowValue(detailsDoc, 'amount'), cur) ||
-      formatMoney(findFieldValue(PRICE_LABEL));
-
     // Provider cost: Welcome Order "Provider Cost"
     const providerCost = formatMoney(rowValue(detailsDoc, 'provider_cost'), cur) ||
       formatMoney(detailsDoc ? findFieldValue(PROVIDER_COST_LABEL, detailsDoc) : '', cur);
@@ -579,10 +575,10 @@
         `From: ${info.from}`,
         `To: ${info.to}`,
         `Pax: ${info.pax}`,
-        `Price ${price}`.trim(),
-        `Provider cost ${providerCost}`.trim()
+        // 1.7.300: one price only — the provider cost (what the driver gets)
+        `Price: ${providerCost}`.trim()
       ].join('\n'),
-      missing: [!date && 'date', !price && 'price', !providerCost && 'provider cost'].filter(Boolean)
+      missing: [!date && 'date', !providerCost && 'provider cost'].filter(Boolean)
     };
   }
 
