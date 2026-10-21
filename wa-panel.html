@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>WhatsApp · Slack · mod</title>
+<style>
+    /* 1.7.282: WhatsApp Web in Chrome's side panel (stays open when the CRM page refreshes); 1.7.284: + Slack */
+    html, body { margin: 0; height: 100%; background: #0b0b0b; overflow: hidden; }
+    body { display: flex; flex-direction: column; font: 11px Consolas, monospace; color: #8fffd5; }
+    .bar { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid rgba(143,255,213,0.2); }
+    .bar .grow { flex: 1; min-width: 0; color: #8d8a86; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .bar button { font: inherit; color: #8fffd5; background: none; border: 1px solid rgba(143,255,213,0.35); border-radius: 5px; padding: 1px 7px; cursor: pointer; }
+    .bar button:hover { background: rgba(143,255,213,0.1); }
+    .bar .tab { border-color: transparent; color: #8d8a86; }
+    .bar .tab.on { color: #8fffd5; border-color: rgba(143,255,213,0.35); background: rgba(143,255,213,0.08); }
+    /* 1.7.283: zoom — the frame is drawn larger and scaled down to fit */
+    .views { flex: 1 1 auto; position: relative; }
+    .view { position: absolute; inset: 0; overflow: hidden; visibility: hidden; z-index: 1; }
+    /* the hidden one stays laid out (WhatsApp keeps sending while you read Slack) */
+    .view.on { visibility: visible; z-index: 2; }
+    iframe { position: absolute; left: 0; top: 0; border: 0; background: #fff; transform-origin: 0 0; }
+    .bar #mute.on { color: #0b0b0b; background: #8fffd5; }
+    .zoom { color: #8d8a86; min-width: 34px; text-align: center; cursor: pointer; }
+</style>
+</head>
+<body>
+    <div class="bar">
+        <button class="tab" data-tab="wa">WhatsApp</button>
+        <button class="tab" data-tab="slack" title="Open Slack in its own slim window (Slack needs a page of its own to show who is online)">Slack ↗</button>
+        <span class="grow" id="state">loading…</span>
+        <button id="mute" title="WhatsApp sounds on / off (this panel only)">Mute</button>
+        <button id="zoomOut" title="Zoom out">−</button>
+        <span class="zoom" id="zoom" title="Click for 100%">80%</span>
+        <button id="zoomIn" title="Zoom in">+</button>
+        <button id="reload" title="Load this tab again">↻</button>
+    </div>
+    <div class="views" id="views">
+        <div class="view" id="view-wa">
+            <iframe id="wa" src="https://web.whatsapp.com/" allow="clipboard-read; clipboard-write; microphone; camera; autoplay; notifications"></iframe>
+        </div>
+    </div>
+<script src="wa-panel.js"></script>
+</body>
+</html>
