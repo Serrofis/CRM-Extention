@@ -119,6 +119,16 @@ $('wa').addEventListener('click', async () => {
     } catch (error) { note('Could not open the side panel: ' + (error && error.message || error)); }
 });
 
+// 1.7.302: the big-picture page, in its own tab (one tab, reused).
+$('overview').addEventListener('click', async () => {
+    const url = chrome.runtime.getURL('overview.html');
+    const tabs = await chrome.tabs.query({ url: url + '*' });
+    const open = tabs.find((t) => !/snapshot=1/.test(t.url || ''));
+    if (open) { await chrome.tabs.update(open.id, { active: true }); try { await chrome.windows.update(open.windowId, { focused: true }); } catch (_) {} }
+    else await chrome.tabs.create({ url: url });
+    window.close();
+});
+
 // The whole extension on / off on CRM pages (as before).
 async function renderEnabled() {
     const result = await chrome.storage.local.get({ enabled: true });
