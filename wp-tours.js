@@ -1202,9 +1202,17 @@
       if (!sel) throw new Error('no city filter found on the drivers page');
       cityParam = sel.name;
       params = new URLSearchParams();
-      const scope = Array.from(base.querySelectorAll('.scopes a, .table_tools a, .tabs a, ul.nav a'))
-        .find(a => TOUR_WORD.test(a.textContent || ''));
-      if (scope) new URL(scope.getAttribute('href'), location.origin).searchParams.forEach((v, k) => { if (k !== cityParam) params.set(k, v); });
+    }
+    // 1.7.299: always the "Available For Tours" scope button (a saved list on
+    // "All" read every driver of the city)
+    if (!TOUR_WORD.test(params.get('scope') || '')) {
+      const scope = Array.from(base.querySelectorAll('.scopes a, .table_tools a, a[href*="scope="]'))
+        .find(a => /available\s*for\s*tours?/i.test(a.textContent || '')) ||
+        Array.from(base.querySelectorAll('a[href*="scope="]')).find(a => TOUR_WORD.test(a.getAttribute('href') + ' ' + a.textContent));
+      if (!scope) throw new Error('no "Available For Tours" button found on the drivers page');
+      const scopeValue = new URL(scope.getAttribute('href'), location.origin).searchParams.get('scope');
+      if (!scopeValue) throw new Error('the "Available For Tours" button has no scope');
+      params.set('scope', scopeValue);
     }
     const id = cityIdFrom(base, cityParam, city);
     if (!id) throw new Error('city "' + city + '" not found in the drivers filter');
