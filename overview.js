@@ -101,7 +101,7 @@
     // ---- state ----
     let cache = { cities: [], hubDaily: [], hubOutlook: [], crm: {}, events: [], em: [], slack: [], at: {}, errors: {} };
     let selected = null;
-    let tab = 'overview';
+    let tab = 'home';
     let done = {};
     let busy = false;
     let history = [];
@@ -444,20 +444,25 @@
         }
         c.events.forEach((e) => {
             if (!isHigh(e) && !(e.supply != null && e.supply <= -30)) return;
-            add('event|' + e.from + '|' + norm(e.name), 'Plan for ' + e.name + ' (' + e.from + (e.to !== e.from ? ' to ' + e.to : '') + ')',
+            add('event|' + e.from + '|' + norm(e.name), 'Plan for ' + e.name + ' (' + dayName(e.from) + (e.to !== e.from ? ' to ' + dayName(e.to) : '') + ')',
                 [e.type, e.gravity && 'gravity ' + e.gravity, e.supply != null && 'supply ' + e.supply + '%', noAction(e) ? 'nothing in "LiveOps affected" yet' : 'LiveOps affected: ' + e.affected, e.notes].filter(Boolean).join(' · '));
         });
         dates.forEach((d) => {
             const x = c.days[d];
             if (x && x.crm && x.crm.worst != null && x.crm.worst < 1) {
-                add('short|' + d, 'Short at ' + d.slice(5) + ' ' + pad(x.crm.worstHour) + ':00 (' + x.crm.worst + 'x)', 'adj drivers below unassigned in that hour: block the slot, raise, or open to companies');
+                add('short|' + d, 'Short of drivers ' + dayName(d) + ' at ' + pad(x.crm.worstHour) + ':00', x.crm.worst + ' drivers per unassigned job in that hour: block the slot, raise, or open to companies');
             }
         });
         if (c.outlook && c.outlook.lever && c.outlook.loss > 1000) add('lever|' + dates[0], c.outlook.lever.replace(/\d+%$/, '').trim(), 'hub Outlook: ' + (c.outlook.owner || '') + ' · loss / wk ' + (c.outlook.loss || 0));
         return out;
     }
 
-    // ---- render ----
+    // ---- render (1.7.303: light card dashboard) ----
+    const KPI_KEY = 'wp_ov_kpi_v1';
+    let kpiHist = {};
+    const fmt = (n) => n == null ? '-' : Math.round(n).toLocaleString();
+    const dayName = (d) => { const x = parseIso(d); return x.toDateString().slice(0, 3) + ' ' + x.getDate(); };
+
     function cellClass(x) {
         if (!x) return '';
         const gap = x.hub ? x.hub.gap || 0 : 0;
@@ -466,121 +471,185 @@
         if (gap >= 15 || (cov != null && cov < 1.5)) return 'amber';
         return '';
     }
-
-    function render() {
-        const m = model();
+    function cityLevel(c, dates) {
+        if (dates.some((d) => cellClass(c.days[d]) === 'red')) return 'red';
+        if (dates.some((d) => cellClass(c.days[d]) === 'amber')) return 'amber';
+        return '';
+    }
+    function sorted(m) {
         const q = norm($('search').value);
         const list = m.cities.filter((c) => !q || norm(c.name).indexOf(q) >= 0);
-        const sort = $('sort').value;
         const by = {
             action: (a, b) => b.score - a.score, gap: (a, b) => b.maxGap - a.maxGap,
             loss: (a, b) => ((b.outlook && b.outlook.loss) || 0) - ((a.outlook && a.outlook.loss) || 0),
             cov: (a, b) => (a.worst == null ? 99 : a.worst) - (b.worst == null ? 99 : b.worst), name: (a, b) => a.name.localeCompare(b.name)
-        }[sort];
-        list.sort(by);
-        renderStrip(m);
-        if (tab === 'overview') renderTable(m, list);
+        }[$('sort').value];
+        return list.sort(by);
+    }
+
+    function kpis(m) {
+        const k = {};
+        k.red = m.cities.filter((c) => cityLevel(c, m.dates) === 'red').length;
+        k.noAct = m.cities.reduce((n, c) => n + c.events.filter((e) => isHigh(e) && noAction(e)).length, 0);
+        k.raise = m.cities.filter((c) => c.actions.some((a) => a.key.indexOf('|raise|') > 0 && !done[a.key])).length;
+        k.loss = cache.hubOutlook.reduce((n, o) => n + (o.loss || 0), 0);
+        k.open = m.cities.reduce((n, c) => n + c.open, 0);
+        k.needs = m.cities.filter((c) => c.open > 0).length;
+        k.un48 = m.cities.reduce((n, c) => n + (c.unNear || 0), 0);
+        k.events = m.cities.reduce((n, c) => n + c.events.length, 0);
+        k.high = m.cities.reduce((n, c) => n + c.events.filter(isHigh).length, 0);
+        return k;
+    }
+    // Today's numbers are kept per day, so each tile can say how it moved since yesterday.
+    function delta(key, now) {
+        const y = kpiHist[iso(addDays(today(), -1))];
+        if (!y || y[key] == null || now == null) return '';
+        const d = now - y[key];
+        if (!d) return '<span class="delta flat">same as yesterday</span>';
+        const pct = y[key] ? Math.round(Math.abs(d) / y[key] * 100) + '%' : fmt(Math.abs(d));
+        return '<span class="delta ' + (d < 0 ? 'good' : 'bad') + '">' + (d < 0 ? '&darr; ' : '&uarr; ') + pct + ' vs yesterday</span>';
+    }
+
+    function render() {
+        const m = model();
+        if (tab === 'home') renderHome(m);
+        if (tab === 'cities') renderTable(m, sorted(m));
         if (tab === 'slack') renderSlack();
         if (tab === 'retro') renderRetro(m);
         if (tab === 'month') renderMonth();
-        if (selected) renderPanel(m.cities.find((c) => c.id === selected), m.dates);
+        if (selected) renderDrawer(m.cities.find((c) => c.id === selected), m.dates);
     }
 
-    function renderStrip(m) {
-        const red = m.cities.filter((c) => m.dates.some((d) => cellClass(c.days[d]) === 'red')).length;
-        const amber = m.cities.filter((c) => !m.dates.some((d) => cellClass(c.days[d]) === 'red') && m.dates.some((d) => cellClass(c.days[d]) === 'amber')).length;
-        const ev = m.cities.reduce((n, c) => n + c.events.length, 0);
-        const evHigh = m.cities.reduce((n, c) => n + c.events.filter(isHigh).length, 0);
-        const evNoAct = m.cities.reduce((n, c) => n + c.events.filter((e) => isHigh(e) && noAction(e)).length, 0);
-        const slack24 = cache.slack.filter((s) => s.ts > Date.now() / 1000 - 86400).length;
-        const actions = m.cities.reduce((n, c) => n + c.open, 0);
-        const raise = m.cities.filter((c) => c.actions.some((a) => a.key.indexOf('|raise|') > 0 && !done[a.key])).length;
-        const loss = cache.hubOutlook.reduce((n, o) => n + (o.loss || 0), 0);
-        const stat = (v, t) => '<div class="card stat"><b>' + esc(v) + '</b><span>' + esc(t) + '</span></div>';
-        $('strip').innerHTML = stat(red, 'cities red (gap 50+ or short hour)') + stat(amber, 'cities amber') + stat(evHigh + ' / ' + ev, 'high-gravity / all events, 7 days') +
-            stat(evNoAct, 'high events without LiveOps action') + stat(raise, 'cities where a raise is due') + stat(actions, 'open actions') +
-            stat(slack24, 'Slack posts, last 24 h') + stat(loss ? '€' + Math.round(loss).toLocaleString() : '-', 'hub projected loss / wk');
+    function renderHome(m) {
+        const k = kpis(m);
+        if (Object.keys(cache.at).length) { kpiHist[iso(today())] = k; chrome.storage.local.set({ [KPI_KEY]: kpiHist }).catch(() => {}); }
+        // gap per day across all cities (hub)
+        const perDay = m.dates.map((d) => m.cities.reduce((n, c) => n + Math.max(0, (c.days[d] && c.days[d].hub && c.days[d].hub.gap) || 0), 0));
+        const max = Math.max.apply(null, perDay.concat([1]));
+        const worstI = perDay.indexOf(Math.max.apply(null, perDay));
+        const top = m.cities.filter((c) => c.open > 0 || c.maxGap > 0).sort((a, b) => b.score - a.score).slice(0, 9);
+        const noAct = [];
+        m.cities.forEach((c) => c.events.filter((e) => isHigh(e) && noAction(e)).forEach((e) => noAct.push({ c: c, e: e })));
+        const evs = [];
+        m.cities.forEach((c) => c.events.forEach((e) => evs.push({ c: c, e: e })));
+        evs.sort((a, b) => (isHigh(b.e) - isHigh(a.e)) || (a.e.from < b.e.from ? -1 : 1));
+        const worstCov = m.cities.filter((c) => c.worst != null).sort((a, b) => a.worst - b.worst)[0];
+        const kpi = (key, title, value, help) => '<div class="card kpi" data-go="' + key + '"><div class="top"><span>' + title + '</span></div><div class="num">' + value + '</div>' + delta(key, k[key]) + '<div class="help">' + help + '</div></div>';
+
+        let h = '<div class="home"><div class="left">';
+        h += '<div class="row1"><div class="card hero"><div><div class="label">Cities that need you</div><div class="big">' + k.needs + '</div><div class="sub">' + k.open + ' open actions in the next 7 days</div></div><button class="link" data-go="cities">View cities &rarr;</button></div>';
+        h += '<div class="card"><h2>Driver gap per day, all cities</h2>';
+        h += perDay.some((v) => v > 0) ? '<span class="callout"><b>' + dayName(m.dates[worstI]) + ' is the hardest day</b> <span>&middot; gap ' + fmt(perDay[worstI]) + ' transfers</span></span>' : '<span class="note">Waiting for the hub.</span>';
+        h += '<div class="chart">' + perDay.map((v, i) => '<div class="col' + (i === worstI && v > 0 ? ' worst' : '') + '" title="' + dayName(m.dates[i]) + ': gap ' + fmt(v) + ' (transfers the hub expects to stay uncovered)"><div class="b" style="height:' + Math.round(v / max * 100) + '%"></div><div class="d">' + (i === 0 ? 'Today' : dayName(m.dates[i])) + '</div></div>').join('') + '</div></div></div>';
+        h += '<div class="kpis">' + kpi('red', 'Cities in the red', k.red, 'big gap or an hour with fewer drivers than jobs') + kpi('noAct', 'Big events, no plan', k.noAct, 'high gravity, nothing in "LiveOps affected"') +
+            kpi('raise', 'Price raise due', k.raise, 'EM rule says raise, and jobs are unassigned') + kpi('loss', 'Hub loss / week', k.loss ? '&euro;' + fmt(k.loss) : '-', 'projected from the hub Outlook') + '</div>';
+        if (noAct.length) {
+            h += '<div class="card alert warn"><span class="dot"></span><div class="t"><b>' + noAct.length + ' big event' + (noAct.length > 1 ? 's have' : ' has') + ' no plan yet</b><span>' + esc(noAct.slice(0, 4).map((x) => x.e.name + ' in ' + x.c.name + ' (' + dayName(x.e.from) + ')').join(', ')) + (noAct.length > 4 ? ' and ' + (noAct.length - 4) + ' more' : '') + '</span></div><button class="btn-out" data-city="' + esc(noAct[0].c.id) + '">Open ' + esc(noAct[0].c.name) + '</button></div>';
+        } else {
+            h += '<div class="card alert"><span class="dot"></span><div class="t"><b>No unplanned big events</b><span>Every high-gravity event this week has something in "LiveOps affected".</span></div></div>';
+        }
+        h += '<div class="row3"><div class="card list"><div class="head"><h2>Events this week</h2><span class="note">' + k.high + ' high of ' + k.events + '</span></div>';
+        h += evs.length ? evs.slice(0, 8).map((x) => '<div class="li" data-city="' + esc(x.c.id) + '"><div><b>' + esc(x.e.name) + '</b><div class="s">' + esc(x.c.name) + ' &middot; ' + dayName(x.e.from) + (x.e.to !== x.e.from ? ' to ' + dayName(x.e.to) : '') + (x.e.supply != null ? ' &middot; supply ' + x.e.supply + '%' : '') + '</div></div><span class="pill ' + (isHigh(x.e) ? 'red' : /medium/i.test(x.e.gravity) ? 'amber' : 'grey') + '">' + esc(x.e.gravity || 'event') + '</span></div>').join('') : '<div class="empty">No events read yet.</div>';
+        h += '</div><div class="card list"><div class="head"><h2>Latest from Slack</h2><button class="link" data-go="slack">All &rarr;</button></div>';
+        h += cache.slack.length ? cache.slack.slice(0, 6).map((s) => '<div class="li"' + (s.cities && s.cities[0] ? ' data-city="' + esc(s.cities[0]) + '"' : '') + '><div><div class="s">#' + esc(s.channel) + ' &middot; ' + esc(s.who) + ' &middot; ' + ago(s.ts) + '</div>' + esc(s.text.slice(0, 140)) + (s.text.length > 140 ? '&hellip;' : '') + '</div></div>').join('') : '<div class="empty">No Slack posts read yet.</div>';
+        h += '</div></div></div>';
+        // right column
+        h += '<div class="left"><div class="card list"><div class="head"><h2>Needs you first</h2><span class="note">open actions</span></div>';
+        h += top.length ? top.map((c) => '<div class="li" data-city="' + esc(c.id) + '"><div><b>' + esc(c.name) + '</b><div class="s">' + esc(c.actions.filter((a) => !done[a.key]).slice(0, 1).map((a) => a.text).join('') || 'hub gap ' + c.maxGap) + '</div></div><span class="n"><span class="pill ' + (cityLevel(c, m.dates) || 'grey') + '">' + c.open + '</span></span></div>').join('') : '<div class="empty">Nothing yet: press Refresh.</div>';
+        h += '</div><div class="card indigo"><h2>Next 48 hours</h2><div class="l">Unassigned transfers, all read cities</div><div class="v">' + fmt(k.un48) + '</div>';
+        h += '<div class="l">Tightest hour</div><div class="v">' + (worstCov ? esc(worstCov.name) : '-') + '</div>' + (worstCov ? '<div class="l" style="margin-top:2px">' + worstCov.worst + ' drivers per unassigned job</div>' : '') + '</div></div></div>';
+        $('main').innerHTML = h;
+    }
+    function ago(ts) {
+        const min = Math.round((Date.now() / 1000 - ts) / 60);
+        if (min < 60) return min + ' min ago';
+        if (min < 1440) return Math.round(min / 60) + ' h ago';
+        return Math.round(min / 1440) + ' d ago';
     }
 
     function renderTable(m, list) {
-        const crmRead = Object.keys(cache.crm).length;
-        let h = '<table><thead><tr><th>City</th><th>Open</th><th>Loss/wk</th>' + m.dates.map((d) => {
-            const x = parseIso(d); return '<th>' + x.toDateString().slice(0, 3) + ' ' + x.getDate() + '/' + (x.getMonth() + 1) + '</th>';
-        }).join('') + '</tr></thead><tbody>';
+        let h = '<div class="legend"><span><span class="chip red">red</span> gap 50+ or fewer drivers than jobs in some hour</span><span><span class="chip amber">amber</span> gap 15+ or tight</span><span>big number = hub gap &middot; small = drivers per unassigned job in the worst hour</span></div>';
+        h += '<div class="card tablecard"><table><thead><tr><th>City</th><th>Open actions</th><th>Loss / wk</th>' + m.dates.map((d, i) => '<th style="text-align:center">' + (i === 0 ? 'Today' : dayName(d)) + '</th>').join('') + '</tr></thead><tbody>';
         list.slice(0, 400).forEach((c) => {
-            h += '<tr class="city' + (c.id === selected ? ' sel' : '') + '" data-id="' + esc(c.id) + '"><td>' + esc(c.name) + (c.slack.length ? '<span class="badge sl">slack ' + c.slack.length + '</span>' : '') + '</td><td>' + (c.open || '') + '</td><td class="muted">' + (c.outlook && c.outlook.loss ? '€' + Math.round(c.outlook.loss).toLocaleString() : '') + '</td>';
+            h += '<tr class="city" data-city="' + esc(c.id) + '"><td><b>' + esc(c.name) + '</b>' + (c.slack.length ? ' <span class="pill grey">Slack ' + c.slack.length + '</span>' : '') + '</td><td>' + (c.open ? '<span class="pill ' + (cityLevel(c, m.dates) || 'grey') + '">' + c.open + '</span>' : '') + '</td><td>' + (c.outlook && c.outlook.loss ? '&euro;' + fmt(c.outlook.loss) : '') + '</td>';
             m.dates.forEach((d) => {
                 const x = c.days[d] || {};
                 const evs = c.events.filter((e) => e.from <= d && e.to >= d);
+                const cls = cellClass(x) || 'ok';
                 let t = '';
-                if (x.hub) t += '<span class="g" title="hub transfer gap (share of booked)">' + (x.hub.gap != null ? x.hub.gap : '') + '</span>';
-                if (x.crm) t += ' <span class="muted" title="CRM: worst hour, adj drivers / unassigned · unassigned that day">' + (x.crm.worst != null ? x.crm.worst + 'x' : 'ok') + ' · ' + x.crm.un + 'u</span>';
-                evs.slice(0, 2).forEach((e) => { t += '<span class="badge ' + (isHigh(e) ? 'hi' : /medium/i.test(e.gravity) ? 'md' : '') + '" title="' + esc(e.name + ' · ' + e.gravity) + '">' + esc((e.type || 'event').replace(/[^A-Za-z ]/g, '').trim().split(' ')[0].slice(0, 7).toLowerCase() || 'event') + '</span>'; });
-                h += '<td class="day ' + cellClass(x) + '">' + (t || '<span class="faint">-</span>') + '</td>';
+                if (x.hub || x.crm) t = '<span class="chip ' + cls + '" title="hub gap' + (x.crm ? ' · worst hour: ' + (x.crm.worst != null ? x.crm.worst + ' drivers per unassigned job' : 'no unassigned') + ' · ' + x.crm.un + ' unassigned' : '') + '">' + (x.hub && x.hub.gap != null ? fmt(x.hub.gap) : '&ndash;') + (x.crm && x.crm.worst != null ? '<small>' + x.crm.worst + '&times;</small>' : '') + '</span>';
+                if (evs.length) t += '<span class="ev" title="' + esc(evs.map((e) => e.name + ' (' + (e.gravity || '-') + ')').join(', ')) + '">' + esc(evs[0].name.slice(0, 14)) + (evs.length > 1 ? ' +' + (evs.length - 1) : '') + '</span>';
+                h += '<td class="day">' + (t || '<span style="color:var(--faint)">&middot;</span>') + '</td>';
             });
             h += '</tr>';
         });
-        h += '</tbody></table>';
-        if (!crmRead) h += '<div class="muted" style="padding:10px">CRM hours not read yet: press Refresh.</div>';
+        h += '</tbody></table></div>';
+        if (!Object.keys(cache.crm).length) h += '<p class="note">CRM hours not read yet: press Refresh.</p>';
         $('main').innerHTML = h;
     }
 
     function spark(values, color) {
         const v = values.filter((x) => x != null);
-        if (v.length < 2) return '<span class="faint">not enough history yet</span>';
-        const max = Math.max.apply(null, v.concat([1])), w = 380, hgt = 40;
+        if (v.length < 2) return '<span class="note">Not enough history yet.</span>';
+        const max = Math.max.apply(null, v.concat([1])), w = 480, hgt = 44;
         const pts = values.map((x, i) => x == null ? null : (i * w / (values.length - 1)).toFixed(1) + ',' + (hgt - (x / max) * hgt).toFixed(1)).filter(Boolean).join(' ');
-        return '<svg class="spark" viewBox="0 0 ' + w + ' ' + (hgt + 2) + '" preserveAspectRatio="none"><polyline fill="none" stroke="' + color + '" stroke-width="1.5" points="' + pts + '"/></svg>';
+        return '<svg class="spark" viewBox="0 0 ' + w + ' ' + (hgt + 2) + '" preserveAspectRatio="none"><polyline fill="none" stroke="' + color + '" stroke-width="2" points="' + pts + '"/></svg>';
     }
 
-    function renderPanel(c, dates) {
-        if (!c) { $('panel').innerHTML = '<span class="muted">Click a city.</span>'; return; }
-        let h = '<h2>' + esc(c.name) + '</h2>';
-        if (c.em) h += '<div class="muted">' + esc([c.em.prio, c.em.type, c.em.season, c.em.cm && 'CM ' + c.em.cm].filter(Boolean).join(' · ')) + '</div>';
-        h += '<h3>Actions</h3>';
-        if (!c.actions.length) h += '<div class="muted">Nothing needed from what mod can see.</div>';
+    function renderDrawer(c, dates) {
+        if (!c) { closeDrawer(); return; }
+        $('backdrop').hidden = false; $('drawer').hidden = false;
+        const lvl = cityLevel(c, dates);
+        let h = '<div class="dh"><div style="flex:1"><h2>' + esc(c.name) + '</h2><div class="sub">' + esc([c.em && c.em.prio, c.em && c.em.type, c.em && c.em.cm && 'City manager ' + c.em.cm].filter(Boolean).join(' · ')) + '</div></div><span class="pill ' + (lvl || 'green') + '" style="margin-top:8px">' + (lvl === 'red' ? 'needs attention' : lvl === 'amber' ? 'watch' : 'fine') + '</span><button class="close" id="close" title="Close">&times;</button></div>';
+        h += '<div class="card"><h3>What to do</h3>';
+        if (!c.actions.length) h += '<div class="note">Nothing needed from what mod can see.</div>';
         c.actions.forEach((a) => {
-            h += '<label class="item act' + (done[a.key] ? ' done' : '') + '"><input type="checkbox" data-key="' + esc(a.key) + '"' + (done[a.key] ? ' checked' : '') + '><span><b>' + esc(a.text) + '</b><br><span class="muted">' + esc(a.why) + '</span></span></label>';
+            h += '<label class="act' + (done[a.key] ? ' done' : '') + '"><input type="checkbox" data-key="' + esc(a.key) + '"' + (done[a.key] ? ' checked' : '') + '><span><b>' + esc(a.text) + '</b><div class="w">' + esc(a.why) + '</div></span></label>';
         });
-        h += '<h3>Events, next 7 days</h3>';
-        if (!c.events.length) h += '<div class="muted">None in the events sheet.</div>';
-        c.events.forEach((e) => {
-            h += '<div class="item"><b>' + esc(e.name) + '</b> <span class="badge ' + (isHigh(e) ? 'hi' : '') + '">' + esc(e.gravity || '-') + '</span><br><span class="muted">' + esc([e.from + (e.to !== e.from ? ' to ' + e.to : ''), e.type, e.supply != null && 'supply ' + e.supply + '%', e.dri && 'DRI ' + e.dri, e.affected && 'LiveOps: ' + e.affected].filter(Boolean).join(' · ')) + '</span>' + (e.notes ? '<br>' + esc(e.notes) : '') + (e.alerts ? '<br><span class="muted">alerts: ' + esc(e.alerts) + '</span>' : '') + (e.comments ? '<br><span class="muted">LiveOps comments: ' + esc(e.comments) + '</span>' : '') + '</div>';
-        });
-        h += '<h3>Days</h3>';
+        h += '</div>';
         const pick = c._day && dates.includes(c._day) ? c._day : dates.find((d) => c.days[d] && c.days[d].hours) || dates[0];
         c._day = pick;
-        h += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">' + dates.map((d) => '<button class="' + (d === pick ? 'on' : '') + '" data-day="' + d + '">' + d.slice(8) + '/' + d.slice(5, 7) + '</button>').join('') + '</div>';
         const x = c.days[pick] || {};
-        if (x.hub) h += '<div class="item">hub: gap <b>' + x.hub.gap + '</b>' + (x.hub.gapPct != null ? ' (' + x.hub.gapPct + '%)' : '') + ' · booked ' + (x.hub.booked || 0) + ' · forecast ~' + (x.hub.forecast || '-') + ' · unassigned ' + (x.hub.un || 0) + ' · net drivers ' + (x.hub.net || 0) + (x.hub.gfs != null ? ' · fwd GFS ' + x.hub.gfs + '%' : '') + '</div>';
+        h += '<div class="card"><h3>Day by day</h3><div class="days">' + dates.map((d, i) => '<button class="' + (d === pick ? 'on' : '') + '" data-day="' + d + '">' + (i === 0 ? 'Today' : dayName(d)) + '</button>').join('') + '</div>';
+        h += '<div class="facts"><div><b>' + (x.hub && x.hub.gap != null ? fmt(x.hub.gap) : '-') + '</b><span>hub gap</span></div><div><b>' + (x.crm ? fmt(x.crm.un) : x.hub ? fmt(x.hub.un) : '-') + '</b><span>unassigned</span></div><div><b>' + (x.crm && x.crm.worst != null ? x.crm.worst + '&times;' : x.crm ? 'ok' : '-') + '</b><span>worst hour' + (x.crm && x.crm.worstHour != null ? ' (' + pad(x.crm.worstHour) + ':00)' : '') + '</span></div></div>';
         if (x.hours && x.hours.length) {
-            const max = Math.max.apply(null, x.hours.map((y) => Math.max(y.adj || 0, y.un + y.as)).concat([1]));
-            h += '<div class="hours">' + x.hours.map((y) => '<div class="' + (y.un > 0 && (y.adj || 0) < y.un ? 'short ' : '') + (y.blk ? 'blk' : '') + '" style="height:' + Math.max(2, Math.round(((y.adj || 0) / max) * 70)) + 'px" title="' + pad(y.h) + ':00 · ' + y.drv + ' drivers · ' + y.adj + ' adj · ' + y.as + ' assigned · ' + y.un + ' unassigned' + (y.blk ? ' · blocked' : '') + '"></div>').join('') + '</div>';
-            h += '<div class="hlabels">' + x.hours.map((y) => '<span>' + (y.h % 3 === 0 ? y.h : '') + '</span>').join('') + '</div>';
-            h += '<div class="muted" style="font-size:11px">bars = adj drivers per hour; red = fewer adj drivers than unassigned; dashed = blocked</div>';
-        } else h += '<div class="muted">CRM hours not read for this city yet (Refresh reads the top ' + TOP_N + ' and cities with events; "Read all cities" reads all).</div>';
-        if (c.outlook) h += '<h3>Hub outlook</h3><div class="item">loss / wk <b>€' + Math.round(c.outlook.loss || 0).toLocaleString() + '</b> · ' + esc(c.outlook.vs || '') + ' vs last 7 d · proj GFS ' + (c.outlook.gfs || '-') + '%<br>' + esc(c.outlook.lever || '') + ' · ' + esc(c.outlook.owner || '') + '</div>';
-        if (c.em) h += '<h3>EM policy</h3><div class="item">raise price: <b>' + esc(c.em.raise || '-') + '</b>' + (c.em.much ? ' · ' + esc(c.em.much) : '') + (c.em.car ? ' · ' + esc(c.em.car) : '') + (c.em.slot ? ' · ' + esc(c.em.slot) : '') + (c.em.sku ? '<br>' + esc(c.em.sku) : '') + (c.em.notes ? '<br><span class="muted">' + esc(c.em.notes) + '</span>' : '') + '</div>';
-        if (c.em && c.em.instr && c.em.instr.length) h += c.em.instr.map((x) => '<div class="item"><span class="muted">' + esc(x.h) + '</span><br>' + esc(x.v) + '</div>').join('');
-        h += '<h3>Slack, last 7 days</h3>';
-        if (!c.slack.length) h += '<div class="muted">No posts naming this city.</div>';
-        c.slack.slice(0, 12).forEach((s) => { h += '<div class="item"><span class="muted">#' + esc(s.channel) + ' · ' + esc(s.who) + ' · ' + new Date(s.ts * 1000).toLocaleString() + '</span><br>' + esc(s.text.slice(0, 500)) + '</div>'; });
-        h += '<h3>History (last 30 days)</h3>';
+            const max = Math.max.apply(null, x.hours.map((y) => y.adj || 0).concat([1]));
+            h += '<div class="hours">' + x.hours.map((y) => '<div class="' + (y.un > 0 && (y.adj || 0) < y.un ? 'short' : y.blk ? 'blk' : '') + '" style="height:' + Math.max(3, Math.round(((y.adj || 0) / max) * 90)) + 'px" title="' + pad(y.h) + ':00 · ' + y.adj + ' drivers (adj) · ' + y.as + ' assigned · ' + y.un + ' unassigned' + (y.blk ? ' · blocked' : '') + '"></div>').join('') + '</div>';
+            h += '<div class="hlabels">' + x.hours.map((y) => '<span>' + (y.h % 3 === 0 ? pad(y.h) : '') + '</span>').join('') + '</div>';
+            h += '<p class="note">Drivers per hour (adjusted for acceptance). <span style="color:var(--red)">Red</span>: fewer drivers than unassigned jobs. <span style="color:var(--amber)">Amber</span>: blocked hour.</p>';
+        } else h += '<p class="note">Hours for this city are not read yet. Refresh reads the top ' + TOP_N + ' and the cities with big events; "Read all cities" reads every city.</p>';
+        if (x.hub) h += '<p class="note">Hub: ' + fmt(x.hub.booked) + ' booked, about ' + fmt(x.hub.forecast) + ' expected, ' + fmt(x.hub.net) + ' drivers free' + (x.hub.gfs != null ? ', forward GFS ' + x.hub.gfs + '%' : '') + '.</p>';
+        h += '</div>';
+        h += '<div class="card"><h3>Events this week</h3>';
+        if (!c.events.length) h += '<div class="note">None in the events sheet.</div>';
+        c.events.forEach((e) => {
+            h += '<div class="msg"><b>' + esc(e.name) + '</b> <span class="pill ' + (isHigh(e) ? 'red' : /medium/i.test(e.gravity) ? 'amber' : 'grey') + '">' + esc(e.gravity || '-') + '</span><div class="m">' + esc([dayName(e.from) + (e.to !== e.from ? ' to ' + dayName(e.to) : ''), e.type, e.supply != null && 'supply ' + e.supply + '%', e.dri && 'DRI ' + e.dri, 'LiveOps: ' + (e.affected || 'nothing yet')].filter(Boolean).join(' · ')) + '</div>' + (e.notes ? '<div>' + esc(e.notes) + '</div>' : '') + (e.comments ? '<div class="m">' + esc(e.comments) + '</div>' : '') + '</div>';
+        });
+        h += '</div>';
+        if (c.em) {
+            h += '<div class="card"><h3>EM policy</h3><div>Raise price: <b>' + esc(c.em.raise || '-') + '</b>' + (c.em.much ? ' &middot; ' + esc(c.em.much) : '') + (c.em.car ? ' &middot; ' + esc(c.em.car) : '') + (c.em.slot ? ' &middot; ' + esc(c.em.slot) : '') + '</div>' + (c.em.sku ? '<div class="note">' + esc(c.em.sku) + '</div>' : '') + (c.em.notes ? '<div class="note">' + esc(c.em.notes) + '</div>' : '');
+            (c.em.instr || []).forEach((i) => { h += '<div class="msg"><div class="m">' + esc(i.h) + '</div>' + esc(i.v) + '</div>'; });
+            h += '</div>';
+        }
+        if (c.outlook) h += '<div class="card"><h3>Hub outlook</h3><div><b>&euro;' + fmt(c.outlook.loss) + '</b> loss / week &middot; ' + esc(c.outlook.vs || '') + ' vs last week</div><div class="note">' + esc(c.outlook.lever || '') + ' &middot; ' + esc(c.outlook.owner || '') + '</div></div>';
+        h += '<div class="card"><h3>Slack, last 7 days</h3>';
+        if (!c.slack.length) h += '<div class="note">No posts naming this city.</div>';
+        c.slack.slice(0, 10).forEach((s) => { h += '<div class="msg"><div class="m">#' + esc(s.channel) + ' &middot; ' + esc(s.who) + ' &middot; ' + ago(s.ts) + '</div>' + esc(s.text.slice(0, 500)) + '</div>'; });
+        h += '</div>';
         const mine = history.filter((r) => r.city === c.id).sort((a, b) => a.date < b.date ? -1 : 1).slice(-30);
-        h += '<div class="muted" style="font-size:11px">unassigned</div>' + spark(mine.map((r) => r.un), '#8fffd5');
-        h += '<div class="muted" style="font-size:11px">hub gap</div>' + spark(mine.map((r) => r.gap), '#f2c27b');
-        $('panel').innerHTML = h;
+        h += '<div class="card"><h3>Last 30 days</h3><div class="note">Unassigned</div>' + spark(mine.map((r) => r.un), '#121a3a') + '<div class="note">Hub gap</div>' + spark(mine.map((r) => r.gap), '#5b6ee1') + '</div>';
+        $('drawer').innerHTML = h;
     }
+    function closeDrawer() { selected = null; $('backdrop').hidden = true; $('drawer').hidden = true; }
 
     function renderSlack() {
-        let h = '<table><thead><tr><th>When</th><th>Channel</th><th>From</th><th>Cities</th><th>Post</th></tr></thead><tbody>';
         const names = {}; cache.cities.forEach((c) => { names[c.id] = c.name; });
+        let h = '<div class="card list">';
+        if (!cache.slack.length) h += '<div class="empty">No Slack posts read yet: press Refresh.</div>';
         cache.slack.slice(0, 300).forEach((s) => {
-            h += '<tr><td class="muted">' + new Date(s.ts * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) + '</td><td>#' + esc(s.channel) + '</td><td>' + esc(s.who) + '</td><td>' + esc((s.cities || []).map((id) => names[id]).join(', ')) + '</td><td style="white-space:normal">' + esc(s.text.slice(0, 400)) + '</td></tr>';
+            h += '<div class="li"' + (s.cities && s.cities[0] ? ' data-city="' + esc(s.cities[0]) + '"' : '') + '><div><div class="s">#' + esc(s.channel) + ' &middot; ' + esc(s.who) + ' &middot; ' + ago(s.ts) + ((s.cities || []).length ? ' &middot; ' + esc(s.cities.map((id) => names[id]).join(', ')) : '') + '</div>' + esc(s.text.slice(0, 600)) + '</div></div>';
         });
-        h += '</tbody></table>';
-        if (!cache.slack.length) h = '<div class="muted" style="padding:10px">No Slack posts read yet: press Refresh.</div>';
-        $('main').innerHTML = h;
+        $('main').innerHTML = h + '</div>';
     }
 
     // Past events vs the same weekday in the 4 weeks before, from history.
@@ -599,14 +668,13 @@
             const avg = (a, f) => { const v = a.map(f).filter((x) => x != null); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
             rows.push({ e: e, name: names[e.city], un: avg(ev, (r) => r.un), unB: avg(base, (r) => r.un), gap: avg(ev, (r) => r.gap), gapB: avg(base, (r) => r.gap), adj: avg(ev, (r) => r.adjPeak), adjB: avg(base, (r) => r.adjPeak) });
         });
-        const f = (v) => v == null ? '-' : Math.round(v);
-        const diff = (a, b) => a == null || b == null || !b ? '' : ' <span class="' + (a > b ? 'err' : 'muted') + '">(' + (a >= b ? '+' : '') + Math.round((a - b) / b * 100) + '%)</span>';
-        let h = '<table><thead><tr><th>Event</th><th>City</th><th>Dates</th><th>Sheet gravity / supply</th><th>Unassigned vs normal</th><th>Hub gap vs normal</th><th>Peak adj drivers vs normal</th></tr></thead><tbody>';
+        const diff = (a, b) => a == null || b == null || !b ? '' : ' <span class="pill ' + (a > b ? 'red' : 'green') + '">' + (a >= b ? '+' : '') + Math.round((a - b) / b * 100) + '%</span>';
+        let h = '<div class="card tablecard"><table><thead><tr><th>Event</th><th>City</th><th>Date</th><th>Sheet said</th><th>Unassigned vs a normal week</th><th>Hub gap vs normal</th><th>Peak drivers vs normal</th></tr></thead><tbody>';
         rows.sort((a, b) => a.e.from < b.e.from ? 1 : -1).forEach((r) => {
-            h += '<tr><td>' + esc(r.e.name) + '</td><td>' + esc(r.name) + '</td><td class="muted">' + r.e.from + '</td><td>' + esc(r.e.gravity || '-') + ' / ' + (r.e.supply != null ? r.e.supply + '%' : '-') + '</td><td>' + f(r.un) + ' vs ' + f(r.unB) + diff(r.un, r.unB) + '</td><td>' + f(r.gap) + ' vs ' + f(r.gapB) + diff(r.gap, r.gapB) + '</td><td>' + f(r.adj) + ' vs ' + f(r.adjB) + diff(r.adj, r.adjB) + '</td></tr>';
+            h += '<tr><td><b>' + esc(r.e.name) + '</b></td><td>' + esc(r.name) + '</td><td>' + dayName(r.e.from) + '</td><td>' + esc(r.e.gravity || '-') + (r.e.supply != null ? ', supply ' + r.e.supply + '%' : '') + '</td><td>' + fmt(r.un) + ' vs ' + fmt(r.unB) + diff(r.un, r.unB) + '</td><td>' + fmt(r.gap) + ' vs ' + fmt(r.gapB) + diff(r.gap, r.gapB) + '</td><td>' + fmt(r.adj) + ' vs ' + fmt(r.adjB) + diff(r.adj, r.adjB) + '</td></tr>';
         });
-        h += '</tbody></table>';
-        if (!rows.length) h = '<div class="muted" style="padding:10px">No finished event has history yet. History started on the day this version was installed; events that end from now on show up here, compared with the same weekday in the 4 weeks before.</div>';
+        h += '</tbody></table></div>';
+        if (!rows.length) h = '<div class="card"><h2>Event retro</h2><p class="note">No finished event has history yet. History started on the day this version was installed. Events that end from now on show up here, compared with the same weekday in the 4 weeks before, so you can see which events really hurt and whether the sheet’s gravity was right.</p></div>';
         $('main').innerHTML = h;
     }
 
@@ -622,12 +690,12 @@
         });
         const months = [...new Set(Object.values(g).map((x) => x.month))].sort();
         const cities = [...new Set(Object.values(g).map((x) => x.city))].sort((a, b) => String(names[a]).localeCompare(String(names[b])));
-        let h = '<table><thead><tr><th>City</th>' + months.map((mo) => '<th>' + mo + '<br>unassigned / day · gap / day · short days · event days</th>').join('') + '</tr></thead><tbody>';
+        let h = '<div class="legend">Per day on average: unassigned &middot; hub gap. Then: days with a short hour &middot; days with an event.</div><div class="card tablecard"><table><thead><tr><th>City</th>' + months.map((mo) => '<th>' + mo + '</th>').join('') + '</tr></thead><tbody>';
         cities.forEach((id) => {
-            h += '<tr><td>' + esc(names[id] || id) + '</td>' + months.map((mo) => { const x = g[id + '|' + mo]; return '<td>' + (x ? (x.un / x.n).toFixed(1) + ' · ' + (x.gap / x.n).toFixed(1) + ' · ' + x.short + ' · ' + x.ev : '<span class="faint">-</span>') + '</td>'; }).join('') + '</tr>';
+            h += '<tr class="city" data-city="' + esc(id) + '"><td><b>' + esc(names[id] || id) + '</b></td>' + months.map((mo) => { const x = g[id + '|' + mo]; return '<td>' + (x ? (x.un / x.n).toFixed(1) + ' &middot; ' + (x.gap / x.n).toFixed(1) + ' &middot; ' + x.short + ' &middot; ' + x.ev : '<span style="color:var(--faint)">&middot;</span>') + '</td>'; }).join('') + '</tr>';
         });
-        h += '</tbody></table>';
-        if (!history.length) h = '<div class="muted" style="padding:10px">No history yet. mod saves one record per city and day from now on (the nightly read covers every city).</div>';
+        h += '</tbody></table></div>';
+        if (!history.length) h = '<div class="card"><h2>Month</h2><p class="note">No history yet. mod saves one record per city and day from now on (the nightly read covers every city), so next month you can compare month against month.</p></div>';
         $('main').innerHTML = h;
     }
 
@@ -705,38 +773,44 @@
     }
 
     // ---- events ----
+    function openCity(id) { selected = id; render(); }
     $('main').addEventListener('click', (e) => {
-        const tr = e.target.closest('tr.city');
-        if (!tr) return;
-        selected = tr.getAttribute('data-id');
-        render();
+        const go = e.target.closest('[data-go]');
+        if (go) { const t = go.getAttribute('data-go'); setTab(t === 'slack' ? 'slack' : 'cities'); if (t === 'red' || t === 'cities') $('sort').value = 'action'; if (t === 'loss') $('sort').value = 'loss'; render(); return; }
+        const row = e.target.closest('[data-city]');
+        if (row) openCity(row.getAttribute('data-city'));
     });
-    $('panel').addEventListener('click', (e) => {
+    $('backdrop').addEventListener('click', closeDrawer);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+    $('drawer').addEventListener('click', (e) => {
+        if (e.target.closest('#close')) { closeDrawer(); return; }
         const b = e.target.closest('button[data-day]');
         if (!b) return;
         const m = model();
         const c = m.cities.find((x) => x.id === selected);
-        if (c) { c._day = b.getAttribute('data-day'); renderPanel(c, m.dates); }
+        if (c) { c._day = b.getAttribute('data-day'); renderDrawer(c, m.dates); }
     });
-    $('panel').addEventListener('change', async (e) => {
+    $('drawer').addEventListener('change', async (e) => {
         const k = e.target.getAttribute && e.target.getAttribute('data-key');
         if (!k) return;
         if (e.target.checked) done[k] = Date.now(); else delete done[k];
         await chrome.storage.local.set({ [DONE_KEY]: done });
         render();
     });
-    document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
-        tab = b.getAttribute('data-tab');
-        document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x === b));
-        render();
-    }));
-    $('search').addEventListener('input', render);
-    $('sort').addEventListener('change', render);
+    function setTab(t) {
+        tab = t;
+        document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x.getAttribute('data-tab') === t));
+    }
+    document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => { setTab(b.getAttribute('data-tab')); render(); }));
+    $('search').addEventListener('input', () => { if (tab === 'home' && $('search').value) setTab('cities'); render(); });
+    $('sort').addEventListener('change', () => { if (tab === 'home') setTab('cities'); render(); });
     $('refresh').addEventListener('click', () => refresh(false));
     $('full').addEventListener('click', () => refresh(true));
 
     (async function start() {
-        const got = await chrome.storage.local.get({ [CACHE_KEY]: null, [DONE_KEY]: {} });
+        const got = await chrome.storage.local.get({ [CACHE_KEY]: null, [DONE_KEY]: {}, [KPI_KEY]: {} });
+        kpiHist = got[KPI_KEY] || {};
+        Object.keys(kpiHist).forEach((d) => { if (d < iso(addDays(today(), -14))) delete kpiHist[d]; });
         if (got[CACHE_KEY]) cache = Object.assign(cache, got[CACHE_KEY]);
         done = got[DONE_KEY] || {};
         // ticks older than 10 days are dropped
