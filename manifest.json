@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "mod",
-  "version": "1.7.297",
+  "version": "1.7.301",
   "description": "Welcome Pickups CRM transfer tools with transfer details collection, WhatsApp image copy, batch task tools, and city vehicle capacity info.",
   "permissions": [
     "storage",
@@ -65,6 +65,7 @@
     {
       "matches": [
         "https://crm.welcomepickups.com/admin/tour_transfers/*",
+        "https://crm.welcomepickups.com/admin/drivers*",
         "https://welcomepickups.atlassian.net/wiki/spaces/IKB/pages/3862102017/*"
       ],
       "js": [
