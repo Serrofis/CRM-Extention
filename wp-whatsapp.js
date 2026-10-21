@@ -305,10 +305,39 @@
         return Boolean(opened);
     }
 
+    // 1.7.296: "@all" at the start (Barcelona): typed by itself so WhatsApp
+    // offers its "mention everyone" choice, which is clicked; when WhatsApp
+    // offers none it stays as plain text "@all". Never presses Enter here.
+    async function typeAtAll(box) {
+        box.focus();
+        document.execCommand('insertText', false, '@all');
+        const option = await waitFor(function() {
+            return Array.from(document.querySelectorAll('[role="option"], [role="listitem"], [role="button"], li, div[tabindex]'))
+                .filter(function(el) { return !el.closest('#side') && !el.closest('#main header') && (el.offsetParent !== null || el.getClientRects().length); })
+                .find(function(el) {
+                    const value = String(el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+                    return value && value.length < 60 && (/^@?(all|everyone)\b/i.test(value) || /(notify|mention) (everyone|all)/i.test(value));
+                }) || null;
+        }, 2000);
+        if (option) {
+            clickEl(option);
+            await sleep(300);
+            // WhatsApp adds a space after a mention; one is added when it did not
+            if (!/\s$/.test(String(box.textContent || '').replace(/\u00a0/g, ' '))) document.execCommand('insertText', false, ' ');
+            return true;
+        }
+        document.execCommand('insertText', false, ' ');
+        return false;
+    }
     async function pasteAndSend(text) {
         const box = composer();
         if (!box) return 'no message box';
         box.focus();
+        const atAll = String(text).match(/^@all[ \t]+/i);
+        if (atAll) {
+            await typeAtAll(box);
+            text = String(text).slice(atAll[0].length);
+        }
         const firstLine = norm(String(text).split('\n')[0]).slice(0, 24);
         const typed = function() { return norm((composer() || {}).textContent || '').indexOf(firstLine) >= 0; };
         const data = new DataTransfer();
@@ -582,10 +611,16 @@
         const header = document.querySelector('#main header');
         if (!header) return false;
         clickEl(header.querySelector('[role="button"]') || header);
+        // 1.7.296 (the 1.7.295 fix): WhatsApp Business splits the number in
+        // the contact panel across several elements, so whole short texts
+        // that look like a phone number are read with innerText as well.
         const found = await waitFor(function() {
-            return Array.from(document.querySelectorAll('span[dir="auto"], span[title], div[title], span'))
-                .filter(function(el) { return !el.closest('#main') && !el.closest('#side') && el.children.length === 0; })
-                .map(function(el) { return String(el.textContent || '').replace(/\D/g, ''); })
+            return Array.from(document.querySelectorAll('span[dir="auto"], span[title], div[title], span, div'))
+                .filter(function(el) { return !el.closest('#main') && !el.closest('#side') && (el.children.length === 0 || el.offsetParent !== null || el.getClientRects().length); })
+                .map(function(el) {
+                    const text = el.children.length === 0 ? String(el.textContent || '') : String(el.innerText || '');
+                    return text.length <= 40 && /^[+\d\s().\u00a0\u200e\u200f\u202a-\u202e-]+$/.test(text.trim()) ? text.replace(/\D/g, '') : '';
+                })
                 .find(function(digits) { return digits.length >= 9 && digits.length <= 15 && digits.endsWith(tail); });
         }, 6000);
         closeSidePanel();
