@@ -305,10 +305,39 @@
         return Boolean(opened);
     }
 
+    // 1.7.296: "@all" at the start (Barcelona): typed by itself so WhatsApp
+    // offers its "mention everyone" choice, which is clicked; when WhatsApp
+    // offers none it stays as plain text "@all". Never presses Enter here.
+    async function typeAtAll(box) {
+        box.focus();
+        document.execCommand('insertText', false, '@all');
+        const option = await waitFor(function() {
+            return Array.from(document.querySelectorAll('[role="option"], [role="listitem"], [role="button"], li, div[tabindex]'))
+                .filter(function(el) { return !el.closest('#side') && !el.closest('#main header') && (el.offsetParent !== null || el.getClientRects().length); })
+                .find(function(el) {
+                    const value = String(el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+                    return value && value.length < 60 && (/^@?(all|everyone)\b/i.test(value) || /(notify|mention) (everyone|all)/i.test(value));
+                }) || null;
+        }, 2000);
+        if (option) {
+            clickEl(option);
+            await sleep(300);
+            // WhatsApp adds a space after a mention; one is added when it did not
+            if (!/\s$/.test(String(box.textContent || '').replace(/\u00a0/g, ' '))) document.execCommand('insertText', false, ' ');
+            return true;
+        }
+        document.execCommand('insertText', false, ' ');
+        return false;
+    }
     async function pasteAndSend(text) {
         const box = composer();
         if (!box) return 'no message box';
         box.focus();
+        const atAll = String(text).match(/^@all[ \t]+/i);
+        if (atAll) {
+            await typeAtAll(box);
+            text = String(text).slice(atAll[0].length);
+        }
         const firstLine = norm(String(text).split('\n')[0]).slice(0, 24);
         const typed = function() { return norm((composer() || {}).textContent || '').indexOf(firstLine) >= 0; };
         const data = new DataTransfer();
@@ -582,10 +611,16 @@
         const header = document.querySelector('#main header');
         if (!header) return false;
         clickEl(header.querySelector('[role="button"]') || header);
+        // 1.7.296 (the 1.7.295 fix): WhatsApp Business splits the number in
+        // the contact panel across several elements, so whole short texts
+        // that look like a phone number are read with innerText as well.
         const found = await waitFor(function() {
-            return Array.from(document.querySelectorAll('span[dir="auto"], span[title], div[title], span'))
-                .filter(function(el) { return !el.closest('#main') && !el.closest('#side') && el.children.length === 0; })
-                .map(function(el) { return String(el.textContent || '').replace(/\D/g, ''); })
+            return Array.from(document.querySelectorAll('span[dir="auto"], span[title], div[title], span, div'))
+                .filter(function(el) { return !el.closest('#main') && !el.closest('#side') && (el.children.length === 0 || el.offsetParent !== null || el.getClientRects().length); })
+                .map(function(el) {
+                    const text = el.children.length === 0 ? String(el.textContent || '') : String(el.innerText || '');
+                    return text.length <= 40 && /^[+\d\s().\u00a0\u200e\u200f\u202a-\u202e-]+$/.test(text.trim()) ? text.replace(/\D/g, '') : '';
+                })
                 .find(function(digits) { return digits.length >= 9 && digits.length <= 15 && digits.endsWith(tail); });
         }, 6000);
         closeSidePanel();
@@ -896,6 +931,46 @@
         wpWaGo('https://web.whatsapp.com/accept?code=' + encodeURIComponent(code));
     }
 
+    // 1.7.297: "Copy tour info" on a CRM tour page (wp-tours.js, was the
+    // Tampermonkey script) opens the city's S-rides group the way mod opens
+    // groups, and leaves the message here. It is put in that group's message
+    // box once — NEVER sent. Only in the group: the page was loaded for its
+    // link, or the open chat has the group's learned name. Fresh for 2 min.
+    const TOUR_PENDING_KEY = 'wp_tour_wa_pending_v1';
+    const START_URL = location.href;
+    let tourPasteBusy = false;
+    async function tourPaste() {
+        if (tourPasteBusy) return;
+        let pending = await getStore(TOUR_PENDING_KEY);
+        if (!pending || !pending.text || !pending.code || Date.now() - Number(pending.at || 0) > 2 * 60 * 1000) return;
+        tourPasteBusy = true;
+        try {
+            const codeTitles = (await getStore(CODE_TITLES_KEY)) || {};
+            const known = codeTitles[pending.code] || '';
+            const fromLink = START_URL.indexOf(pending.code) >= 0;
+            const box = await waitFor(function() {
+                if (running) return null;
+                const ready = composer();
+                if (!ready) return null;
+                if (known) return norm(headerTitle()) === norm(known) ? ready : null;
+                return fromLink ? ready : null;
+            }, 60000, 500);
+            if (!box) return;
+            // still waiting (not taken by another WhatsApp page meanwhile)
+            const still = await getStore(TOUR_PENDING_KEY);
+            if (!still || still.at !== pending.at) return;
+            await chrome.storage.local.remove(TOUR_PENDING_KEY);
+            box.focus();
+            const data = new DataTransfer();
+            data.setData('text/plain', String(pending.text));
+            box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+            await sleep(300);
+            if (!norm(box.textContent)) document.execCommand('insertText', false, String(pending.text));
+        } finally {
+            tourPasteBusy = false;
+        }
+    }
+
     // (1.7.157) Names are no longer learned from any chat opened from a link —
     // only from a send that confirmed the city's group.
 
@@ -913,6 +988,7 @@
     });
     chrome.storage.onChanged.addListener(function(changes, area) {
         if (area === 'local' && changes[JOBS_KEY] && Array.isArray(changes[JOBS_KEY].newValue) && changes[JOBS_KEY].newValue.length) runJobs();
+        if (area === 'local' && changes[TOUR_PENDING_KEY] && changes[TOUR_PENDING_KEY].newValue) tourPaste();
     });
     // 1.7.282: the side panel's copy says it is there (logged in or not),
     // and takes the panel page's messages (a group / a send to run).
@@ -975,4 +1051,5 @@
         });
     }
     runJobs();
+    tourPaste();
 })();
