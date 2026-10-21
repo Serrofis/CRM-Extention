@@ -789,6 +789,21 @@
     });
     title.appendChild(copyTourBtn);
 
+    // 1.7.298: Send to drivers (the city's "available for tours" drivers)
+    const tourDriversBtn = document.createElement('span');
+    tourDriversBtn.id = 'liveops-tour-drivers-btn';
+    tourDriversBtn.textContent = 'Send to drivers';
+    Object.assign(tourDriversBtn.style, {
+      marginLeft: '8px', cursor: 'pointer', display: 'none',
+      background: BRAND.emerald, color: BRAND.graphite, fontWeight: '700',
+      fontSize: '11px', padding: '3px 10px', borderRadius: '999px'
+    });
+    tourDriversBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openTourDrivers(header);
+    });
+    title.appendChild(tourDriversBtn);
+
     function renderCityInfo(data, city) {
       cityTooltip.innerHTML = '';
       const titleEl = document.createElement('div');
@@ -1068,11 +1083,278 @@
       const btn = document.getElementById('liveops-copy-tour-btn');
       if (btn && getTourInfo()) {
         btn.style.display = 'inline-block';
+        const driversBtn = document.getElementById('liveops-tour-drivers-btn'); // 1.7.298
+        if (driversBtn) driversBtn.style.display = 'inline-block';
         getTourDetailsDoc(); // pre-fetch so the copy is instant
         clearInterval(tourCheck);
       }
       if (tourChecks >= 20) clearInterval(tourCheck);
     }, 500);
+  }
+
+  // ============================================================
+  // 1.7.298: TOUR DRIVERS — "Send to drivers" on a tour transfer
+  // ============================================================
+  // The CRM's drivers list (/admin/drivers) filtered by city has an
+  // "available for tours" part. mod reads that list (read-only GET) and
+  // messages each driver through WhatsApp Web, one at a time.
+  // The list address is learned on the drivers page ("use this list for
+  // tour drivers"); until then mod guesses it from the page's filters.
+  const TOUR_DRIVERS_PATH_KEY = 'wp_tour_drivers_path_v1';  // { search, cityParam, savedAt }
+  const TOUR_DRIVERS_SENT_KEY = 'wp_tour_drivers_sent_v1';  // { orderId: { phone: at } }
+  const TOUR_WORD = /tour/i;
+
+  function driverIdFromHref(href) {
+    const m = String(href || '').match(/\/admin\/drivers\/(\d+)\/?(?:[?#]|$)/);
+    return m ? m[1] : '';
+  }
+
+  function phoneDigits(raw) {
+    let d = String(raw || '').replace(/[^\d+]/g, '');
+    if (d.startsWith('+')) d = d.slice(1);
+    else if (d.startsWith('00')) d = d.slice(2);
+    d = d.replace(/\D/g, '');
+    return /^\d{8,15}$/.test(d) ? d : '';
+  }
+
+  function phoneFrom(el) {
+    if (!el) return '';
+    const link = el.querySelector('a[href^="tel:"], a[href*="wa.me/"], a[href*="whatsapp.com/send"]');
+    if (link) {
+      const href = link.getAttribute('href') || '';
+      const m = href.match(/phone=(\d+)/) || href.match(/wa\.me\/(\d+)/);
+      const p = phoneDigits(m ? m[1] : href.replace(/^tel:/, ''));
+      if (p) return p;
+    }
+    const texts = (el.textContent || '').match(/(?:\+|00)?\d[\d\s().-]{6,}\d/g) || [];
+    for (const t of texts) { const p = phoneDigits(t); if (p) return p; }
+    return '';
+  }
+
+  // The drivers' rows: inside an "available for tours" section when the page
+  // has one; in a table with a "tour" column, only rows that say yes there.
+  function parseTourDrivers(doc) {
+    let root = doc;
+    const heading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, legend, .panel > h3, caption'))
+      .find(el => /available\s*(for\s*)?tours?/i.test(el.textContent || ''));
+    if (heading) root = heading.closest('.panel, section, fieldset, table') || heading.parentElement || doc;
+    const out = [];
+    const seen = new Set();
+    root.querySelectorAll('table').forEach(table => {
+      const heads = Array.from(table.querySelectorAll('thead th')).map(th => (th.textContent || '').trim());
+      const tourCol = heading ? -1 : heads.findIndex(h => TOUR_WORD.test(h));
+      const phoneCol = heads.findIndex(h => /phone|mobile|whats/i.test(h));
+      const nameCol = heads.findIndex(h => /name/i.test(h));
+      table.querySelectorAll('tbody tr').forEach(tr => {
+        const cells = tr.children;
+        if (tourCol >= 0) {
+          const cell = cells[tourCol];
+          const v = (cell && cell.textContent || '').trim();
+          const yes = /^(yes|true|y|✓|✔)$/i.test(v) || (cell && cell.querySelector('.status_tag.yes, .yes'));
+          if (!yes) return;
+        }
+        const link = Array.from(tr.querySelectorAll('a[href]')).find(a => driverIdFromHref(a.getAttribute('href')));
+        const id = link ? driverIdFromHref(link.getAttribute('href')) : '';
+        let name = nameCol >= 0 && cells[nameCol] ? cells[nameCol].textContent.trim() : '';
+        if (!name && link && !/^\s*(view|edit|\d+)\s*$/i.test(link.textContent)) name = link.textContent.trim();
+        const phone = phoneFrom(phoneCol >= 0 ? cells[phoneCol] : tr) || phoneFrom(tr);
+        const key = id || phone;
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        out.push({ id, name: name.replace(/\s+/g, ' ').slice(0, 60) || ('Driver ' + id), phone });
+      });
+    });
+    return out;
+  }
+
+  // Phone from a driver's own page (when the list has none)
+  async function fetchDriverPhone(id) {
+    try {
+      const doc = await fetchDoc('/admin/drivers/' + id);
+      const row = Array.from(doc.querySelectorAll('tr, li, .row'))
+        .find(r => /phone|mobile|whats/i.test((r.querySelector('th, label') || {}).textContent || ''));
+      return phoneFrom(row ? (row.querySelector('td') || row) : null);
+    } catch (e) { return ''; }
+  }
+
+  // City id: the drivers filter's own option first, else the transfer's city select
+  function cityIdFrom(doc, param, city) {
+    const sel = doc && param ? doc.querySelector(`select[name="${CSS.escape(param)}"]`) : null;
+    if (sel) {
+      const opt = Array.from(sel.options).find(o => o.value && normCity(o.textContent) === normCity(city));
+      if (opt) return opt.value;
+    }
+    const own = document.getElementById('tour_transfer_welcome_city_id');
+    return own && own.value ? own.value : '';
+  }
+
+  async function tourDriversUrl(city) {
+    const saved = await storeGet(TOUR_DRIVERS_PATH_KEY, null);
+    const base = await fetchDoc('/admin/drivers');
+    let params;
+    let cityParam;
+    if (saved && saved.search && saved.cityParam) {
+      params = new URLSearchParams(saved.search);
+      cityParam = saved.cityParam;
+    } else {
+      // Guess: the filter whose name says "city" + a scope / tab saying "tour"
+      const sel = Array.from(base.querySelectorAll('form select[name]')).find(s => /city/i.test(s.name));
+      if (!sel) throw new Error('no city filter found on the drivers page');
+      cityParam = sel.name;
+      params = new URLSearchParams();
+      const scope = Array.from(base.querySelectorAll('.scopes a, .table_tools a, .tabs a, ul.nav a'))
+        .find(a => TOUR_WORD.test(a.textContent || ''));
+      if (scope) new URL(scope.getAttribute('href'), location.origin).searchParams.forEach((v, k) => { if (k !== cityParam) params.set(k, v); });
+    }
+    const id = cityIdFrom(base, cityParam, city);
+    if (!id) throw new Error('city "' + city + '" not found in the drivers filter');
+    params.set(cityParam, id);
+    if (!params.has('per_page')) params.set('per_page', '200');
+    params.delete('page');
+    return '/admin/drivers?' + params.toString();
+  }
+
+  async function findTourDrivers(city) {
+    const url = await tourDriversUrl(city);
+    const doc = await fetchDoc(url);
+    const drivers = parseTourDrivers(doc).slice(0, 40);
+    for (const d of drivers) if (!d.phone && d.id) d.phone = await fetchDriverPhone(d.id);
+    return { url, drivers };
+  }
+
+  // One WhatsApp Web job, waits for its result (like mod's hero sends)
+  const tourWaWaiters = {};
+  let tourWaListening = false;
+  function tourWaSend(phone, label, text) {
+    if (!tourWaListening) {
+      tourWaListening = true;
+      chrome.runtime.onMessage.addListener((m) => {
+        if (!m || m.type !== 'WP_WA_RESULT' || m.progress) return;
+        const w = tourWaWaiters[m.jobId];
+        if (w) { delete tourWaWaiters[m.jobId]; w(m); }
+      });
+    }
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: 'WP_WA_SEND', city: label, phone, text, label }, (r) => {
+          if (chrome.runtime.lastError || !r || !r.ok) {
+            resolve({ ok: false, info: chrome.runtime.lastError?.message || r?.error || 'no answer — refresh this tab (F5)' });
+            return;
+          }
+          const timer = setTimeout(() => { delete tourWaWaiters[r.jobId]; resolve({ ok: false, info: 'no answer from WhatsApp Web in 90s' }); }, 90000);
+          tourWaWaiters[r.jobId] = (m) => { clearTimeout(timer); resolve(m); };
+        });
+      } catch (e) { resolve({ ok: false, info: String(e && e.message || e) }); }
+    });
+  }
+
+  function buildTourDriversPanel(anchor) {
+    let panel = document.getElementById('wp-tour-drivers-panel');
+    if (panel) { panel.remove(); return null; }
+    panel = document.createElement('div');
+    panel.id = 'wp-tour-drivers-panel';
+    Object.assign(panel.style, {
+      margin: '8px 0', padding: '10px 12px', borderRadius: '8px', background: BRAND.bg,
+      border: `1px solid ${BRAND.border}`, color: BRAND.graphite, fontFamily: BRAND.font,
+      fontSize: '12px', fontWeight: '400', cursor: 'default', textTransform: 'none'
+    });
+    panel.addEventListener('click', e => e.stopPropagation());
+    anchor.insertAdjacentElement('afterend', panel);
+    return panel;
+  }
+
+  async function openTourDrivers(anchor) {
+    const panel = buildTourDriversPanel(anchor);
+    if (!panel) return;
+    panel.textContent = 'Reading the tour info and the drivers list…';
+    const orderId = getOrderId() || '';
+    let summary;
+    let found;
+    try {
+      summary = await buildTourSummary();
+      if (!summary) { panel.textContent = 'Tour info not found on this page.'; return; }
+      if (!summary.city) { panel.textContent = 'No city on this transfer.'; return; }
+      found = await findTourDrivers(summary.city);
+    } catch (e) {
+      panel.textContent = 'Could not read the tour drivers: ' + (e && e.message || e) +
+        '. Open the drivers list, filter the city and the tours part, then click "mod: use this list for tour drivers" there.';
+      return;
+    }
+    const text = summary.text.replace(/^Hey team! Anyone available for this tour\?/, 'Hi! Are you available for this tour?');
+    const sentAll = await storeGet(TOUR_DRIVERS_SENT_KEY, {});
+    const sent = sentAll[orderId] || {};
+    panel.textContent = '';
+    const head = document.createElement('div');
+    head.style.marginBottom = '6px';
+    const listLink = document.createElement('a');
+    listLink.href = found.url; listLink.target = '_blank'; listLink.textContent = 'list';
+    head.append(`${found.drivers.length} tour driver(s) in ${summary.city} (`, listLink, ')');
+    panel.appendChild(head);
+    if (!found.drivers.length) return;
+    const rows = found.drivers.map(d => {
+      const line = document.createElement('label');
+      line.style.display = 'block';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.disabled = !d.phone;
+      box.checked = Boolean(d.phone) && !sent[d.phone];
+      const status = document.createElement('span');
+      status.style.marginLeft = '6px';
+      status.style.opacity = '0.7';
+      status.textContent = !d.phone ? 'no phone' : sent[d.phone] ? 'sent ' + new Date(sent[d.phone]).toLocaleTimeString().slice(0, 5) : '';
+      line.append(box, ' ' + d.name + (d.phone ? ' (…' + d.phone.slice(-4) + ')' : ''), status);
+      panel.appendChild(line);
+      return { d, box, status };
+    });
+    const preview = document.createElement('pre');
+    Object.assign(preview.style, { whiteSpace: 'pre-wrap', margin: '6px 0', fontFamily: 'inherit', opacity: '0.8' });
+    preview.textContent = text;
+    panel.appendChild(preview);
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.textContent = 'Send to the ticked drivers';
+    Object.assign(go.style, { background: BRAND.turquoise, color: BRAND.graphite, fontWeight: '700', border: '0', borderRadius: '999px', padding: '4px 12px', cursor: 'pointer' });
+    panel.appendChild(go);
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      for (const r of rows) {
+        if (!r.box.checked || !r.d.phone) continue;
+        r.box.checked = false;
+        r.status.textContent = 'sending…';
+        const res = await tourWaSend(r.d.phone, r.d.name, text);
+        r.status.textContent = res.ok ? 'sent' : 'failed: ' + (res.info || '');
+        if (res.ok) {
+          const all = await storeGet(TOUR_DRIVERS_SENT_KEY, {});
+          (all[orderId] = all[orderId] || {})[r.d.phone] = Date.now();
+          const keys = Object.keys(all);
+          if (keys.length > 300) keys.slice(0, keys.length - 300).forEach(k => delete all[k]);
+          await storeSet(TOUR_DRIVERS_SENT_KEY, all);
+        }
+      }
+      go.disabled = false;
+    });
+  }
+
+  // On the drivers list: remember the filtered address (the city in it is
+  // swapped for each tour's city)
+  function initDriversPageLearner() {
+    const chip = document.createElement('div');
+    chip.textContent = 'mod: use this list for tour drivers';
+    Object.assign(chip.style, {
+      position: 'fixed', right: '16px', bottom: '16px', zIndex: 999999, padding: '6px 12px',
+      borderRadius: '999px', background: 'rgba(20,24,28,0.85)', color: '#8fffd5',
+      font: '12px Consolas, monospace', cursor: 'pointer', backdropFilter: 'blur(6px)'
+    });
+    chip.addEventListener('click', async () => {
+      const params = new URLSearchParams(location.search);
+      const cityParam = Array.from(params.keys()).find(k => /city/i.test(k) && params.get(k));
+      if (!cityParam) { chip.textContent = 'mod: filter a city first, then click again'; return; }
+      const found = parseTourDrivers(document);
+      params.delete('page');
+      await storeSet(TOUR_DRIVERS_PATH_KEY, { search: params.toString(), cityParam, savedAt: Date.now() });
+      chip.textContent = `mod: saved — ${found.length} tour driver(s) read on this page`;
+    });
+    document.body.appendChild(chip);
   }
 
   // ============================================================
@@ -1082,6 +1364,9 @@
     if (location.pathname.includes(`/pages/${WA_GROUPS_PAGE_ID}`)) syncSridesFromConfluence();
     return;
   }
+
+  // 1.7.298: the drivers list (not a driver's own page)
+  if (/^\/admin\/drivers\/?$/.test(location.pathname)) { initDriversPageLearner(); return; }
 
   const isIndexPage = /tour_transfers\/index_v2/.test(location.href);
   if (isIndexPage) {
