@@ -398,6 +398,18 @@
         }).map((c) => c.id);
     }
 
+    // 1.7.306: the Em Hailing page (content.js) saves its Today / Tomorrow
+    // lists per city; fresh for 15 minutes.
+    const EM_LIST_KEY = 'wp_em_list_counts_v1';
+    let emList = null;
+    function emFresh() { return !!(emList && Date.now() - (emList.at || 0) < 15 * 60 * 1000); }
+    function unOf(x) { return !x ? 0 : x.em != null ? x.em : x.crm ? x.crm.un : 0; }
+    try {
+        chrome.storage.onChanged.addListener((changes, area) => {
+            if (area === 'local' && changes[EM_LIST_KEY]) { emList = changes[EM_LIST_KEY].newValue || null; try { render(); } catch (_) {} }
+        });
+    } catch (_) {}
+
     // ---- per-city view model ----
     function model() {
         const dates = windowDates();
@@ -413,14 +425,25 @@
         cache.events.forEach((e) => { if (e.city && byCity[e.city] && e.to >= dates[0] && e.from <= last) byCity[e.city].events.push(e); });
         cache.em.forEach((e) => { if (e.city && byCity[e.city]) byCity[e.city].em = e; });
         cache.hubOutlook.forEach((o) => { if (o.city && byCity[o.city]) byCity[o.city].outlook = o; });
+        // 1.7.306: Today / Tomorrow "without a driver" = the Em Hailing list (same numbers as that page)
+        if (emFresh()) {
+            [['today', dates[0]], ['tomorrow', dates[1]]].forEach((pair) => {
+                Object.values(byCity).forEach((c) => { c.days[pair[1]] = Object.assign(c.days[pair[1]] || {}, { em: 0 }); });
+                ((emList[pair[0]] || {}).cities || []).forEach((e) => {
+                    const city = matchCity(e.c);
+                    const c = city ? byCity[city.id] : (byCity['em:' + e.c] = byCity['em:' + e.c] || { id: 'em:' + e.c, name: e.c, days: {}, events: [], slack: [], em: null, outlook: null });
+                    c.days[pair[1]] = Object.assign(c.days[pair[1]] || {}, { em: (c.days[pair[1]] && c.days[pair[1]].em || 0) + e.n });
+                });
+            });
+        }
         cache.slack.forEach((m) => (m.cities || []).forEach((id) => { if (byCity[id]) byCity[id].slack.push(m); }));
         Object.values(byCity).forEach((c) => {
             c.maxGap = 0; c.worst = null; c.unNear = 0; c.shortToday = 0;
             dates.forEach((d, i) => {
                 const x = c.days[d] || {};
-                if (x.crm) c.maxGap += x.crm.un; // 1.7.305: transfers without a driver (CRM), not the hub gap
+                c.maxGap += unOf(x); // 1.7.305: transfers without a driver (CRM), not the hub gap
                 if (x.crm && x.crm.worst != null && (c.worst == null || x.crm.worst < c.worst)) c.worst = x.crm.worst;
-                if (i < 2 && x.crm) c.unNear += x.crm.un;
+                if (i < 2) c.unNear += unOf(x);
                 if (i === 0 && x.crm) c.shortToday = x.crm.shortUn;
             });
             c.actions = actionsFor(c, dates);
@@ -463,9 +486,9 @@
 
     // 1.7.305: from the CRM only (the hub's numbers are off)
     function cellClass(x) {
-        if (!x || !x.crm) return '';
-        if (x.crm.worst != null && x.crm.worst < 1) return 'red';
-        if (x.crm.un > 0) return 'amber';
+        if (!x || (!x.crm && x.em == null)) return '';
+        if (x.crm && x.crm.worst != null && x.crm.worst < 1 && unOf(x) > 0) return 'red';
+        if (unOf(x) > 0) return 'amber';
         return '';
     }
     function cityLevel(c, dates) {
@@ -497,11 +520,12 @@
         return out.map((r) => r[0] === r[1] ? pad(r[0]) + 'h' : pad(r[0]) + '-' + pad(r[1] + 1) + 'h').join(', ');
     }
     function cityPeriod(c, ds) {
-        const p = { c: c, un: 0, as: 0, gap: 0, booked: 0, short: [], shortUn: 0, shortAdj: 0, hasHours: false, events: [], days: [] };
+        const p = { c: c, un: 0, unC: 0, as: 0, gap: 0, booked: 0, short: [], shortUn: 0, shortAdj: 0, hasHours: false, events: [], days: [] };
         ds.forEach((d) => {
             const x = c.days[d] || {};
-            const un = x.crm ? x.crm.un : 0;
+            const un = unOf(x);
             p.as += x.crm ? x.crm.as : 0;
+            p.unC += x.crm ? x.crm.un : 0;
             p.un += un;
             p.gap += Math.max(0, (x.hub && x.hub.gap) || 0);
             p.booked += (x.hub && x.hub.booked) || 0;
@@ -535,6 +559,7 @@
             un: all.reduce((n, p) => n + p.un, 0),
             gap: all.reduce((n, p) => n + p.gap, 0),
             as: all.reduce((n, p) => n + p.as, 0),
+            unC: all.reduce((n, p) => n + p.unC, 0),
             shortCities: all.filter((p) => p.short.length).length,
             shortUn: all.reduce((n, p) => n + p.shortUn, 0),
             high: all.reduce((n, p) => n + p.events.filter(isHigh).length, 0),
@@ -547,9 +572,9 @@
         let h = '<div class="seg">' + [['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'Rest of week']].map((x) => '<button class="' + (x[0] === period ? 'on' : '') + '" data-period="' + x[0] + '">' + x[1] + '</button>').join('') + '<span class="note">' + esc(range) + '</span></div>';
         const tile = (title, value, help, cls) => '<div class="card kpi' + (cls ? ' ' + cls : '') + '"><div class="top">' + title + '</div><div class="num">' + value + '</div><div class="help">' + help + '</div></div>';
         h += '<div class="kpis">' +
-            tile('Transfers without a driver', fmt(k.un), 'unassigned now, from the CRM', k.un ? 'warnv' : '') +
+            tile('Transfers without a driver', fmt(k.un), (period !== 'week' && emFresh() ? 'in the Em Hailing list now (' + ago(emList.at / 1000) + ')' : period !== 'week' ? 'CRM dashboard; open Em Hailing for the live list' : 'CRM dashboard'), k.un ? 'warnv' : '') +
             tile('Short of drivers', k.shortCities + (k.shortCities === 1 ? ' city' : ' cities'), fmt(k.shortUn) + ' jobs in hours with fewer drivers than jobs (' + k.read + ' cities read hour by hour)', k.shortCities ? 'badv' : '') +
-            tile('Covered', (k.as + k.un ? Math.round(k.as / (k.as + k.un) * 100) : 0) + '%', fmt(k.as) + ' of ' + fmt(k.as + k.un) + ' transfers have a driver (CRM)', '') +
+            tile('Covered', (k.as + k.unC ? Math.round(k.as / (k.as + k.unC) * 100) : 0) + '%', fmt(k.as) + ' of ' + fmt(k.as + k.unC) + ' transfers have a driver (CRM dashboard)', '') +
             tile('Big events', k.high, k.noPlan ? k.noPlan + ' with no plan in the events sheet' : 'all have a plan', k.noPlan ? 'badv' : '') + '</div>';
 
         // where to act
@@ -564,7 +589,7 @@
                 h += '<td><span class="chip ' + (p.shortUn ? 'red' : p.un ? 'amber' : 'ok') + '">' + fmt(p.un) + '</span></td>';
                 h += '<td>' + (p.short.length ? '<span class="bad">' + esc(shortTxt) + '</span><div class="s">' + fmt(p.shortAdj) + ' drivers for ' + fmt(p.shortUn) + ' jobs</div>' : '<span class="s">' + esc(shortTxt || 'not read') + '</span>') + '</td>';
                 if (period === 'week') h += '<td class="minis">' + p.days.map((x) => '<span class="mini ' + (x.cls || 'ok') + '" title="' + dayName(x.d) + ': ' + x.un + ' without driver">' + dayName(x.d).slice(0, 2) + '</span>').join('') + '</td>';
-                h += '<td>' + (p.hasHours ? fmt(p.as) + ' of ' + fmt(p.as + p.un) : '<span class="s">not read</span>') + '</td>';
+                h += '<td>' + (p.hasHours ? fmt(p.as) + ' of ' + fmt(p.as + p.unC) : '<span class="s">not read</span>') + '</td>';
                 h += '<td>' + (p.events.length ? esc(p.events[0].name.slice(0, 22)) + ' <span class="pill ' + (isHigh(p.events[0]) ? 'red' : 'grey') + '">' + esc(p.events[0].gravity || '-') + '</span>' + (isHigh(p.events[0]) && noAction(p.events[0]) ? '<div class="s bad">no plan yet</div>' : '') : '') + '</td>';
                 h += '<td>' + (p.raise ? '<span class="pill amber">raise ' + esc(c.em.much || '') + '</span><div class="s">' + esc((c.em.sku || '').replace(/^-\s*/, '').slice(0, 40)) + '</div>' : c.em ? '<span class="s">' + (/yes/i.test(c.em.raise) ? 'raise allowed' : 'no raise') + '</span>' : '') + '</td></tr>';
             });
@@ -624,7 +649,7 @@
                 const evs = c.events.filter((e) => e.from <= d && e.to >= d);
                 const cls = cellClass(x) || 'ok';
                 let t = '';
-                if (x.crm) t = '<span class="chip ' + cls + '" title="without a driver (CRM)' + (x.crm ? ' · worst hour: ' + (x.crm.worst != null ? x.crm.worst + ' drivers per unassigned job' : 'no unassigned') + ' · ' + x.crm.un + ' unassigned' : '') + '">' + fmt(x.crm.un) + (x.crm && x.crm.worst != null ? '<small>' + x.crm.worst + '&times;</small>' : '') + '</span>';
+                if (x.crm || x.em != null) t = '<span class="chip ' + cls + '" title="without a driver (' + (x.em != null ? 'Em Hailing list' : 'CRM') + ')' + (x.crm ? ' · worst hour: ' + (x.crm.worst != null ? x.crm.worst + ' drivers per unassigned job' : 'no unassigned') + ' · ' + x.crm.un + ' unassigned' : '') + '">' + fmt(unOf(x)) + (x.crm && x.crm.worst != null ? '<small>' + x.crm.worst + '&times;</small>' : '') + '</span>';
                 if (evs.length) t += '<span class="ev" title="' + esc(evs.map((e) => e.name + ' (' + (e.gravity || '-') + ')').join(', ')) + '">' + esc(evs[0].name.slice(0, 14)) + (evs.length > 1 ? ' +' + (evs.length - 1) : '') + '</span>';
                 h += '<td class="day">' + (t || '<span style="color:var(--faint)">&middot;</span>') + '</td>';
             });
@@ -658,7 +683,7 @@
         c._day = pick;
         const x = c.days[pick] || {};
         h += '<div class="card"><h3>Day by day</h3><div class="days">' + dates.map((d, i) => '<button class="' + (d === pick ? 'on' : '') + '" data-day="' + d + '">' + (i === 0 ? 'Today' : dayName(d)) + '</button>').join('') + '</div>';
-        h += '<div class="facts"><div><b>' + (x.hub && x.hub.gap != null ? fmt(x.hub.gap) : '-') + '</b><span>hub forecast gap</span></div><div><b>' + (x.crm ? fmt(x.crm.un) : '-') + '</b><span>unassigned</span></div><div><b>' + (x.crm && x.crm.worst != null ? x.crm.worst + '&times;' : x.crm ? 'ok' : '-') + '</b><span>worst hour' + (x.crm && x.crm.worstHour != null ? ' (' + pad(x.crm.worstHour) + ':00)' : '') + '</span></div></div>';
+        h += '<div class="facts"><div><b>' + (x.hub && x.hub.gap != null ? fmt(x.hub.gap) : '-') + '</b><span>hub forecast gap</span></div><div><b>' + (x.crm || x.em != null ? fmt(unOf(x)) : '-') + '</b><span>unassigned</span></div><div><b>' + (x.crm && x.crm.worst != null ? x.crm.worst + '&times;' : x.crm ? 'ok' : '-') + '</b><span>worst hour' + (x.crm && x.crm.worstHour != null ? ' (' + pad(x.crm.worstHour) + ':00)' : '') + '</span></div></div>';
         if (x.hours && x.hours.length) {
             const max = Math.max.apply(null, x.hours.map((y) => y.adj || 0).concat([1]));
             h += '<div class="hours">' + x.hours.map((y) => '<div class="' + (y.un > 0 && (y.adj || 0) < y.un ? 'short' : y.blk ? 'blk' : '') + '" style="height:' + Math.max(3, Math.round(((y.adj || 0) / max) * 90)) + 'px" title="' + pad(y.h) + ':00 · ' + y.adj + ' drivers (adj) · ' + y.as + ' assigned · ' + y.un + ' unassigned' + (y.blk ? ' · blocked' : '') + '"></div>').join('') + '</div>';
@@ -754,12 +779,12 @@
         m.cities.forEach((c) => {
             m.dates.forEach((d) => {
                 const x = c.days[d];
-                if (!x || (!x.hub && !x.crm)) return;
+                if (!x || (!x.hub && !x.crm && x.em == null)) return;
                 recs.push({
                     k: c.id + '|' + d, city: c.id, date: d, at: Date.now(),
                     gap: x.hub ? x.hub.gap : null, gapPct: x.hub ? x.hub.gapPct : null, hubUn: x.hub ? x.hub.un : null, booked: x.hub ? x.hub.booked : null,
                     forecast: x.hub ? x.hub.forecast : null, net: x.hub ? x.hub.net : null, gfs: x.hub ? x.hub.gfs : null,
-                    un: x.crm ? x.crm.un : null, as: x.crm ? x.crm.as : null, adjPeak: x.crm ? x.crm.adjPeak : null,
+                    un: x.crm || x.em != null ? unOf(x) : null, as: x.crm ? x.crm.as : null, adjPeak: x.crm ? x.crm.adjPeak : null,
                     worst: x.crm ? x.crm.worst : null, blocked: x.crm ? x.crm.blocked : null,
                     events: c.events.filter((e) => e.from <= d && e.to >= d).length
                 });
@@ -866,7 +891,8 @@
     $('full').addEventListener('click', () => refresh(true));
 
     (async function start() {
-        const got = await chrome.storage.local.get({ [CACHE_KEY]: null, [DONE_KEY]: {}, [KPI_KEY]: {} });
+        const got = await chrome.storage.local.get({ [CACHE_KEY]: null, [DONE_KEY]: {}, [KPI_KEY]: {}, [EM_LIST_KEY]: null });
+        emList = got[EM_LIST_KEY];
         kpiHist = got[KPI_KEY] || {};
         Object.keys(kpiHist).forEach((d) => { if (d < iso(addDays(today(), -14))) delete kpiHist[d]; });
         if (got[CACHE_KEY]) cache = Object.assign(cache, got[CACHE_KEY]);

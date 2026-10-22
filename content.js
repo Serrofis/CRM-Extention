@@ -28549,6 +28549,25 @@ async function wpTransferAssistantExtensionEnabled() {
         });
         return out;
     }
+    // 1.7.306: the Today / Tomorrow lists per city, for the overview page
+    // (same numbers as this page). Only on the Today-Tomorrow page; every
+    // 30 s, written only when something changed.
+    var wpEmListSig = '';
+    function wpEmListPublish() {
+        try {
+            if (!/[?&]em_hailing=true/.test(window.location.search) || wpEmPeriod()) return;
+            const counts = wpRemoteCmCities();
+            const pick = function(day) { return { cities: ((counts[day] || {}).cities || []).map(function(entry) { return { c: entry.c, n: entry.n }; }) }; };
+            const value = { today: pick('today'), tomorrow: pick('tomorrow') };
+            const sig = JSON.stringify(value);
+            const stale = !wpEmListSig || sig !== wpEmListSig;
+            wpEmListSig = sig;
+            value.at = Date.now();
+            if (stale || Date.now() % 300000 < 30000) chrome.storage.local.set({ wp_em_list_counts_v1: value });
+        } catch (_) {}
+    }
+    setInterval(wpEmListPublish, 30000);
+    setTimeout(wpEmListPublish, 8000);
     // Where the City Manager's controls are (1.7.218). On the live page the
     // note / price / button row sits inside the orders window itself, and
     // #wp-today-city-actions-window is an empty, hidden box; older layouts
