@@ -28,9 +28,6 @@
     const CACHE_KEY = 'wp_ov_cache_v1';
     const DONE_KEY = 'wp_ov_done_v1';
     const DAYS = 8;            // today + 7
-    const TOP_N = 40;          // cities read from the CRM every hour (by hub gap)
-    const MAX_HOURLY = 150;    // 1.7.304: plus cities with transfers without a driver today / tomorrow
-    const MAX_EVENT_CITIES = 40;
     const CRM_GAP_MS = 1200;   // between CRM page reads
     const REFRESH_MS = 60 * 60 * 1000;
     const params = new URLSearchParams(location.search);
@@ -421,14 +418,14 @@
             c.maxGap = 0; c.worst = null; c.unNear = 0; c.shortToday = 0;
             dates.forEach((d, i) => {
                 const x = c.days[d] || {};
-                if (x.hub && x.hub.gap > c.maxGap) c.maxGap = x.hub.gap;
+                if (x.crm) c.maxGap += x.crm.un; // 1.7.305: transfers without a driver (CRM), not the hub gap
                 if (x.crm && x.crm.worst != null && (c.worst == null || x.crm.worst < c.worst)) c.worst = x.crm.worst;
-                if (i < 2) c.unNear += x.crm ? x.crm.un : (x.hub && x.hub.un) || 0;
+                if (i < 2 && x.crm) c.unNear += x.crm.un;
                 if (i === 0 && x.crm) c.shortToday = x.crm.shortUn;
             });
             c.actions = actionsFor(c, dates);
             c.open = c.actions.filter((a) => !done[a.key]).length;
-            c.score = c.maxGap + (c.worst != null && c.worst < 1 ? 60 : 0) + c.open * 15 + (c.outlook ? (c.outlook.loss || 0) / 200 : 0);
+            c.score = c.maxGap + (c.worst != null && c.worst < 1 ? 60 : 0) + c.open * 15;
         });
         return { dates: dates, cities: Object.values(byCity) };
     }
@@ -464,12 +461,11 @@
     const fmt = (n) => n == null ? '-' : Math.round(n).toLocaleString();
     const dayName = (d) => { const x = parseIso(d); return x.toDateString().slice(0, 3) + ' ' + x.getDate(); };
 
+    // 1.7.305: from the CRM only (the hub's numbers are off)
     function cellClass(x) {
-        if (!x) return '';
-        const gap = x.hub ? x.hub.gap || 0 : 0;
-        const cov = x.crm ? x.crm.worst : null;
-        if (gap >= 50 || (cov != null && cov < 1)) return 'red';
-        if (gap >= 15 || (cov != null && cov < 1.5)) return 'amber';
+        if (!x || !x.crm) return '';
+        if (x.crm.worst != null && x.crm.worst < 1) return 'red';
+        if (x.crm.un > 0) return 'amber';
         return '';
     }
     function cityLevel(c, dates) {
@@ -501,10 +497,11 @@
         return out.map((r) => r[0] === r[1] ? pad(r[0]) + 'h' : pad(r[0]) + '-' + pad(r[1] + 1) + 'h').join(', ');
     }
     function cityPeriod(c, ds) {
-        const p = { c: c, un: 0, gap: 0, booked: 0, short: [], shortUn: 0, shortAdj: 0, hasHours: false, events: [], days: [] };
+        const p = { c: c, un: 0, as: 0, gap: 0, booked: 0, short: [], shortUn: 0, shortAdj: 0, hasHours: false, events: [], days: [] };
         ds.forEach((d) => {
             const x = c.days[d] || {};
-            const un = x.crm ? x.crm.un : (x.hub && x.hub.un) || 0;
+            const un = x.crm ? x.crm.un : 0;
+            p.as += x.crm ? x.crm.as : 0;
             p.un += un;
             p.gap += Math.max(0, (x.hub && x.hub.gap) || 0);
             p.booked += (x.hub && x.hub.booked) || 0;
@@ -516,7 +513,7 @@
         });
         p.events = c.events.filter((e) => ds.some((d) => e.from <= d && e.to >= d));
         p.raise = !!(c.em && /yes/i.test(c.em.raise) && p.un > 0 && period !== 'week');
-        p.score = p.shortUn * 3 + p.un + p.gap * 0.5 + p.events.filter(isHigh).length * 20;
+        p.score = p.shortUn * 3 + p.un + p.events.filter(isHigh).length * 20;
         return p;
     }
 
@@ -532,11 +529,12 @@
 
     function renderHome(m) {
         const ds = periodDates(m);
-        const rows = m.cities.map((c) => cityPeriod(c, ds)).filter((p) => p.un > 0 || p.gap > 0 || p.events.some(isHigh)).sort((a, b) => b.score - a.score);
+        const rows = m.cities.map((c) => cityPeriod(c, ds)).filter((p) => p.un > 0 || p.events.some(isHigh)).sort((a, b) => b.score - a.score);
         const all = m.cities.map((c) => cityPeriod(c, ds));
         const k = {
             un: all.reduce((n, p) => n + p.un, 0),
             gap: all.reduce((n, p) => n + p.gap, 0),
+            as: all.reduce((n, p) => n + p.as, 0),
             shortCities: all.filter((p) => p.short.length).length,
             shortUn: all.reduce((n, p) => n + p.shortUn, 0),
             high: all.reduce((n, p) => n + p.events.filter(isHigh).length, 0),
@@ -549,24 +547,24 @@
         let h = '<div class="seg">' + [['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'Rest of week']].map((x) => '<button class="' + (x[0] === period ? 'on' : '') + '" data-period="' + x[0] + '">' + x[1] + '</button>').join('') + '<span class="note">' + esc(range) + '</span></div>';
         const tile = (title, value, help, cls) => '<div class="card kpi' + (cls ? ' ' + cls : '') + '"><div class="top">' + title + '</div><div class="num">' + value + '</div><div class="help">' + help + '</div></div>';
         h += '<div class="kpis">' +
-            tile('Transfers without a driver', fmt(k.un), 'unassigned right now, all cities', k.un ? 'warnv' : '') +
+            tile('Transfers without a driver', fmt(k.un), 'unassigned now, from the CRM', k.un ? 'warnv' : '') +
             tile('Short of drivers', k.shortCities + (k.shortCities === 1 ? ' city' : ' cities'), fmt(k.shortUn) + ' jobs in hours with fewer drivers than jobs (' + k.read + ' cities read hour by hour)', k.shortCities ? 'badv' : '') +
-            tile('Expected without a driver', fmt(k.gap), 'hub forecast: unassigned now plus bookings still to come that the drivers can’t cover', '') +
+            tile('Covered', (k.as + k.un ? Math.round(k.as / (k.as + k.un) * 100) : 0) + '%', fmt(k.as) + ' of ' + fmt(k.as + k.un) + ' transfers have a driver (CRM)', '') +
             tile('Big events', k.high, k.noPlan ? k.noPlan + ' with no plan in the events sheet' : 'all have a plan', k.noPlan ? 'badv' : '') + '</div>';
 
         // where to act
         h += '<div class="card"><div class="head"><h2>Where to act ' + label.toLowerCase() + '</h2><span class="note">most urgent first &middot; click a city for hour by hour</span></div>';
         if (!rows.length) h += '<div class="empty">' + (Object.keys(cache.at).length ? 'Nothing open for ' + label.toLowerCase() + '.' : 'Nothing read yet: press Refresh.') + '</div>';
         else {
-            h += '<table class="act-table"><thead><tr><th>City</th><th>No driver</th><th>Short hours</th>' + (period === 'week' ? '<th>By day</th>' : '') + '<th>Expected without driver</th><th>Event</th><th>Policy</th></tr></thead><tbody>';
+            h += '<table class="act-table"><thead><tr><th>City</th><th>No driver</th><th>Short hours</th>' + (period === 'week' ? '<th>By day</th>' : '') + '<th>Assigned</th><th>Event</th><th>Policy</th></tr></thead><tbody>';
             rows.slice(0, showAll ? 400 : 15).forEach((p) => {
                 const c = p.c;
                 const shortTxt = p.short.length ? (period === 'week' ? p.short.length + ' hours over ' + new Set(p.short.map((s) => s.d)).size + ' days' : hourRanges(p.short.map((s) => s.h))) : (p.hasHours ? 'none' : '');
                 h += '<tr class="city" data-city="' + esc(c.id) + '"><td><b>' + esc(c.name) + '</b>' + (c.slack.length ? ' <span class="pill grey">Slack ' + c.slack.length + '</span>' : '') + '</td>';
                 h += '<td><span class="chip ' + (p.shortUn ? 'red' : p.un ? 'amber' : 'ok') + '">' + fmt(p.un) + '</span></td>';
                 h += '<td>' + (p.short.length ? '<span class="bad">' + esc(shortTxt) + '</span><div class="s">' + fmt(p.shortAdj) + ' drivers for ' + fmt(p.shortUn) + ' jobs</div>' : '<span class="s">' + esc(shortTxt || 'not read') + '</span>') + '</td>';
-                if (period === 'week') h += '<td class="minis">' + p.days.map((x) => '<span class="mini ' + (x.cls || 'ok') + '" title="' + dayName(x.d) + ': ' + x.un + ' without driver, gap ' + x.gap + '">' + dayName(x.d).slice(0, 2) + '</span>').join('') + '</td>';
-                h += '<td>' + (p.gap ? fmt(p.gap) : '<span class="s">0</span>') + '</td>';
+                if (period === 'week') h += '<td class="minis">' + p.days.map((x) => '<span class="mini ' + (x.cls || 'ok') + '" title="' + dayName(x.d) + ': ' + x.un + ' without driver">' + dayName(x.d).slice(0, 2) + '</span>').join('') + '</td>';
+                h += '<td>' + (p.hasHours ? fmt(p.as) + ' of ' + fmt(p.as + p.un) : '<span class="s">not read</span>') + '</td>';
                 h += '<td>' + (p.events.length ? esc(p.events[0].name.slice(0, 22)) + ' <span class="pill ' + (isHigh(p.events[0]) ? 'red' : 'grey') + '">' + esc(p.events[0].gravity || '-') + '</span>' + (isHigh(p.events[0]) && noAction(p.events[0]) ? '<div class="s bad">no plan yet</div>' : '') : '') + '</td>';
                 h += '<td>' + (p.raise ? '<span class="pill amber">raise ' + esc(c.em.much || '') + '</span><div class="s">' + esc((c.em.sku || '').replace(/^-\s*/, '').slice(0, 40)) + '</div>' : c.em ? '<span class="s">' + (/yes/i.test(c.em.raise) ? 'raise allowed' : 'no raise') + '</span>' : '') + '</td></tr>';
             });
@@ -617,7 +615,7 @@
     }
 
     function renderTable(m, list) {
-        let h = '<div class="legend"><span><span class="chip red">red</span> gap 50+ or fewer drivers than jobs in some hour</span><span><span class="chip amber">amber</span> gap 15+ or tight</span><span>big number = expected without a driver (hub) &middot; small = drivers per unassigned job in the worst hour</span></div>';
+        let h = '<div class="legend"><span><span class="chip red">red</span> fewer drivers than jobs in some hour</span><span><span class="chip amber">amber</span> transfers without a driver</span><span>big number = transfers without a driver (CRM) &middot; small = drivers per unassigned job in the worst hour</span></div>';
         h += '<div class="card tablecard"><table><thead><tr><th>City</th><th>Open actions</th><th>Loss / wk</th>' + m.dates.map((d, i) => '<th style="text-align:center">' + (i === 0 ? 'Today' : dayName(d)) + '</th>').join('') + '</tr></thead><tbody>';
         list.slice(0, 400).forEach((c) => {
             h += '<tr class="city" data-city="' + esc(c.id) + '"><td><b>' + esc(c.name) + '</b>' + (c.slack.length ? ' <span class="pill grey">Slack ' + c.slack.length + '</span>' : '') + '</td><td>' + (c.open ? '<span class="pill ' + (cityLevel(c, m.dates) || 'grey') + '">' + c.open + '</span>' : '') + '</td><td>' + (c.outlook && c.outlook.loss ? '&euro;' + fmt(c.outlook.loss) : '') + '</td>';
@@ -626,7 +624,7 @@
                 const evs = c.events.filter((e) => e.from <= d && e.to >= d);
                 const cls = cellClass(x) || 'ok';
                 let t = '';
-                if (x.hub || x.crm) t = '<span class="chip ' + cls + '" title="expected without a driver (hub)' + (x.crm ? ' · worst hour: ' + (x.crm.worst != null ? x.crm.worst + ' drivers per unassigned job' : 'no unassigned') + ' · ' + x.crm.un + ' unassigned' : '') + '">' + (x.hub && x.hub.gap != null ? fmt(x.hub.gap) : '&ndash;') + (x.crm && x.crm.worst != null ? '<small>' + x.crm.worst + '&times;</small>' : '') + '</span>';
+                if (x.crm) t = '<span class="chip ' + cls + '" title="without a driver (CRM)' + (x.crm ? ' · worst hour: ' + (x.crm.worst != null ? x.crm.worst + ' drivers per unassigned job' : 'no unassigned') + ' · ' + x.crm.un + ' unassigned' : '') + '">' + fmt(x.crm.un) + (x.crm && x.crm.worst != null ? '<small>' + x.crm.worst + '&times;</small>' : '') + '</span>';
                 if (evs.length) t += '<span class="ev" title="' + esc(evs.map((e) => e.name + ' (' + (e.gravity || '-') + ')').join(', ')) + '">' + esc(evs[0].name.slice(0, 14)) + (evs.length > 1 ? ' +' + (evs.length - 1) : '') + '</span>';
                 h += '<td class="day">' + (t || '<span style="color:var(--faint)">&middot;</span>') + '</td>';
             });
@@ -660,15 +658,15 @@
         c._day = pick;
         const x = c.days[pick] || {};
         h += '<div class="card"><h3>Day by day</h3><div class="days">' + dates.map((d, i) => '<button class="' + (d === pick ? 'on' : '') + '" data-day="' + d + '">' + (i === 0 ? 'Today' : dayName(d)) + '</button>').join('') + '</div>';
-        h += '<div class="facts"><div><b>' + (x.hub && x.hub.gap != null ? fmt(x.hub.gap) : '-') + '</b><span>expected without driver</span></div><div><b>' + (x.crm ? fmt(x.crm.un) : x.hub ? fmt(x.hub.un) : '-') + '</b><span>unassigned</span></div><div><b>' + (x.crm && x.crm.worst != null ? x.crm.worst + '&times;' : x.crm ? 'ok' : '-') + '</b><span>worst hour' + (x.crm && x.crm.worstHour != null ? ' (' + pad(x.crm.worstHour) + ':00)' : '') + '</span></div></div>';
+        h += '<div class="facts"><div><b>' + (x.hub && x.hub.gap != null ? fmt(x.hub.gap) : '-') + '</b><span>hub forecast gap</span></div><div><b>' + (x.crm ? fmt(x.crm.un) : '-') + '</b><span>unassigned</span></div><div><b>' + (x.crm && x.crm.worst != null ? x.crm.worst + '&times;' : x.crm ? 'ok' : '-') + '</b><span>worst hour' + (x.crm && x.crm.worstHour != null ? ' (' + pad(x.crm.worstHour) + ':00)' : '') + '</span></div></div>';
         if (x.hours && x.hours.length) {
             const max = Math.max.apply(null, x.hours.map((y) => y.adj || 0).concat([1]));
             h += '<div class="hours">' + x.hours.map((y) => '<div class="' + (y.un > 0 && (y.adj || 0) < y.un ? 'short' : y.blk ? 'blk' : '') + '" style="height:' + Math.max(3, Math.round(((y.adj || 0) / max) * 90)) + 'px" title="' + pad(y.h) + ':00 · ' + y.adj + ' drivers (adj) · ' + y.as + ' assigned · ' + y.un + ' unassigned' + (y.blk ? ' · blocked' : '') + '"></div>').join('') + '</div>';
             h += '<div class="hlabels">' + x.hours.map((y) => '<span>' + (y.h % 3 === 0 ? pad(y.h) : '') + '</span>').join('') + '</div>';
             h += '<details class="htable"><summary>Hour table (as on the availability dashboard)</summary><table><thead><tr><th>Hour</th><th>Drivers</th><th>Adj</th><th>Assigned</th><th>No driver</th><th></th></tr></thead><tbody>' + x.hours.map((y) => '<tr class="' + (y.un > 0 && (y.adj || 0) < y.un ? 'shortrow' : '') + '"><td>' + pad(y.h) + ':00</td><td>' + y.drv + '</td><td>' + y.adj + '</td><td>' + y.as + '</td><td>' + (y.un || '') + '</td><td>' + (y.blk ? '<span class="pill amber">blocked</span>' : '') + '</td></tr>').join('') + '</tbody></table></details>';
             h += '<p class="note">Drivers per hour (adjusted for acceptance). <span style="color:var(--red)">Red</span>: fewer drivers than unassigned jobs. <span style="color:var(--amber)">Amber</span>: blocked hour.</p>';
-        } else h += '<p class="note">Hours for this city are not read yet. Refresh reads the top ' + TOP_N + ' and the cities with big events; "Read all cities" reads every city.</p>';
-        if (x.hub) h += '<p class="note">Hub: ' + fmt(x.hub.booked) + ' booked, about ' + fmt(x.hub.forecast) + ' expected, ' + fmt(x.hub.net) + ' drivers free' + (x.hub.gfs != null ? ', forward GFS ' + x.hub.gfs + '%' : '') + '.</p>';
+        } else h += '<p class="note">Hours for this city are not read yet. Refresh reads every city from the CRM; it may still be on its way.</p>';
+        if (x.hub) h += '<p class="note">Hub, for comparison: ' + fmt(x.hub.booked) + ' booked, about ' + fmt(x.hub.forecast) + ' expected, ' + fmt(x.hub.net) + ' drivers free' + (x.hub.gfs != null ? ', forward GFS ' + x.hub.gfs + '%' : '') + '.</p>';
         h += '</div>';
         h += '<div class="card"><h3>Events this week</h3>';
         if (!c.events.length) h += '<div class="note">None in the events sheet.</div>';
@@ -761,7 +759,7 @@
                     k: c.id + '|' + d, city: c.id, date: d, at: Date.now(),
                     gap: x.hub ? x.hub.gap : null, gapPct: x.hub ? x.hub.gapPct : null, hubUn: x.hub ? x.hub.un : null, booked: x.hub ? x.hub.booked : null,
                     forecast: x.hub ? x.hub.forecast : null, net: x.hub ? x.hub.net : null, gfs: x.hub ? x.hub.gfs : null,
-                    un: x.crm ? x.crm.un : (x.hub ? x.hub.un : null), as: x.crm ? x.crm.as : null, adjPeak: x.crm ? x.crm.adjPeak : null,
+                    un: x.crm ? x.crm.un : null, as: x.crm ? x.crm.as : null, adjPeak: x.crm ? x.crm.adjPeak : null,
                     worst: x.crm ? x.crm.worst : null, blocked: x.crm ? x.crm.blocked : null,
                     events: c.events.filter((e) => e.from <= d && e.to >= d).length
                 });
@@ -794,24 +792,24 @@
             await step('slack', readSlack);
             await saveCache();
             render();
+            // 1.7.305: every city from the CRM (the hub is off), 4 pages at a time;
+            // the open city and cities with big events first
             const m = model();
-            let targets;
-            if (all) targets = cache.cities.slice();
-            else {
-                // 1.7.304: every city with transfers without a driver today or tomorrow (hub), most first
-                const near = (c) => [0, 1].reduce((n, i) => n + (((c.days[m.dates[i]] || {}).hub || {}).un || 0), 0);
-                const top = m.cities.filter((c) => near(c) > 0).sort((a, b) => near(b) - near(a)).slice(0, MAX_HOURLY)
-                    .concat(m.cities.slice().sort((a, b) => b.maxGap - a.maxGap).slice(0, TOP_N));
-                const ev = m.cities.filter((c) => c.events.some(isHigh)).slice(0, MAX_EVENT_CITIES);
-                if (selected) top.unshift(m.cities.find((c) => c.id === selected));
-                const seen = {}; targets = top.concat(ev).filter((c) => c && !seen[c.id] && (seen[c.id] = 1));
-            }
-            for (let i = 0; i < targets.length; i++) {
-                $('status').textContent = 'CRM hours ' + (i + 1) + ' / ' + targets.length + ': ' + targets[i].name;
-                const ok = await step('crm', () => readCrmCity(targets[i]));
-                if (!ok) break;
-                if (i % 10 === 9) { await saveCache(); render(); }
-            }
+            const first = m.cities.filter((c) => c.id === selected || c.events.some(isHigh));
+            const seen = {};
+            const targets = first.concat(cache.cities).filter((c) => c && !seen[c.id] && (seen[c.id] = 1));
+            let next = 0, doneN = 0, stop = false;
+            const worker = async () => {
+                while (!stop && next < targets.length) {
+                    const c = targets[next++];
+                    const ok = await step('crm', () => readCrmCity(c));
+                    if (!ok) { stop = true; break; }
+                    doneN++;
+                    $('status').textContent = 'CRM ' + doneN + ' / ' + targets.length + ' cities';
+                    if (doneN % 25 === 0) { await saveCache(); render(); }
+                }
+            };
+            await Promise.all([worker(), worker(), worker(), worker()]);
             cache.at.crm = Date.now();
             cache.at.all = Date.now();
             await saveCache();
