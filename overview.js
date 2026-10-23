@@ -553,7 +553,7 @@
 
     function renderHome(m) {
         const ds = periodDates(m);
-        const rows = m.cities.map((c) => cityPeriod(c, ds)).filter((p) => p.un > 0 || p.events.some(isHigh)).sort((a, b) => b.score - a.score);
+        const rows = m.cities.map((c) => cityPeriod(c, ds)).filter((p) => p.un > 0 || p.events.some(isHigh)).sort((a, b) => (b.un > 0) - (a.un > 0) || b.score - a.score); // 1.7.307: cities with nothing unassigned go last
         const all = m.cities.map((c) => cityPeriod(c, ds));
         const k = {
             un: all.reduce((n, p) => n + p.un, 0),
@@ -668,30 +668,80 @@
         return '<svg class="spark" viewBox="0 0 ' + w + ' ' + (hgt + 2) + '" preserveAspectRatio="none"><polyline fill="none" stroke="' + color + '" stroke-width="2" points="' + pts + '"/></svg>';
     }
 
+    // 1.7.307: ghas summary of a city's Slack posts. Uses the local AI on
+    // this PC (settings copied from the CRM page) when it is on; otherwise a
+    // plain summary. Slack text only goes to localhost, never to the relay.
+    const ghasCache = {};
+    const GHAS_WORDS = [['strike', /strike|walkout/i], ['marathon / race', /marathon|race\b|run\b/i], ['closures', /clos(ed|ure)|road ?block|traffic/i], ['raise prices', /raise|surge|price/i], ['blocked slots', /block/i], ['cancellations', /cancel/i], ['weather', /storm|snow|flood|weather|wind/i], ['airport / flights', /airport|flight|terminal/i], ['events', /event|concert|festival|match|conference|congress/i]];
+    function ghasSig(c) { return c.slack.slice(0, 10).map((s) => s.ts).join(','); }
+    function ghasPlain(c) {
+        const posts = c.slack.slice(0, 10);
+        const per = {};
+        posts.forEach((s) => { per[s.channel] = (per[s.channel] || 0) + 1; });
+        const all = posts.map((s) => s.text).join(' ');
+        const topics = GHAS_WORDS.filter((w) => w[1].test(all)).map((w) => w[0]);
+        return posts.length + ' post' + (posts.length === 1 ? '' : 's') + ' in the last 7 days (' + Object.keys(per).map((k) => '#' + k + ' ' + per[k]).join(', ') + '), latest ' + ago(posts[0].ts) + ' by ' + (posts[0].who || 'someone') + '.' + (topics.length ? ' Topics: ' + topics.join(', ') + '.' : '');
+    }
+    function ghasHtml(c) {
+        if (!c.slack.length) return '<div class="note">Nothing on Slack about this city in the last 7 days.</div>';
+        const hit = ghasCache[c.id];
+        if (hit && hit.sig === ghasSig(c) && hit.text) return '<div>' + esc(hit.text).replace(/\n/g, '<br>') + '</div><div class="note">Local AI' + (hit.model ? ' (' + esc(hit.model) + ')' : '') + '.</div>';
+        return '<div>' + esc(ghasPlain(c)) + '</div>' + (hit && hit.busy ? '<div class="note">Asking the local AI...</div>' : '<div class="note">Plain summary. Turn on the local AI in mod on the CRM for a written one.</div>');
+    }
+    async function ghasAsk(c) {
+        if (!c || !c.slack.length) return;
+        const sig = ghasSig(c);
+        const hit = ghasCache[c.id];
+        if (hit && hit.sig === sig && (hit.text || hit.busy || hit.failed)) return;
+        let cfg = null;
+        try { cfg = (await chrome.storage.local.get('wp_ai_cfg_mirror_v1')).wp_ai_cfg_mirror_v1; } catch (_) {}
+        if (!cfg || !cfg.on || !cfg.model) return;
+        ghasCache[c.id] = { sig, busy: true };
+        const paint = () => { const el = $('ghas'); if (el && selected === c.id) el.innerHTML = ghasHtml(c); };
+        paint();
+        const posts = c.slack.slice(0, 10).map((s) => '#' + s.channel + ' ' + new Date(s.ts * 1000).toISOString().slice(0, 16) + ' ' + (s.who || '') + ': ' + s.text.slice(0, 600)).join('\n');
+        let r = null;
+        try {
+            r = await chrome.runtime.sendMessage({ type: 'WP_AI_ASK', url: cfg.url, model: cfg.model, messages: [
+                { role: 'system', content: 'You help an operations manager of an airport transfer company. Summarise the Slack posts about ' + c.name + ' in at most 4 short plain sentences: what is happening, which dates, and what the team is asked to do. No lists, no greetings.' },
+                { role: 'user', content: posts }
+            ] });
+        } catch (_) {}
+        ghasCache[c.id] = r && r.ok && r.text ? { sig, text: String(r.text).trim(), model: cfg.model } : { sig, failed: true };
+        paint();
+    }
     function renderDrawer(c, dates) {
         if (!c) { closeDrawer(); return; }
         $('backdrop').hidden = false; $('drawer').hidden = false;
         const lvl = cityLevel(c, dates);
         let h = '<div class="dh"><div style="flex:1"><h2>' + esc(c.name) + '</h2><div class="sub">' + esc([c.em && c.em.prio, c.em && c.em.type, c.em && c.em.cm && 'City manager ' + c.em.cm].filter(Boolean).join(' · ')) + '</div></div><span class="pill ' + (lvl || 'green') + '" style="margin-top:8px">' + (lvl === 'red' ? 'needs attention' : lvl === 'amber' ? 'watch' : 'fine') + '</span><button class="close" id="close" title="Close">&times;</button></div>';
+        // 1.7.307: order is Slack posts, ghas summary, day by day, what to do.
+        h += '<div class="card"><h3>Slack, last 7 days</h3>';
+        if (!c.slack.length) h += '<div class="note">No posts naming this city.</div>';
+        c.slack.slice(0, 10).forEach((s) => { h += '<div class="msg"><div class="m">#' + esc(s.channel) + ' &middot; ' + esc(s.who) + ' &middot; ' + ago(s.ts) + '</div>' + esc(s.text.slice(0, 500)) + '</div>'; });
+        h += '</div>';
+        h += '<div class="card"><h3>ghas summary</h3><div id="ghas">' + ghasHtml(c) + '</div></div>';
+        h += '<div class="card"><h3>Day by day</h3>';
+        dates.forEach((d, i) => {
+            const x = c.days[d] || {};
+            const un = unOf(x);
+            const hrs = x.hours || [];
+            const unH = hrs.filter((y) => y.un > 0);
+            const row = (y) => '<tr class="' + (y.un > 0 && (y.adj || 0) < y.un ? 'shortrow' : '') + '"><td>' + pad(y.h) + ':00</td><td>' + y.drv + '</td><td>' + y.adj + '</td><td>' + y.as + '</td><td>' + (y.un || '') + '</td><td>' + (y.blk ? '<span class="pill amber">blocked</span>' : '') + '</td></tr>';
+            const head = '<table><thead><tr><th>Hour</th><th>Drivers</th><th>Adj</th><th>Assigned</th><th>No driver</th><th></th></tr></thead><tbody>';
+            h += '<details class="dayrow"' + (un > 0 || unH.length ? ' open' : '') + '><summary><b>' + (i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : dayName(d)) + '</b> <span class="pill ' + (cellClass(x) || 'green') + '">' + (x.crm || x.em != null ? fmt(un) + ' without a driver' : 'not read yet') + '</span>' + (x.crm && x.crm.worst != null && un > 0 ? ' <span class="m">worst hour ' + x.crm.worst + '&times;' + (x.crm.worstHour != null ? ' at ' + pad(x.crm.worstHour) + ':00' : '') + '</span>' : '') + '</summary>';
+            if (unH.length) h += '<div class="htable">' + head + unH.map(row).join('') + '</tbody></table></div>';
+            else if (un > 0) h += '<p class="note">' + fmt(un) + ' without a driver on the Em Hailing list; hours not read yet.</p>';
+            if (hrs.length) h += '<details class="htable"><summary>All time slots</summary>' + head + hrs.map(row).join('') + '</tbody></table></details>';
+            if (x.hub) h += '<p class="note">Hub, for comparison: ' + fmt(x.hub.booked) + ' booked, about ' + fmt(x.hub.forecast) + ' expected, ' + fmt(x.hub.net) + ' drivers free.</p>';
+            h += '</details>';
+        });
+        h += '<p class="note"><span style="color:var(--red)">Red rows</span>: fewer drivers (adjusted for acceptance) than unassigned jobs.</p></div>';
         h += '<div class="card"><h3>What to do</h3>';
         if (!c.actions.length) h += '<div class="note">Nothing needed from what mod can see.</div>';
         c.actions.forEach((a) => {
             h += '<label class="act' + (done[a.key] ? ' done' : '') + '"><input type="checkbox" data-key="' + esc(a.key) + '"' + (done[a.key] ? ' checked' : '') + '><span><b>' + esc(a.text) + '</b><div class="w">' + esc(a.why) + '</div></span></label>';
         });
-        h += '</div>';
-        const pick = c._day && dates.includes(c._day) ? c._day : dates.find((d) => c.days[d] && c.days[d].hours) || dates[0];
-        c._day = pick;
-        const x = c.days[pick] || {};
-        h += '<div class="card"><h3>Day by day</h3><div class="days">' + dates.map((d, i) => '<button class="' + (d === pick ? 'on' : '') + '" data-day="' + d + '">' + (i === 0 ? 'Today' : dayName(d)) + '</button>').join('') + '</div>';
-        h += '<div class="facts"><div><b>' + (x.hub && x.hub.gap != null ? fmt(x.hub.gap) : '-') + '</b><span>hub forecast gap</span></div><div><b>' + (x.crm || x.em != null ? fmt(unOf(x)) : '-') + '</b><span>unassigned</span></div><div><b>' + (x.crm && x.crm.worst != null ? x.crm.worst + '&times;' : x.crm ? 'ok' : '-') + '</b><span>worst hour' + (x.crm && x.crm.worstHour != null ? ' (' + pad(x.crm.worstHour) + ':00)' : '') + '</span></div></div>';
-        if (x.hours && x.hours.length) {
-            const max = Math.max.apply(null, x.hours.map((y) => y.adj || 0).concat([1]));
-            h += '<div class="hours">' + x.hours.map((y) => '<div class="' + (y.un > 0 && (y.adj || 0) < y.un ? 'short' : y.blk ? 'blk' : '') + '" style="height:' + Math.max(3, Math.round(((y.adj || 0) / max) * 90)) + 'px" title="' + pad(y.h) + ':00 · ' + y.adj + ' drivers (adj) · ' + y.as + ' assigned · ' + y.un + ' unassigned' + (y.blk ? ' · blocked' : '') + '"></div>').join('') + '</div>';
-            h += '<div class="hlabels">' + x.hours.map((y) => '<span>' + (y.h % 3 === 0 ? pad(y.h) : '') + '</span>').join('') + '</div>';
-            h += '<details class="htable"><summary>Hour table (as on the availability dashboard)</summary><table><thead><tr><th>Hour</th><th>Drivers</th><th>Adj</th><th>Assigned</th><th>No driver</th><th></th></tr></thead><tbody>' + x.hours.map((y) => '<tr class="' + (y.un > 0 && (y.adj || 0) < y.un ? 'shortrow' : '') + '"><td>' + pad(y.h) + ':00</td><td>' + y.drv + '</td><td>' + y.adj + '</td><td>' + y.as + '</td><td>' + (y.un || '') + '</td><td>' + (y.blk ? '<span class="pill amber">blocked</span>' : '') + '</td></tr>').join('') + '</tbody></table></details>';
-            h += '<p class="note">Drivers per hour (adjusted for acceptance). <span style="color:var(--red)">Red</span>: fewer drivers than unassigned jobs. <span style="color:var(--amber)">Amber</span>: blocked hour.</p>';
-        } else h += '<p class="note">Hours for this city are not read yet. Refresh reads every city from the CRM; it may still be on its way.</p>';
-        if (x.hub) h += '<p class="note">Hub, for comparison: ' + fmt(x.hub.booked) + ' booked, about ' + fmt(x.hub.forecast) + ' expected, ' + fmt(x.hub.net) + ' drivers free' + (x.hub.gfs != null ? ', forward GFS ' + x.hub.gfs + '%' : '') + '.</p>';
         h += '</div>';
         h += '<div class="card"><h3>Events this week</h3>';
         if (!c.events.length) h += '<div class="note">None in the events sheet.</div>';
@@ -699,19 +749,11 @@
             h += '<div class="msg"><b>' + esc(e.name) + '</b> <span class="pill ' + (isHigh(e) ? 'red' : /medium/i.test(e.gravity) ? 'amber' : 'grey') + '">' + esc(e.gravity || '-') + '</span><div class="m">' + esc([dayName(e.from) + (e.to !== e.from ? ' to ' + dayName(e.to) : ''), e.type, e.supply != null && 'supply ' + e.supply + '%', e.dri && 'DRI ' + e.dri, 'LiveOps: ' + (e.affected || 'nothing yet')].filter(Boolean).join(' · ')) + '</div>' + (e.notes ? '<div>' + esc(e.notes) + '</div>' : '') + (e.comments ? '<div class="m">' + esc(e.comments) + '</div>' : '') + '</div>';
         });
         h += '</div>';
-        if (c.em) {
-            h += '<div class="card"><h3>EM policy</h3><div>Raise price: <b>' + esc(c.em.raise || '-') + '</b>' + (c.em.much ? ' &middot; ' + esc(c.em.much) : '') + (c.em.car ? ' &middot; ' + esc(c.em.car) : '') + (c.em.slot ? ' &middot; ' + esc(c.em.slot) : '') + '</div>' + (c.em.sku ? '<div class="note">' + esc(c.em.sku) + '</div>' : '') + (c.em.notes ? '<div class="note">' + esc(c.em.notes) + '</div>' : '');
-            (c.em.instr || []).forEach((i) => { h += '<div class="msg"><div class="m">' + esc(i.h) + '</div>' + esc(i.v) + '</div>'; });
-            h += '</div>';
-        }
         if (c.outlook) h += '<div class="card"><h3>Hub outlook</h3><div><b>&euro;' + fmt(c.outlook.loss) + '</b> loss / week &middot; ' + esc(c.outlook.vs || '') + ' vs last week</div><div class="note">' + esc(c.outlook.lever || '') + ' &middot; ' + esc(c.outlook.owner || '') + '</div></div>';
-        h += '<div class="card"><h3>Slack, last 7 days</h3>';
-        if (!c.slack.length) h += '<div class="note">No posts naming this city.</div>';
-        c.slack.slice(0, 10).forEach((s) => { h += '<div class="msg"><div class="m">#' + esc(s.channel) + ' &middot; ' + esc(s.who) + ' &middot; ' + ago(s.ts) + '</div>' + esc(s.text.slice(0, 500)) + '</div>'; });
-        h += '</div>';
         const mine = history.filter((r) => r.city === c.id).sort((a, b) => a.date < b.date ? -1 : 1).slice(-30);
         h += '<div class="card"><h3>Last 30 days</h3><div class="note">Unassigned</div>' + spark(mine.map((r) => r.un), '#121a3a') + '<div class="note">Hub gap</div>' + spark(mine.map((r) => r.gap), '#5b6ee1') + '</div>';
         $('drawer').innerHTML = h;
+        ghasAsk(c);
     }
     function closeDrawer() { selected = null; $('backdrop').hidden = true; $('drawer').hidden = true; }
 

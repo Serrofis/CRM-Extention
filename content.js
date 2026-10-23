@@ -28567,6 +28567,18 @@ async function wpTransferAssistantExtensionEnabled() {
         } catch (_) {}
     }
     setInterval(wpEmListPublish, 30000);
+    // 1.7.307: the local AI settings live in the CRM page's localStorage;
+    // a copy goes to extension storage so the Overview's ghas summary can use them.
+    var wpAiMirrorSig = '';
+    function wpAiMirror() {
+        try {
+            const cfg = wpAiConfig();
+            const sig = JSON.stringify(cfg);
+            if (sig !== wpAiMirrorSig) { wpAiMirrorSig = sig; chrome.storage.local.set({ wp_ai_cfg_mirror_v1: cfg }); }
+        } catch (_) {}
+    }
+    setInterval(wpAiMirror, 60000);
+    setTimeout(wpAiMirror, 5000);
     setTimeout(wpEmListPublish, 8000);
     // Where the City Manager's controls are (1.7.218). On the live page the
     // note / price / button row sits inside the orders window itself, and
