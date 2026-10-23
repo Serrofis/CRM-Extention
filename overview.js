@@ -616,7 +616,7 @@
         if (period !== 'week') {
             const d = ds[0];
             const grid = rows.filter((p) => p.c.days[d] && p.c.days[d].hours && p.c.days[d].hours.some((y) => y.un > 0)).slice(0, 14);
-            h += '<div class="card"><div class="head"><h2>Hour by hour, ' + label.toLowerCase() + '</h2><span class="note">number = transfers without a driver &middot; <span class="bad">red</span>: transfers without a driver &middot; <span style="color:var(--amber)">striped</span>: blocked hour &middot; hover for drivers</span></div>';
+            h += '<div class="card"><div class="head"><h2>Hour by hour, ' + label.toLowerCase() + '</h2><span class="note">number = transfers without a driver &middot; <span class="bad">red</span>: fewer drivers (adj) than jobs &middot; <span style="color:var(--amber)">amber</span>: tight &middot; striped: blocked &middot; hover for drivers</span></div>';
             if (!grid.length) h += '<div class="empty">No unassigned transfers in the cities read hour by hour.</div>';
             else {
                 h += '<div class="grid"><div class="gl"></div>' + Array.from({ length: 24 }, (_, i) => '<div class="gh">' + pad(i) + '</div>').join('');
@@ -625,7 +625,7 @@
                     const byH = {}; p.c.days[d].hours.forEach((y) => { byH[y.h] = y; });
                     for (let i = 0; i < 24; i++) {
                         const y = byH[i];
-                        const cls = (y && y.un ? 'red' : '') + (y && y.blk ? ' blk' : ''); // 1.7.309: every unassigned hour red; blocked hours striped
+                        const cls = !y || !y.un ? (y && y.blk ? 'blk' : '') : (y.adj || 0) < y.un ? 'red' : (y.adj || 0) < 2 * y.un ? 'amber' : 'ok' + (y.blk ? ' blk' : ''); // 1.7.310: back to the 1.7.308 colours; a green hour that is blocked gets the stripes too
                         h += '<div class="gc ' + cls + '" data-city="' + esc(p.c.id) + '" title="' + esc(p.c.name) + ' ' + pad(i) + ':00' + (y ? ' · ' + y.un + ' without driver · ' + y.as + ' assigned · ' + y.adj + ' drivers (adj) · ' + y.drv + ' drivers' + (y.blk ? ' · blocked' : '') : '') + '">' + (y && y.un ? y.un : '') + '</div>';
                     }
                 });
