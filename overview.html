@@ -190,6 +190,9 @@
     .htable summary { cursor: pointer; color: var(--muted); font-size: 13px; }
     .htable td, .htable th { padding: 4px 8px; font-size: 13px; }
     .htable tr.shortrow td { color: var(--red); font-weight: 600; }
+    .dayrow { border-top: 1px solid var(--line); padding: 8px 0; }
+    .dayrow > summary { cursor: pointer; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .dayrow .m { color: var(--muted); font-size: 13px; }
     .theme { background: transparent !important; color: #fff !important; border: 1px solid #3a4677 !important; min-width: 38px; }
 
     @media (max-width: 1250px) { .home { grid-template-columns: 1fr; } .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
