@@ -570,12 +570,26 @@
         const label = period === 'today' ? 'Today' : period === 'tomorrow' ? 'Tomorrow' : 'Rest of the week';
         const range = ds.length > 1 ? dayName(ds[0]) + ' to ' + dayName(ds[ds.length - 1]) : dayName(ds[0]);
         let h = '<div class="seg">' + [['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'Rest of week']].map((x) => '<button class="' + (x[0] === period ? 'on' : '') + '" data-period="' + x[0] + '">' + x[1] + '</button>').join('') + '<span class="note">' + esc(range) + '</span></div>';
-        const tile = (title, value, help, cls) => '<div class="card kpi' + (cls ? ' ' + cls : '') + '"><div class="top">' + title + '</div><div class="num">' + value + '</div><div class="help">' + help + '</div></div>';
+        const tile = (title, value, help, cls, key) => '<div class="card kpi' + (cls ? ' ' + cls : '') + (key ? ' click' + (openTile === key ? ' on' : '') + '" data-tile="' + key : '') + '"><div class="top">' + title + '</div><div class="num">' + value + '</div><div class="help">' + help + '</div></div>';
         h += '<div class="kpis">' +
             tile('Transfers without a driver', fmt(k.un), (period !== 'week' && emFresh() ? 'in the Em Hailing list now (' + ago(emList.at / 1000) + ')' : period !== 'week' ? 'CRM dashboard; open Em Hailing for the live list' : 'CRM dashboard'), k.un ? 'warnv' : '') +
-            tile('Short of drivers', k.shortCities + (k.shortCities === 1 ? ' city' : ' cities'), fmt(k.shortUn) + ' jobs in hours with fewer drivers than jobs (' + k.read + ' cities read hour by hour)', k.shortCities ? 'badv' : '') +
+            tile('Short of drivers', k.shortCities + (k.shortCities === 1 ? ' city' : ' cities'), fmt(k.shortUn) + ' jobs in hours with fewer drivers than jobs (' + k.read + ' cities read hour by hour)', k.shortCities ? 'badv' : '', 'short') +
             tile('Covered', (k.as + k.unC ? Math.round(k.as / (k.as + k.unC) * 100) : 0) + '%', fmt(k.as) + ' of ' + fmt(k.as + k.unC) + ' transfers have a driver (CRM dashboard)', '') +
-            tile('Big events', k.high, k.noPlan ? k.noPlan + ' with no plan in the events sheet' : 'all have a plan', k.noPlan ? 'badv' : '') + '</div>';
+            tile('Big events', k.high, k.high ? 'click to list them' : 'none in the events sheet', '', 'events') + '</div>'; // 1.7.309: no "no plan" count
+        // 1.7.309: Short of drivers / Big events tiles open a list of the cities or events.
+        if (openTile === 'short') {
+            const sl = all.filter((p) => p.short.length).sort((a, b) => b.shortUn - a.shortUn);
+            h += '<div class="card list tilelist"><div class="head"><h2>Short of drivers ' + label.toLowerCase() + '</h2><span class="note">hours with fewer drivers (adj) than jobs without a driver</span></div>';
+            h += sl.length ? sl.map((p) => '<div class="li" data-city="' + esc(p.c.id) + '"><div><b>' + esc(p.c.name) + '</b><div class="s">' + (period === 'week' ? p.short.length + ' hours over ' + new Set(p.short.map((x) => x.d)).size + ' days' : hourRanges(p.short.map((x) => x.h))) + '</div></div><span class="pill red">' + fmt(p.shortUn) + ' jobs</span></div>').join('') : '<div class="empty">No city is short of drivers.</div>';
+            h += '</div>';
+        } else if (openTile === 'events') {
+            const el = [];
+            all.forEach((p) => p.events.filter(isHigh).forEach((e) => el.push({ c: p.c, e: e })));
+            el.sort((a, b) => a.e.from < b.e.from ? -1 : 1);
+            h += '<div class="card list tilelist"><div class="head"><h2>Big events ' + label.toLowerCase() + '</h2><span class="note">' + el.length + '</span></div>';
+            h += el.length ? el.map((x) => '<div class="li" data-city="' + esc(x.c.id) + '"><div><b>' + esc(x.e.name) + '</b><div class="s">' + esc(x.c.name) + ' &middot; ' + dayName(x.e.from) + (x.e.to !== x.e.from ? ' to ' + dayName(x.e.to) : '') + (x.e.type ? ' &middot; ' + esc(x.e.type) : '') + (x.e.supply != null ? ' &middot; supply ' + x.e.supply + '%' : '') + '</div></div><span class="pill red">' + esc(x.e.gravity || 'High') + '</span></div>').join('') : '<div class="empty">No big events.</div>';
+            h += '</div>';
+        }
 
         // where to act
         h += '<div class="card"><div class="head"><h2>Where to act ' + label.toLowerCase() + '</h2><span class="note">most urgent first &middot; click a city for hour by hour</span></div>';
@@ -590,7 +604,7 @@
                 h += '<td>' + (p.short.length ? '<span class="bad">' + esc(shortTxt) + '</span><div class="s">' + fmt(p.shortAdj) + ' drivers for ' + fmt(p.shortUn) + ' jobs</div>' : '<span class="s">' + esc(shortTxt || 'not read') + '</span>') + '</td>';
                 if (period === 'week') h += '<td class="minis">' + p.days.map((x) => '<span class="mini ' + (x.cls || 'ok') + '" title="' + dayName(x.d) + ': ' + x.un + ' without driver">' + dayName(x.d).slice(0, 2) + '</span>').join('') + '</td>';
                 h += '<td>' + (p.hasHours ? fmt(p.as) + ' of ' + fmt(p.as + p.unC) : '<span class="s">not read</span>') + '</td>';
-                h += '<td>' + (p.events.length ? esc(p.events[0].name.slice(0, 22)) + ' <span class="pill ' + (isHigh(p.events[0]) ? 'red' : 'grey') + '">' + esc(p.events[0].gravity || '-') + '</span>' + (isHigh(p.events[0]) && noAction(p.events[0]) ? '<div class="s bad">no plan yet</div>' : '') : '') + '</td>';
+                h += '<td>' + (p.events.length ? esc(p.events[0].name.slice(0, 22)) + ' <span class="pill ' + (isHigh(p.events[0]) ? 'red' : 'grey') + '">' + esc(p.events[0].gravity || '-') + '</span>' : '') + '</td>';
                 h += '<td>' + (p.raise ? '<span class="pill amber">raise ' + esc(c.em.much || '') + '</span><div class="s">' + esc((c.em.sku || '').replace(/^-\s*/, '').slice(0, 40)) + '</div>' : c.em ? '<span class="s">' + (/yes/i.test(c.em.raise) ? 'raise allowed' : 'no raise') + '</span>' : '') + '</td></tr>';
             });
             h += '</tbody></table>';
@@ -602,7 +616,7 @@
         if (period !== 'week') {
             const d = ds[0];
             const grid = rows.filter((p) => p.c.days[d] && p.c.days[d].hours && p.c.days[d].hours.some((y) => y.un > 0)).slice(0, 14);
-            h += '<div class="card"><div class="head"><h2>Hour by hour, ' + label.toLowerCase() + '</h2><span class="note">number = transfers without a driver &middot; <span class="bad">red</span>: fewer drivers (adj) than jobs &middot; <span style="color:var(--amber)">amber</span>: tight &middot; hover for drivers</span></div>';
+            h += '<div class="card"><div class="head"><h2>Hour by hour, ' + label.toLowerCase() + '</h2><span class="note">number = transfers without a driver &middot; <span class="bad">red</span>: transfers without a driver &middot; <span style="color:var(--amber)">striped</span>: blocked hour &middot; hover for drivers</span></div>';
             if (!grid.length) h += '<div class="empty">No unassigned transfers in the cities read hour by hour.</div>';
             else {
                 h += '<div class="grid"><div class="gl"></div>' + Array.from({ length: 24 }, (_, i) => '<div class="gh">' + pad(i) + '</div>').join('');
@@ -611,7 +625,7 @@
                     const byH = {}; p.c.days[d].hours.forEach((y) => { byH[y.h] = y; });
                     for (let i = 0; i < 24; i++) {
                         const y = byH[i];
-                        const cls = !y || !y.un ? (y && y.blk ? 'blk' : '') : (y.adj || 0) < y.un ? 'red' : (y.adj || 0) < 2 * y.un ? 'amber' : 'ok';
+                        const cls = (y && y.un ? 'red' : '') + (y && y.blk ? ' blk' : ''); // 1.7.309: every unassigned hour red; blocked hours striped
                         h += '<div class="gc ' + cls + '" data-city="' + esc(p.c.id) + '" title="' + esc(p.c.name) + ' ' + pad(i) + ':00' + (y ? ' · ' + y.un + ' without driver · ' + y.as + ' assigned · ' + y.adj + ' drivers (adj) · ' + y.drv + ' drivers' + (y.blk ? ' · blocked' : '') : '') + '">' + (y && y.un ? y.un : '') + '</div>';
                     }
                 });
@@ -625,13 +639,14 @@
         all.forEach((p) => p.events.forEach((e) => evs.push({ c: p.c, e: e })));
         evs.sort((a, b) => (isHigh(b.e) - isHigh(a.e)) || (a.e.from < b.e.from ? -1 : 1));
         h += '<div class="row3"><div class="card list"><div class="head"><h2>Events ' + label.toLowerCase() + '</h2><span class="note">' + k.high + ' big of ' + evs.length + '</span></div>';
-        h += evs.length ? evs.slice(0, 10).map((x) => '<div class="li" data-city="' + esc(x.c.id) + '"><div><b>' + esc(x.e.name) + '</b><div class="s">' + esc(x.c.name) + ' &middot; ' + dayName(x.e.from) + (x.e.to !== x.e.from ? ' to ' + dayName(x.e.to) : '') + (x.e.supply != null ? ' &middot; supply ' + x.e.supply + '%' : '') + (isHigh(x.e) && noAction(x.e) ? ' &middot; <span class="bad">no plan yet</span>' : '') + '</div></div><span class="pill ' + (isHigh(x.e) ? 'red' : /medium/i.test(x.e.gravity) ? 'amber' : 'grey') + '">' + esc(x.e.gravity || 'event') + '</span></div>').join('') : '<div class="empty">No events in the sheet for ' + label.toLowerCase() + '.</div>';
+        h += evs.length ? evs.slice(0, 10).map((x) => '<div class="li" data-city="' + esc(x.c.id) + '"><div><b>' + esc(x.e.name) + '</b><div class="s">' + esc(x.c.name) + ' &middot; ' + dayName(x.e.from) + (x.e.to !== x.e.from ? ' to ' + dayName(x.e.to) : '') + (x.e.supply != null ? ' &middot; supply ' + x.e.supply + '%' : '') + '' + '</div></div><span class="pill ' + (isHigh(x.e) ? 'red' : /medium/i.test(x.e.gravity) ? 'amber' : 'grey') + '">' + esc(x.e.gravity || 'event') + '</span></div>').join('') : '<div class="empty">No events in the sheet for ' + label.toLowerCase() + '.</div>';
         h += '</div><div class="card list"><div class="head"><h2>Latest from Slack</h2><button class="link" data-go="slack">All &rarr;</button></div>';
         h += cache.slack.length ? cache.slack.slice(0, 6).map((s) => '<div class="li"' + (s.cities && s.cities[0] ? ' data-city="' + esc(s.cities[0]) + '"' : '') + '><div><div class="s">#' + esc(s.channel) + ' &middot; ' + esc(s.who) + ' &middot; ' + ago(s.ts) + '</div>' + esc(s.text.slice(0, 160)) + (s.text.length > 160 ? '&hellip;' : '') + '</div></div>').join('') : '<div class="empty">No Slack posts read yet.</div>';
         h += '</div></div>';
         $('main').innerHTML = h;
     }
     let showAll = false;
+    let openTile = null;
     function ago(ts) {
         const min = Math.round((Date.now() / 1000 - ts) / 60);
         if (min < 60) return min + ' min ago';
@@ -925,6 +940,8 @@
     function drawerDates(m) { return tab === 'home' ? periodDates(m) : m.dates; }
     $('main').addEventListener('click', (e) => {
         const per = e.target.closest('[data-period]');
+        const tl = e.target.closest('[data-tile]');
+        if (tl) { const t = tl.getAttribute('data-tile'); openTile = openTile === t ? null : t; render(); return; }
         if (per) { period = per.getAttribute('data-period'); showAll = false; try { localStorage.setItem(PERIOD_KEY, period); } catch (_) {} render(); return; }
         if (e.target.closest('[data-showall]')) { showAll = !showAll; render(); return; }
         const go = e.target.closest('[data-go]');
