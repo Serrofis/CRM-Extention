@@ -43450,7 +43450,8 @@ async function wpTransferAssistantExtensionEnabled() {
         }
 
         // 1.7.264: your raise on a transfer already sent to Final → the only
-        // note is "raised a bit more to save" (no EM, no raise note, no other note).
+        // note is "raised a bit more to save" (no raise note, no other note;
+        // 1.7.312: EM first if the transfer has none).
         let afterFinalException = false;
         try { afterFinalException = typeof window.wpRuleExceptionFor === 'function' && typeof window.wpFindTransferCity === 'function' && Boolean(window.wpRuleExceptionFor('afterfinal', window.wpFindTransferCity() || '')); } catch (_) {}
         if (priceIncrease && priceIncrease !== '0' && !wpByDirector && !afterFinalException && wpTransferHasFinalNote()) {
@@ -43459,9 +43460,17 @@ async function wpTransferAssistantExtensionEnabled() {
             wpStep('Already sent to Final → the only note is "' + WP_AFTER_FINAL_NOTE + '"');
         }
 
+        // 1.7.312: whenever mod writes notes, EM comes first unless the
+        // transfer already has an EM note. "Untagged" on the dashboard means
+        // "no notes at all", so a transfer with other notes but no EM used to
+        // get its notes without EM. The transfer page itself decides now.
+        if (sequence.length && !sequence.some(function(note) { return sameNote(note, 'em'); })) {
+            sequence.unshift('em');
+        }
+
         // EM already written in the notes (either form): don't add another.
-        if (sequence[0] === 'em' && wpTransferHasEmNote()) {
-            sequence.shift();
+        if (sequence.some(function(note) { return sameNote(note, 'em'); }) && wpTransferHasEmNote()) {
+            for (let i = sequence.length - 1; i >= 0; i--) if (sameNote(sequence[i], 'em')) sequence.splice(i, 1);
             wpStep('EM is already in the notes — not writing it again');
         }
 
