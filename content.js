@@ -28578,6 +28578,18 @@ async function wpTransferAssistantExtensionEnabled() {
         } catch (_) {}
     }
     setInterval(wpAiMirror, 60000);
+    // 1.7.308: a model picked in the Overview is saved into mod's AI settings here.
+    chrome.storage.onChanged.addListener(function(changes, area) {
+        try {
+            const pick = area === 'local' && changes.wp_ai_model_pick_v1 && changes.wp_ai_model_pick_v1.newValue;
+            if (!pick || !pick.model) return;
+            const cfg = wpAiConfig();
+            if (cfg.model === pick.model && cfg.on) return;
+            cfg.model = String(pick.model); cfg.on = true;
+            wpAiSaveConfig(cfg);
+            wpAiMirror();
+        } catch (_) {}
+    });
     setTimeout(wpAiMirror, 5000);
     setTimeout(wpEmListPublish, 8000);
     // Where the City Manager's controls are (1.7.218). On the live page the

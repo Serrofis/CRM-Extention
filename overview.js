@@ -548,7 +548,7 @@
         if (tab === 'slack') renderSlack();
         if (tab === 'retro') renderRetro(m);
         if (tab === 'month') renderMonth();
-        if (selected) renderDrawer(m.cities.find((c) => c.id === selected), m.dates);
+        if (selected) renderDrawer(m.cities.find((c) => c.id === selected), drawerDates(m)); // 1.7.308: from Home, only the chosen period's days
     }
 
     function renderHome(m) {
@@ -672,6 +672,34 @@
     // this PC (settings copied from the CRM page) when it is on; otherwise a
     // plain summary. Slack text only goes to localhost, never to the relay.
     const ghasCache = {};
+    let aiCfg = null, aiModels = null;
+    chrome.storage.local.get('wp_ai_cfg_mirror_v1').then((o) => { aiCfg = o.wp_ai_cfg_mirror_v1 || null; }).catch(() => {});
+    // 1.7.308: model dropdown. The list comes from the model server on this
+    // PC; a pick is saved here and copied back to mod's settings on the CRM.
+    async function ghasModels() {
+        const el = $('ghasModel');
+        if (!el) return;
+        if (!aiCfg) { el.innerHTML = '<option>open the CRM once</option>'; el.disabled = true; return; }
+        if (!aiModels) {
+            let r = null;
+            try { r = await chrome.runtime.sendMessage({ type: 'WP_AI_MODELS', url: aiCfg.url }); } catch (_) {}
+            aiModels = r && r.ok ? r.models : [];
+        }
+        const list = aiModels.slice();
+        if (aiCfg.model && !list.includes(aiCfg.model)) list.unshift(aiCfg.model);
+        const box = $('ghasModel');
+        if (!box) return;
+        box.disabled = !list.length;
+        box.innerHTML = list.length ? (aiCfg.model ? '' : '<option value="">choose a model</option>') + list.map((x) => '<option' + (x === aiCfg.model ? ' selected' : '') + '>' + esc(x) + '</option>').join('') : '<option>no model server found</option>';
+    }
+    async function ghasPickModel(name) {
+        aiCfg = Object.assign({}, aiCfg, { model: name, on: true });
+        try { await chrome.storage.local.set({ wp_ai_cfg_mirror_v1: aiCfg, wp_ai_model_pick_v1: { model: name, at: Date.now() } }); } catch (_) {}
+        Object.keys(ghasCache).forEach((k) => delete ghasCache[k]);
+        const m = model();
+        const c = m.cities.find((x) => x.id === selected);
+        if (c) renderDrawer(c, drawerDates(m));
+    }
     const GHAS_WORDS = [['strike', /strike|walkout/i], ['marathon / race', /marathon|race\b|run\b/i], ['closures', /clos(ed|ure)|road ?block|traffic/i], ['raise prices', /raise|surge|price/i], ['blocked slots', /block/i], ['cancellations', /cancel/i], ['weather', /storm|snow|flood|weather|wind/i], ['airport / flights', /airport|flight|terminal/i], ['events', /event|concert|festival|match|conference|congress/i]];
     function ghasSig(c) { return c.slack.slice(0, 10).map((s) => s.ts).join(','); }
     function ghasPlain(c) {
@@ -695,6 +723,7 @@
         if (hit && hit.sig === sig && (hit.text || hit.busy || hit.failed)) return;
         let cfg = null;
         try { cfg = (await chrome.storage.local.get('wp_ai_cfg_mirror_v1')).wp_ai_cfg_mirror_v1; } catch (_) {}
+        aiCfg = cfg || aiCfg;
         if (!cfg || !cfg.on || !cfg.model) return;
         ghasCache[c.id] = { sig, busy: true };
         const paint = () => { const el = $('ghas'); if (el && selected === c.id) el.innerHTML = ghasHtml(c); };
@@ -715,12 +744,12 @@
         $('backdrop').hidden = false; $('drawer').hidden = false;
         const lvl = cityLevel(c, dates);
         let h = '<div class="dh"><div style="flex:1"><h2>' + esc(c.name) + '</h2><div class="sub">' + esc([c.em && c.em.prio, c.em && c.em.type, c.em && c.em.cm && 'City manager ' + c.em.cm].filter(Boolean).join(' · ')) + '</div></div><span class="pill ' + (lvl || 'green') + '" style="margin-top:8px">' + (lvl === 'red' ? 'needs attention' : lvl === 'amber' ? 'watch' : 'fine') + '</span><button class="close" id="close" title="Close">&times;</button></div>';
-        // 1.7.307: order is Slack posts, ghas summary, day by day, what to do.
+        // 1.7.308: order is ghas summary (purple, like mod's suggestions in the CRM), Slack posts, day by day, what to do.
+        h += '<div class="card ghas"><div class="ghead"><h3>ghas summary</h3><select id="ghasModel" title="Local AI model"><option>' + esc(aiCfg && aiCfg.model || 'model') + '</option></select></div><div id="ghas">' + ghasHtml(c) + '</div></div>';
         h += '<div class="card"><h3>Slack, last 7 days</h3>';
         if (!c.slack.length) h += '<div class="note">No posts naming this city.</div>';
         c.slack.slice(0, 10).forEach((s) => { h += '<div class="msg"><div class="m">#' + esc(s.channel) + ' &middot; ' + esc(s.who) + ' &middot; ' + ago(s.ts) + '</div>' + esc(s.text.slice(0, 500)) + '</div>'; });
         h += '</div>';
-        h += '<div class="card"><h3>ghas summary</h3><div id="ghas">' + ghasHtml(c) + '</div></div>';
         h += '<div class="card"><h3>Day by day</h3>';
         dates.forEach((d, i) => {
             const x = c.days[d] || {};
@@ -729,7 +758,7 @@
             const unH = hrs.filter((y) => y.un > 0);
             const row = (y) => '<tr class="' + (y.un > 0 && (y.adj || 0) < y.un ? 'shortrow' : '') + '"><td>' + pad(y.h) + ':00</td><td>' + y.drv + '</td><td>' + y.adj + '</td><td>' + y.as + '</td><td>' + (y.un || '') + '</td><td>' + (y.blk ? '<span class="pill amber">blocked</span>' : '') + '</td></tr>';
             const head = '<table><thead><tr><th>Hour</th><th>Drivers</th><th>Adj</th><th>Assigned</th><th>No driver</th><th></th></tr></thead><tbody>';
-            h += '<details class="dayrow"' + (un > 0 || unH.length ? ' open' : '') + '><summary><b>' + (i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : dayName(d)) + '</b> <span class="pill ' + (cellClass(x) || 'green') + '">' + (x.crm || x.em != null ? fmt(un) + ' without a driver' : 'not read yet') + '</span>' + (x.crm && x.crm.worst != null && un > 0 ? ' <span class="m">worst hour ' + x.crm.worst + '&times;' + (x.crm.worstHour != null ? ' at ' + pad(x.crm.worstHour) + ':00' : '') + '</span>' : '') + '</summary>';
+            h += '<details class="dayrow"' + (un > 0 || unH.length ? ' open' : '') + '><summary><b>' + (d === iso(new Date()) ? 'Today' : d === iso(new Date(Date.now() + 864e5)) ? 'Tomorrow' : dayName(d)) + '</b> <span class="pill ' + (cellClass(x) || 'green') + '">' + (x.crm || x.em != null ? fmt(un) + ' without a driver' : 'not read yet') + '</span>' + (x.crm && x.crm.worst != null && un > 0 ? ' <span class="m">worst hour ' + x.crm.worst + '&times;' + (x.crm.worstHour != null ? ' at ' + pad(x.crm.worstHour) + ':00' : '') + '</span>' : '') + '</summary>';
             if (unH.length) h += '<div class="htable">' + head + unH.map(row).join('') + '</tbody></table></div>';
             else if (un > 0) h += '<p class="note">' + fmt(un) + ' without a driver on the Em Hailing list; hours not read yet.</p>';
             if (hrs.length) h += '<details class="htable"><summary>All time slots</summary>' + head + hrs.map(row).join('') + '</tbody></table></details>';
@@ -754,6 +783,7 @@
         h += '<div class="card"><h3>Last 30 days</h3><div class="note">Unassigned</div>' + spark(mine.map((r) => r.un), '#121a3a') + '<div class="note">Hub gap</div>' + spark(mine.map((r) => r.gap), '#5b6ee1') + '</div>';
         $('drawer').innerHTML = h;
         ghasAsk(c);
+        ghasModels();
     }
     function closeDrawer() { selected = null; $('backdrop').hidden = true; $('drawer').hidden = true; }
 
@@ -892,6 +922,7 @@
 
     // ---- events ----
     function openCity(id) { selected = id; render(); }
+    function drawerDates(m) { return tab === 'home' ? periodDates(m) : m.dates; }
     $('main').addEventListener('click', (e) => {
         const per = e.target.closest('[data-period]');
         if (per) { period = per.getAttribute('data-period'); showAll = false; try { localStorage.setItem(PERIOD_KEY, period); } catch (_) {} render(); return; }
@@ -909,9 +940,10 @@
         if (!b) return;
         const m = model();
         const c = m.cities.find((x) => x.id === selected);
-        if (c) { c._day = b.getAttribute('data-day'); renderDrawer(c, m.dates); }
+        if (c) { c._day = b.getAttribute('data-day'); renderDrawer(c, drawerDates(m)); }
     });
     $('drawer').addEventListener('change', async (e) => {
+        if (e.target.id === 'ghasModel') { if (e.target.value) ghasPickModel(e.target.value); return; }
         const k = e.target.getAttribute && e.target.getAttribute('data-key');
         if (!k) return;
         if (e.target.checked) done[k] = Date.now(); else delete done[k];
