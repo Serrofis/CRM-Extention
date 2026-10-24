@@ -368,19 +368,46 @@
     // 1.7.319: only a visible one (a hidden "Send" elsewhere was pressed
     // before, so the image stayed in the preview).
     function shown(el) { return Boolean(el) && (el.offsetParent !== null || el.getClientRects().length > 0); }
+    // 1.7.320: WhatsApp Business draws icons as text ("wds-ic-send-filled")
+    // and the button may have no aria-label: the icon name counts too.
     function mediaSendButton() {
+        // The chat box's own Send only shows while it has text; with it empty a
+        // Send in the footer area can be the preview's.
+        const boxEmpty = !norm((composer() || {}).textContent || '');
+        const outside = function(el) { return (boxEmpty || !el.closest('#main footer')) && !el.closest('#side') && shown(el); };
         const icons = Array.from(document.querySelectorAll(
             '[data-icon="send"], [data-icon="wds-ic-send-filled"], [data-icon="send-light"], [aria-label="Send"]'
-        )).filter(function(el) { return !el.closest('#main footer') && !el.closest('#side') && shown(el); });
-        const icon = icons[icons.length - 1];
+        )).filter(outside);
+        let icon = icons[icons.length - 1];
+        if (!icon) {
+            const buttons = Array.from(document.querySelectorAll('button, [role="button"]')).filter(outside).filter(function(el) {
+                const label = String(el.getAttribute('aria-label') || '').trim();
+                const iconText = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+                return /^send$/i.test(label) || (/(^|[\s-])(wds-)?ic-send(-filled|-light)?\b|^send$/i.test(iconText) && iconText.length < 40);
+            });
+            icon = buttons[buttons.length - 1];
+        }
         return icon ? (icon.closest('button, [role="button"]') || icon) : null;
+    }
+    // 1.7.320: when the preview will not send, name its buttons in the
+    // Terminal (labels / icon names only) so the next fix is not a guess.
+    function previewButtonsHint() {
+        const names = Array.from(document.querySelectorAll('button, [role="button"]'))
+            .filter(function(el) { return !el.closest('#side') && !el.closest('#main header') && shown(el); })
+            .map(function(el) {
+                const iconEl = el.querySelector('[data-icon]');
+                return String(el.getAttribute('aria-label') || (iconEl && iconEl.getAttribute('data-icon')) || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 30);
+            })
+            .filter(Boolean);
+        return names.length ? ' [buttons: ' + names.slice(-8).join(' | ') + ']' : ' [no buttons found]';
     }
     // 1.7.319: the preview's caption box.
     function mediaCaptionBox() {
+        // 1.7.320: a box labelled "caption" counts even in the footer area.
         const boxes = Array.from(document.querySelectorAll('div[contenteditable="true"]'))
-            .filter(function(el) { return !el.closest('#main footer') && !el.closest('#side') && shown(el); });
+            .filter(function(el) { return !el.closest('#side') && shown(el); });
         return boxes.find(function(el) { return /caption/i.test((el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('aria-placeholder') || '') + ' ' + (el.getAttribute('data-placeholder') || '')); }) ||
-            boxes[boxes.length - 1] || null;
+            boxes.filter(function(el) { return !el.closest('#main footer'); }).pop() || null;
     }
     // 1.7.319: the text goes in as the image's caption (one message).
     // '' = typed; otherwise why not (then nothing is in the caption).
@@ -421,7 +448,7 @@
         data.items.add(file);
         box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
         const button = await waitFor(mediaSendButton, 12000);
-        if (!button) return 'the image preview did not open';
+        if (!button) return 'the image preview did not open (or its Send button was not found)' + previewButtonsHint();
         await sleep(500);
         if (caption) {
             const captionProblem = await typeCaption(caption);
@@ -443,7 +470,7 @@
             }
             closed = await waitFor(function() { return !mediaSendButton(); }, 16000);
         }
-        return closed ? '' : 'the image preview did not close — check the chat';
+        return closed ? '' : 'the image preview did not close — check the chat' + previewButtonsHint();
     }
 
     async function isDuplicate(job) {
