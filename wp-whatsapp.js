@@ -107,6 +107,14 @@
         patch[key] = value;
         await chrome.storage.local.set(patch);
     }
+    // 1.7.315: take jobs off the queue from a fresh read. The page used to
+    // write back the copy it read before opening a chat, so a message queued
+    // meanwhile (the next city of a City Manager batch) was lost.
+    async function dropJobs(test) {
+        const fresh = (await getStore(JOBS_KEY)) || [];
+        const kept = fresh.filter(function(job) { return !test(job); });
+        if (kept.length !== fresh.length) await setStore(JOBS_KEY, kept);
+    }
     function report(job, ok, info, progress, extra) {
         try { console.log('[Transfer Assistant] ' + (job.label || job.city) + ': ' + info); } catch (_) {}
         try {
@@ -839,7 +847,7 @@
             if (!ready) {
                 // Not logged in / never loaded: fail the waiting jobs loudly.
                 const waiting = (await getStore(JOBS_KEY)) || [];
-                await setStore(JOBS_KEY, []);
+                await dropJobs(function(j) { return waiting.some(function(w) { return w.id === j.id; }); });
                 waiting.forEach(function(job) { report(job, false, 'WhatsApp Web did not load its chat list in 90s — is it logged in?'); });
                 return;
             }
@@ -851,10 +859,11 @@
                 let opening = '';
                 try { opening = sessionStorage.getItem(OPENING_KEY) || ''; } catch (_) {}
                 let jobs = (await getStore(JOBS_KEY)) || [];
-                jobs = jobs.filter(function(job) { return job.id === opening || Date.now() - job.createdAt < JOB_MAX_AGE; });
+                const expired = function(job) { return !(job.id === opening || Date.now() - job.createdAt < JOB_MAX_AGE); };
+                jobs = jobs.filter(function(job) { return !expired(job); });
                 const job = jobs[0];
                 if (!job) {
-                    await setStore(JOBS_KEY, jobs);
+                    await dropJobs(expired);
                     try { sessionStorage.removeItem(OPENING_KEY); } catch (_) {}
                     break;
                 }
@@ -876,7 +885,7 @@
                         try { setSearch(''); } catch (_) {}
                         if (opened) {
                             jobs.shift();
-                            await setStore(JOBS_KEY, jobs);
+                            await dropJobs(function(j) { return j.id === job.id || expired(j); });
                             job.knownTitle = known;
                             try {
                                 await handle(job, false);
@@ -891,7 +900,7 @@
                     }
                 }
                 if ((job.code || job.phone) && opening !== job.id && !(await isDuplicate(job))) {
-                    await setStore(JOBS_KEY, jobs);
+                    await dropJobs(expired);
                     try { sessionStorage.setItem(OPENING_KEY, job.id); } catch (_) {}
                     progress(job, job.phone ? 'opening the chat with ' + job.city : 'opening the ' + job.city + ' group from its link');
                     navigating = true;
@@ -901,7 +910,7 @@
                     return;
                 }
                 jobs.shift();
-                await setStore(JOBS_KEY, jobs);
+                await dropJobs(function(j) { return j.id === job.id || expired(j); });
                 try { sessionStorage.removeItem(OPENING_KEY); } catch (_) {}
                 try {
                     await handle(job, opening === job.id);
