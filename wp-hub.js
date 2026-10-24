@@ -319,8 +319,17 @@
         if (result.missing.length) { result.actionError = 'not every transfer is in the Hub list, so the action was not opened'; return result; }
         const counter = Array.from(document.querySelectorAll('div, span')).map(function(node) { return node.children.length <= 2 ? text(node).match(/^(\d+) selected$/i) : null; }).filter(Boolean)[0];
         if (!counter || Number(counter[1]) !== result.selected) { result.actionError = 'the Hub shows a different number selected, so the action was not opened'; return result; }
-        const button = buttonNamed(spec.button);
+        let button = buttonNamed(spec.button);
         if (!button) { result.actionError = 'that button is not on the Hub\'s bar'; return result; }
+        // 1.7.313: in a chain the step before (e.g. Tag) leaves the Hub busy
+        // for a few seconds with its bar buttons greyed out, so wait up to
+        // 15 s for the button to come back (found again, the bar may redraw)
+        // and check the "N selected" count once more before pressing.
+        if (button.disabled) {
+            for (let i = 0; i < 60 && button && button.disabled; i++) { await pause(250); button = buttonNamed(spec.button) || button; }
+            const again = Array.from(document.querySelectorAll('div, span')).map(function(node) { return node.children.length <= 2 ? text(node).match(/^(\d+) selected$/i) : null; }).filter(Boolean)[0];
+            if (!button.disabled && (!again || Number(again[1]) !== result.selected)) { result.actionError = 'the Hub shows a different number selected, so the action was not opened'; return result; }
+        }
         if (button.disabled) { result.actionError = 'that action is switched off in the Hub right now'; return result; }
         const tagBefore = spec.instant ? resultBanner(spec.label) : '';
         button.click();
