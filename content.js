@@ -18826,8 +18826,11 @@ async function wpTransferAssistantExtensionEnabled() {
             wpDashLog(label + ': no transfer details could be read — image not generated', 'error');
             return;
         }
-        wpShowCityTransfersImage(batch);
         wpDashLog('✓ ' + label + ': image ready (' + (total - failed) + ' transfer' + (total - failed === 1 ? '' : 's') + ')');
+        // 1.7.318: Generate image (PC or phone) sends the image + text to the
+        // city's WhatsApp group straight away, like after a broadcast.
+        batch._wpSendNow = true;
+        wpShowCityTransfersImage(batch);
     }
 
     function wpOpenCityBatchTransfers(batch, openAllButton, taskMessage, priceIncreaseValue) {
@@ -19451,7 +19454,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!copied) {
                 status.style.color = '#ffb347';
                 status.textContent = 'Could not copy the details — click "Copy details & open WhatsApp"';
-                wpDashLog(logName + ': could not copy the WhatsApp message (page not focused) — click "Copy details & open WhatsApp"', 'warn');
+                wpDashLog(logName + ': could not copy the WhatsApp message (page not focused) — open the image window from the Terminal and click "Copy details & open WhatsApp"', 'warn');
                 return false;
             }
             status.style.color = '#6fd16f';
@@ -19518,8 +19521,13 @@ async function wpTransferAssistantExtensionEnabled() {
 
         // Broadcast batches (Send to Broadcast / Final Broadcast) go straight
         // to WhatsApp: copy the details text and open the group automatically.
-        if (hasWhatsApp && (batch.broadcastMode === 'send' || batch.broadcastMode === 'final')) {
+        // 1.7.318: Generate image sends too (only with WhatsApp auto-send on;
+        // off = the image window opens as before).
+        const sendNow = Boolean(batch._wpSendNow) && wpWhatsAppAutoSendOn();
+        if (hasWhatsApp && (batch.broadcastMode === 'send' || batch.broadcastMode === 'final' || sendNow)) {
             window.setTimeout(copyDetailsWhenPricesReady, 150);
+        } else if (batch._wpSendNow && sendNow) {
+            wpDashLog(logName + ': ' + (batchCities.length > 1 ? 'several cities' : 'no WhatsApp group for this city') + ' — image not sent; open it from the Terminal', 'warn');
         } else if (batchCities.length > 1 && (batch.broadcastMode === 'send' || batch.broadcastMode === 'final')) {
             // Several cities (e.g. Raise suggested on FINAL / UNTAGGED): each
             // city gets its own message (driver message + its transfers) in
@@ -19578,7 +19586,11 @@ async function wpTransferAssistantExtensionEnabled() {
         modal.addEventListener('click', function(event) {
             if (event.target === modal) modal.remove();
         });
-        document.body.appendChild(modal);
+        // 1.7.318: the image window no longer pops up over the CRM (the
+        // image and text are sent by themselves); it opens from the Terminal.
+        const openModal = function() { image.style.display = 'block'; if (!modal.isConnected) document.body.appendChild(modal); };
+        if (batch._wpSendNow && !sendNow) openModal();
+        wpDashLog(logName + ': click here to view / copy the transfers image', '', openModal);
     }
 
     function wpUpdateCityBatchBroadcastDisplay(batch, textarea, statusElement) {
@@ -36137,7 +36149,7 @@ async function wpTransferAssistantExtensionEnabled() {
             groupImage.type = 'button';
             groupImage.className = 'wp-today-city-orders-group-open';
             groupImage.textContent = 'Generate image';
-            groupImage.title = 'Build the transfers image for these ' + groupName.toLowerCase() + ' transfers without opening them';
+            groupImage.title = 'Build the transfers image for these ' + groupName.toLowerCase() + ' transfers (without opening them) and send it with the text to the city WhatsApp group';
             groupImage.disabled = !groupItems.length;
             groupImage.style.marginLeft = '6px';
             groupImage.addEventListener('click', function(event) {

@@ -799,7 +799,7 @@
             progress(job, 'text sent — sending the image');
             const imageProblem = await sendImage(job.image);
             if (imageProblem) {
-                report(job, false, 'text sent to "' + title + '" but the image was not: ' + imageProblem + ' — copy the image from the popup and paste it');
+                report(job, false, 'text sent to "' + title + '" but the image was not: ' + imageProblem + ' — open the image from the Terminal, copy it and paste it');
                 return;
             }
             report(job, true, 'and image sent to "' + title + '"');
