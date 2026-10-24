@@ -29015,6 +29015,11 @@ async function wpTransferAssistantExtensionEnabled() {
                     } else if (answer.item === 'restart') {
                         wpDashLog('📱 Phone: start from the top again');
                         wpAutoRestart();
+                    } else if (answer.item === 'reload') {
+                        // 1.7.317: the phone's "Refresh CRM": reload the CRM pages open on this PC.
+                        wpDashLog('📱 Phone: refresh the CRM tabs');
+                        window.setTimeout(function() { try { chrome.runtime.sendMessage({ type: 'WP_RELOAD_CRM_TABS' }); } catch (_) {} }, 400);
+                        return;
                     } else if (answer.item === 'wa') {
                         localStorage.setItem('wp_wa_autosend_v1', on ? '1' : '0');
                         wpDashPaintSwitches();

@@ -120,6 +120,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
+    // 1.7.317: the phone's "Refresh CRM". Reloads the CRM tabs, the asking
+    // tab last. Single transfer pages are left alone: they can be in the
+    // middle of an edit or a mod workflow.
+    if (message.type === 'WP_RELOAD_CRM_TABS') {
+        const own = sender && sender.tab ? sender.tab.id : null;
+        chrome.tabs.query({ url: 'https://crm.welcomepickups.com/*' }).then(async (tabs) => {
+            const list = tabs.filter((tab) => !/\/admin\/transfers\/\d+/.test(String(tab.url || '')));
+            list.sort((a, b) => (a.id === own) - (b.id === own));
+            for (const tab of list) { try { await chrome.tabs.reload(tab.id); } catch (_) {} }
+            sendResponse({ ok: true, count: list.length });
+        }).catch(() => sendResponse({ ok: false }));
+        return true;
+    }
+
     if (message.type === 'WP_TRANSFER_ASSISTANT_OPEN_TAB') {
         const createProperties = {
             url: message.url,
