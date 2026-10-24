@@ -43542,6 +43542,15 @@ async function wpTransferAssistantExtensionEnabled() {
             wpStep('Already sent to Final → the only note is "' + WP_AFTER_FINAL_NOTE + '"');
         }
 
+        // 1.7.315: BC / Final BC with no note and no raise picked (e.g. the
+        // City Manager's buttons) wrote no note at all; now the usual note is
+        // added, as the quickbar does. Already sent to Final: no second one.
+        if ((broadcastMode === 'final' || broadcastMode === 'send') && !sequence.some(function(note) { return !sameNote(note, 'em'); })) {
+            if (broadcastMode === 'send') sequence.push('sent to BC and Group');
+            else if (!wpTransferHasFinalNote()) sequence.push('sent to suggested / final BC');
+            else wpStep('Already sent to Final — no second Final BC note');
+        }
+
         // 1.7.312: whenever mod writes notes, EM comes first unless the
         // transfer already has an EM note. "Untagged" on the dashboard means
         // "no notes at all", so a transfer with other notes but no EM used to
