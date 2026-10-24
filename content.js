@@ -28660,7 +28660,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const spec = WP_HUB_PHONE_ACTIONS[String(command.action || '')];
         const day = command.day === 'tomorrow' ? 'tomorrow' : 'today';
         const city = String(command.city || '');
-        const cityName = city.replace('__wp_untagged__', 'UNTAGGED').replace('__wp_tbo_expiring__', 'FINAL');
+        const cityName = city.replace('__wp_untagged__', 'UNTAGGED').replace('__wp_tbo_expiring__', 'FINAL').replace('__wp_3days__', '3+ days');
         const runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
         let count = 0;
         wpRemoteCmActiveAt = Date.now();
@@ -28775,7 +28775,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const day = command.day === 'tomorrow' ? 'tomorrow' : 'today';
         const city = String(command.city || '');
         if (!city) return;
-        wpDashLog('📱 Phone: City Manager — ' + city.replace('__wp_untagged__', 'UNTAGGED').replace('__wp_tbo_expiring__', 'FINAL') + ' (' + day + ')');
+        wpDashLog('📱 Phone: City Manager — ' + city.replace('__wp_untagged__', 'UNTAGGED').replace('__wp_tbo_expiring__', 'FINAL').replace('__wp_3days__', '3+ days') + ' (' + day + ')');
         wpRemoteCmManagerOpen().then(function() {
             try { wpTodayCityOpenCityWindow(city, day); } catch (_) {}
             wpRemoteCmState = { city: city, day: day };
@@ -28846,7 +28846,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!command.dctc && pctInput) pctInput.value = String(command.pct || '');
         }
         if (target.disabled) { stop('the button is not active (nothing selected?)'); return; }
-        wpDashLog('📱 Phone: City Manager ' + city.replace('__wp_untagged__', 'UNTAGGED').replace('__wp_tbo_expiring__', 'FINAL') + ' — ' +
+        wpDashLog('📱 Phone: City Manager ' + city.replace('__wp_untagged__', 'UNTAGGED').replace('__wp_tbo_expiring__', 'FINAL').replace('__wp_3days__', '3+ days') + ' — ' +
             ({ open: 'Open selected', bc: 'BC', final: 'Final BC', custom: command.dctc ? 'Custom: DC = TC' : 'Custom raise to +' + command.pct + '%' })[command.action] +
             ' on ' + want.size + (raise && command.action !== 'custom' ? ' · raise ' + text(raiseSelect.options[raiseSelect.selectedIndex]) : '') +
             (note ? ' · note "' + (note === '__custom__' ? String(command.custom || '') : note) + '"' : ''));
@@ -33339,7 +33339,15 @@ async function wpTransferAssistantExtensionEnabled() {
                         tagged:
                             hasLastTransferTask,
                         tag:
-                            cityTag
+                            cityTag,
+                        // 1.7.314: S column (time in Em Hailing), the note and
+                        // the CRM data key, for the "3+ days" row.
+                        emMinutes:
+                            wpTodayCityRowEmMinutes(row),
+                        taskText:
+                            cityTaskSource,
+                        crmPath:
+                            row.dataset.wpCrmPath || ''
                     });
 
                 }
@@ -33347,6 +33355,42 @@ async function wpTransferAssistantExtensionEnabled() {
 
         return transfers;
 
+    }
+
+    // 1.7.314: minutes in Em Hailing from the row's S cell ("2d 5h").
+    function wpTodayCityRowEmMinutes(row) {
+        const cell = row && row.querySelector('td.wp-s-cell');
+        if (!cell) return null;
+        if (Number(cell.dataset.wpEmMinutes) >= 0 && cell.dataset.wpEmMinutes !== '') return Number(cell.dataset.wpEmMinutes);
+        const text = String(cell.textContent || '');
+        const d = text.match(/(\d+)\s*d\b/i), h = text.match(/(\d+)\s*h\b/i), m = text.match(/(\d+)\s*m\b/i);
+        if (!d && !h && !m) return null;
+        return (d ? +d[1] * 1440 : 0) + (h ? +h[1] * 60 : 0) + (m ? +m[1] : 0);
+    }
+
+    // 1.7.314: "3+ days" (City Manager, Tomorrow): 3 days or more in the S
+    // column AND the city's EM Project action done, so it can go to Final BC
+    // before it reaches today's list. Done = raised at least to the EM Project
+    // % for its city and car (CRM price tag or the note), DC = TC where the
+    // rule is DC = TC; a city with no raise rule ("NO", none): it has a note.
+    var WP_THREE_DAYS_MIN = 3 * 1440;
+    function wpThreeDaysWorked(item) {
+        if (!item || !item.url || !(Number(item.emMinutes) >= WP_THREE_DAYS_MIN)) return false;
+        let entry = null;
+        try { entry = item.crmPath ? wpRowCrmLoad()[item.crmPath] : null; } catch (_) {}
+        const tags = entry && entry.tags || [];
+        const dctc = tags.some(function(tag) { return tag && tag.type === 'dc-tc'; }) || /\bdc\s*=\s*tc\b/i.test(item.taskText || '');
+        let level = 0;
+        tags.forEach(function(tag) {
+            const pct = String(tag && tag.text || '').match(/^\+(\d+(?:\.\d+)?)%$/);
+            if (pct && tag.type !== 'dc-tc') level = Math.max(level, parseFloat(pct[1]));
+        });
+        try { level = Math.max(level, wpDirectorNoteRaised({ tasks: [{ note: item.taskText || '' }] }) || 0); } catch (_) {}
+        let rule = { kind: 'none' };
+        try { rule = wpParseEmRaiseSuggestion(item.city, entry && entry.car ? entry.car : undefined); } catch (_) {}
+        if (rule.kind === 'pct') return dctc || level >= rule.percent - 0.5;
+        if (rule.kind === 'dctc') return dctc;
+        return Boolean(item.tagged);
     }
 
     function wpTodayCityCanonicalUrl(
@@ -33432,6 +33476,11 @@ async function wpTransferAssistantExtensionEnabled() {
                         !item.tagged &&
                         item.url
                     );
+                }
+
+                // 1.7.314: 3+ days in Em Hailing and worked on (all cities).
+                if (wanted === '__wp_3days__') {
+                    return wpThreeDaysWorked(item);
                 }
 
                 if (wanted === '__wp_tbo_expiring__') {
@@ -34606,7 +34655,9 @@ async function wpTransferAssistantExtensionEnabled() {
                 ? '⚠ FINAL'
                 : wpTodayCityNormalizeKey(city) === '__wp_untagged__'
                     ? 'UNTAGGED — all cities'
-                    : city;
+                    : wpTodayCityNormalizeKey(city) === '__wp_3days__'
+                        ? '3+ days — worked on, for Final BC'
+                        : city;
         // Same "City — Tomorrow" title, but the city name is its own element
         // so hovering it shows the EM Project info (same tooltip as the
         // city cells in the transfers list).
@@ -36156,7 +36207,8 @@ async function wpTransferAssistantExtensionEnabled() {
                     normalizedSelection === 'booking.com';
                 const isTboExpiringSelection =
                     normalizedSelection === '__wp_tbo_expiring__' ||
-                    normalizedSelection === '__wp_untagged__';
+                    normalizedSelection === '__wp_untagged__' ||
+                    normalizedSelection === '__wp_3days__';
                 if ((isBookingSelection || isTboExpiringSelection) && item && item.city) {
                     const cityBadge = document.createElement('span');
                     cityBadge.className = 'wp-today-city-order-booking-city';
@@ -39635,6 +39687,36 @@ async function wpTransferAssistantExtensionEnabled() {
                 );
             });
             summary.appendChild(untaggedRow);
+        }
+
+        // 1.7.314: Tomorrow only — "3+ days": 3 days or more in the S column
+        // and the EM Project action done; click lists them (nothing is sent).
+        const threeDaysAll = wpTodayCitySelectedTab === 'tomorrow'
+            ? currentTransfers.filter(wpThreeDaysWorked)
+            : [];
+        if (threeDaysAll.length) {
+            const threeRow = document.createElement('div');
+            threeRow.className = 'wp-today-city-stat wp-today-city-untagged-row';
+            threeRow.title = '3 days or more in Em Hailing (S column) and the EM Project action done — to send to Final BC';
+            [
+                ['wp-today-city-name', '3+ days'],
+                ['wp-today-city-current', String(threeDaysAll.length)],
+                ['wp-today-city-baseline', '—'],
+                ['wp-today-city-untagged', '—'],
+                ['wp-today-city-tagged', '—']
+            ].forEach(function(spec) {
+                const cell = document.createElement('span');
+                cell.className = spec[0];
+                cell.textContent = spec[1];
+                threeRow.appendChild(cell);
+            });
+            threeRow.firstChild.style.cursor = 'pointer';
+            threeRow.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                wpTodayCityOpenCityWindow('__WP_3DAYS__', wpTodayCitySelectedTab);
+            });
+            summary.appendChild(threeRow);
         }
 
         if (tboAlertEntries.length) {
