@@ -28516,8 +28516,10 @@ async function wpTransferAssistantExtensionEnabled() {
             let transfers = [];
             try { transfers = wpTodayCityGetTransfers(day) || []; } catch (_) {}
             const byCity = {};
-            let booking = 0, untagged = 0, final = 0;
+            let booking = 0, untagged = 0, final = 0, three = 0;
             transfers.forEach(function(item) {
+                // 1.7.316: the Tomorrow "3+ days" row, for the phone too.
+                if (day === 'tomorrow') { try { if (wpThreeDaysWorked(item)) three += 1; } catch (_) {} }
                 if (!item || !item.url) return;
                 const name = String(item.city || '').replace(/\s+/g, ' ').trim() || '?';
                 const entry = byCity[name] || (byCity[name] = { c: name.slice(0, 40), n: 0, u: 0 });
@@ -28544,7 +28546,7 @@ async function wpTransferAssistantExtensionEnabled() {
             }
             out[day] = {
                 cities: Object.keys(byCity).map(function(name) { return byCity[name]; }).sort(function(a, b) { return (b.n - a.n) || a.c.localeCompare(b.c); }).slice(0, 150),
-                booking: booking, untagged: untagged, final: final
+                booking: booking, untagged: untagged, final: final, three: three
             };
         });
         return out;
@@ -28633,9 +28635,27 @@ async function wpTransferAssistantExtensionEnabled() {
             notes: options(acts.querySelector('select.wp-city-note-select')),
             raise: options(acts.querySelector('select.wp-city-price-increase-input')),
             summary: summary && summary.style.display !== 'none' ? text(summary, 300) : '',
+            // 1.7.316: the city's EM Project rules (same as the hover on the
+            // City Manager title), shown on the phone when a city opens.
+            em: wpRemoteCmEmRules(state.city),
             // The last Ops Hub run from the phone, and the Hub history.
             hub: wpRemoteHubLast,
             hubHistory: wpHubHistoryLoad().slice(0, 8).map(wpHubHistoryLine)
+        };
+    }
+    function wpRemoteCmEmRules(city) {
+        if (!city || /^__wp_/.test(city)) return null;
+        const clip = function(value, max) { value = String(value || '').replace(/\s+/g, ' ').trim(); return value.length > max ? value.slice(0, max - 1) + '…' : value; };
+        let info = null, pricing = null, comment = null;
+        try { info = getCityPriceInfo(city); } catch (_) {}
+        try { pricing = getTransferCityHoverData(city); } catch (_) {}
+        try { comment = getCitySkuComment(city); } catch (_) {}
+        if (!info && !pricing && !comment) return null;
+        pricing = pricing || {};
+        return {
+            info: clip(info, 120), raise: clip(pricing.raise, 60), howMuch: clip(pricing.howMuch, 120),
+            car: clip(pricing.carType, 60), slot: clip(pricing.slotOfDay, 80), sku: clip(pricing.sku, 60),
+            notes: clip(pricing.notes, 400), comment: clip(comment, 300)
         };
     }
     // What the window shows goes to the phone now and a few more times
