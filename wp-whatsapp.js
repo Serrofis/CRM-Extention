@@ -365,16 +365,76 @@
     }
 
     // The image preview's send button (not the chat box's own one).
+    // 1.7.319: only a visible one (a hidden "Send" elsewhere was pressed
+    // before, so the image stayed in the preview).
+    function shown(el) { return Boolean(el) && (el.offsetParent !== null || el.getClientRects().length > 0); }
+    // 1.7.320: WhatsApp Business draws icons as text ("wds-ic-send-filled")
+    // and the button may have no aria-label: the icon name counts too.
     function mediaSendButton() {
+        // The chat box's own Send only shows while it has text; with it empty a
+        // Send in the footer area can be the preview's.
+        const boxEmpty = !norm((composer() || {}).textContent || '');
+        const outside = function(el) { return (boxEmpty || !el.closest('#main footer')) && !el.closest('#side') && shown(el); };
         const icons = Array.from(document.querySelectorAll(
             '[data-icon="send"], [data-icon="wds-ic-send-filled"], [data-icon="send-light"], [aria-label="Send"]'
-        ));
-        const icon = icons.find(function(el) { return !el.closest('#main footer'); });
+        )).filter(outside);
+        let icon = icons[icons.length - 1];
+        if (!icon) {
+            const buttons = Array.from(document.querySelectorAll('button, [role="button"]')).filter(outside).filter(function(el) {
+                const label = String(el.getAttribute('aria-label') || '').trim();
+                const iconText = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+                return /^send$/i.test(label) || (/(^|[\s-])(wds-)?ic-send(-filled|-light)?\b|^send$/i.test(iconText) && iconText.length < 40);
+            });
+            icon = buttons[buttons.length - 1];
+        }
         return icon ? (icon.closest('button, [role="button"]') || icon) : null;
+    }
+    // 1.7.320: when the preview will not send, name its buttons in the
+    // Terminal (labels / icon names only) so the next fix is not a guess.
+    function previewButtonsHint() {
+        const names = Array.from(document.querySelectorAll('button, [role="button"]'))
+            .filter(function(el) { return !el.closest('#side') && !el.closest('#main header') && shown(el); })
+            .map(function(el) {
+                const iconEl = el.querySelector('[data-icon]');
+                return String(el.getAttribute('aria-label') || (iconEl && iconEl.getAttribute('data-icon')) || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 30);
+            })
+            .filter(Boolean);
+        return names.length ? ' [buttons: ' + names.slice(-8).join(' | ') + ']' : ' [no buttons found]';
+    }
+    // 1.7.319: the preview's caption box.
+    function mediaCaptionBox() {
+        // 1.7.320: a box labelled "caption" counts even in the footer area.
+        const boxes = Array.from(document.querySelectorAll('div[contenteditable="true"]'))
+            .filter(function(el) { return !el.closest('#side') && shown(el); });
+        return boxes.find(function(el) { return /caption/i.test((el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('aria-placeholder') || '') + ' ' + (el.getAttribute('data-placeholder') || '')); }) ||
+            boxes.filter(function(el) { return !el.closest('#main footer'); }).pop() || null;
+    }
+    // 1.7.319: the text goes in as the image's caption (one message).
+    // '' = typed; otherwise why not (then nothing is in the caption).
+    async function typeCaption(text) {
+        const box = await waitFor(mediaCaptionBox, 5000);
+        if (!box) return 'no caption box';
+        box.focus();
+        const firstLine = norm(String(text).split('\n')[0]).slice(0, 24);
+        const typed = function() { return norm((mediaCaptionBox() || {}).textContent || '').indexOf(firstLine) >= 0; };
+        const data = new DataTransfer();
+        data.setData('text/plain', text);
+        box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+        if (!(await waitFor(typed, 3000))) {
+            document.execCommand('insertText', false, text);
+            if (!(await waitFor(typed, 3000))) {
+                // Leave the caption empty rather than half typed.
+                if (norm(box.textContent || '')) { document.execCommand('selectAll'); document.execCommand('delete'); }
+                return norm((mediaCaptionBox() || {}).textContent || '') ? 'caption could not be cleared' : 'could not type the caption';
+            }
+        }
+        return '';
     }
 
     // Paste the image into the open chat, then press send in the preview.
-    async function sendImage(dataUrl) {
+    // 1.7.319: caption = the message text; result.captioned says if it went in.
+    async function sendImage(dataUrl, caption, result) {
+        result = result || {};
         const match = String(dataUrl).match(/^data:(image\/[a-z]+);base64,(.*)$/);
         if (!match) return 'bad image data';
         const binary = atob(match[2]);
@@ -388,11 +448,29 @@
         data.items.add(file);
         box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
         const button = await waitFor(mediaSendButton, 12000);
-        if (!button) return 'the image preview did not open';
+        if (!button) return 'the image preview did not open (or its Send button was not found)' + previewButtonsHint();
         await sleep(500);
-        clickEl(button);
-        const closed = await waitFor(function() { return !mediaSendButton(); }, 20000);
-        return closed ? '' : 'the image preview did not close — check the chat';
+        if (caption) {
+            const captionProblem = await typeCaption(caption);
+            if (captionProblem === 'caption could not be cleared') return captionProblem + ' — check the chat, nothing sent';
+            result.captioned = !captionProblem;
+            await sleep(300);
+        }
+        result.pressed = true;
+        clickEl(mediaSendButton() || button);
+        let closed = await waitFor(function() { return !mediaSendButton(); }, 4000);
+        if (!closed) {
+            // Enter in the caption box also sends the preview.
+            const box = mediaCaptionBox();
+            if (box) {
+                box.focus();
+                ['keydown', 'keypress', 'keyup'].forEach(function(type) {
+                    box.dispatchEvent(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+                });
+            }
+            closed = await waitFor(function() { return !mediaSendButton(); }, 16000);
+        }
+        return closed ? '' : 'the image preview did not close — check the chat' + previewButtonsHint();
     }
 
     async function isDuplicate(job) {
@@ -787,6 +865,29 @@
             }
         }
         title = openTitle;
+        // 1.7.319: with an image, the text is its caption (one message).
+        // "@all" groups keep text first (the mention needs the chat box).
+        if (job.image && !/^@all\b/i.test(String(job.text))) {
+            progress(job, 'sending the image with the text');
+            const result = {};
+            const imageProblem = await sendImage(job.image, job.text, result);
+            if (result.pressed) {
+                sent[dupKey] = Date.now();
+                await setStore(SENT_KEY, sent);
+            }
+            if (imageProblem) {
+                report(job, false, (result.pressed ? 'send pressed in "' + title + '" but ' : '') + imageProblem + (result.pressed ? '' : ' — open the image from the Terminal, copy it and paste it'));
+                return;
+            }
+            if (result.captioned) {
+                report(job, true, 'sent to "' + title + '" (image with the text)');
+                return;
+            }
+            // Caption did not take: the image is out, the text goes after it.
+            const textProblem = await pasteAndSend(job.text);
+            report(job, !textProblem, textProblem ? 'image sent to "' + title + '" but the text was not: ' + textProblem : 'sent to "' + title + '" (image, then the text)');
+            return;
+        }
         const problem = await pasteAndSend(job.text);
         if (problem) {
             report(job, false, problem + ' (group "' + title + '")');
@@ -799,7 +900,7 @@
             progress(job, 'text sent — sending the image');
             const imageProblem = await sendImage(job.image);
             if (imageProblem) {
-                report(job, false, 'text sent to "' + title + '" but the image was not: ' + imageProblem + ' — copy the image from the popup and paste it');
+                report(job, false, 'text sent to "' + title + '" but the image was not: ' + imageProblem + ' — open the image from the Terminal, copy it and paste it');
                 return;
             }
             report(job, true, 'and image sent to "' + title + '"');
