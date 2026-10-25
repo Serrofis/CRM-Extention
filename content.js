@@ -28678,7 +28678,7 @@ async function wpTransferAssistantExtensionEnabled() {
             return window.setTimeout(function() { wpRemoteCmOut = wpRemoteCmSnapshot(); wpRemoteLoop().catch(function() {}); }, delay);
         });
     }
-    // ---- EM chain (1.7.321, 1.7.322) ----
+    // ---- EM chain (1.7.321, 1.7.322, 1.7.323) ----
     // City Manager → Ops Hub "EM chain" (PC and phone), for transfers of any
     // number of cities at once:
     //  1. each ticked transfer is read fresh from the CRM and gets the mod
@@ -28728,6 +28728,55 @@ async function wpTransferAssistantExtensionEnabled() {
         if (!row) { try { row = wpAutoRowForUrl(item.url); } catch (_) {} }
         return row || null;
     }
+    // 1.7.323: EM Project rules that depend on the time before pickup
+    // ("tbo < 36h", "10% >24hrs and 15% <24hrs", "15% / +20% DC < 12hrs"),
+    // for EM chain on Today, Tomorrow and the later days. hours = time
+    // before pickup (the row's TBO). → {} (no time rule), { skip }, or
+    // { percent, text } (the % for this time, when the rule has tiers).
+    function wpEmHoursRule(city, hours) {
+        let info = null;
+        try { info = getCityPricingData(String(city || '')); } catch (_) {}
+        if (!info) return {};
+        const sku = String(info.sku || '');
+        const all = [info.howMuch, info.sku, info.notes].map(function(part) { return String(part || ''); }).join('\n');
+        // "% … < 24h" / "% … > 24hrs" pairs (not "in EM > 8h": that is time in EM Hailing)
+        const tiers = [];
+        const pairRe = /(\d+(?:[.,]\d+)?)\s*%[^%<>\n]{0,40}?([<>])\s*(\d+(?:[.,]\d+)?)\s*h/gi;
+        let found;
+        while ((found = pairRe.exec(all))) {
+            const before = all.slice(Math.max(0, found.index), pairRe.lastIndex);
+            if (/\bin\s+em\s*[<>]/i.test(before)) continue;
+            tiers.push({ percent: parseFloat(found[1].replace(',', '.')), op: found[2], hours: parseFloat(found[3].replace(',', '.')) });
+        }
+        const known = Number.isFinite(Number(hours));
+        const hText = known ? Math.round(Number(hours) * 10) / 10 + 'h before pickup' : '';
+        if (tiers.length) {
+            if (!known) return { skip: 'EM Project % depends on the time before pickup, and the TBO was not read' };
+            const fits = tiers.filter(function(tier) { return tier.op === '<' ? Number(hours) < tier.hours : Number(hours) > tier.hours; });
+            if (fits.length) {
+                // the narrowest window wins: "< 12h" over "< 24h"
+                fits.sort(function(a, b) { return a.op === b.op ? (a.op === '<' ? a.hours - b.hours : b.hours - a.hours) : (a.op === '<' ? -1 : 1); });
+                return { percent: fits[0].percent, text: 'EM Project: +' + fits[0].percent + '% ' + fits[0].op + ' ' + fits[0].hours + 'h (' + hText + ')' };
+            }
+            // a % in "How much" that is not one of the time tiers = the default ("15% / +20% DC < 12hrs")
+            const paired = tiers.map(function(tier) { return tier.percent; });
+            const rest = (String(info.howMuch || '').match(/\d+(?:[.,]\d+)?\s*%/g) || []).map(function(value) { return parseFloat(value.replace(',', '.')); })
+                .filter(function(value) { return paired.indexOf(value) < 0; });
+            if (rest.length === 1) return { percent: rest[0], text: 'EM Project: +' + rest[0] + '% (' + hText + ', outside the time tiers)' };
+            return { skip: 'EM Project: only ' + tiers.map(function(tier) { return tier.op + ' ' + tier.hours + 'h'; }).join(' / ') + ' before pickup — this one is ' + hText };
+        }
+        // A time limit without its own % in the SKU: "tbo < 36h", "LM bookings <12h".
+        const limits = [];
+        const limitRe = /([<>])\s*(\d+(?:[.,]\d+)?)\s*h/gi;
+        while ((found = limitRe.exec(sku))) {
+            if (/\bin\s+em\s*$/i.test(sku.slice(Math.max(0, found.index - 8), found.index))) continue;
+            if (found[1] === '<') limits.push(parseFloat(found[2].replace(',', '.')));
+        }
+        if (!limits.length) return {};
+        if (!known) return { skip: 'EM Project: only < ' + Math.max.apply(null, limits) + 'h before pickup, and the TBO was not read' };
+        if (Number(hours) >= Math.max.apply(null, limits)) return { skip: 'EM Project: only < ' + Math.max.apply(null, limits) + 'h before pickup — this one is ' + hText };
+        return {};
+    }
     // → { list: [{ item, id, label, city, plan, text }], skipped: [{ label, city, why }] }
     async function wpEmChainCheck(items, tabName, onProgress) {
         const list = [];
@@ -28751,14 +28800,41 @@ async function wpTransferAssistantExtensionEnabled() {
             const row = wpEmChainRowFor(item, tabName);
             if (!row) { skip('not found in the CRM list'); continue; }
             let plan = null;
+            let extra = null;
             try {
-                const extra = wpDirectorBuildExtra(row, data);
+                extra = wpDirectorBuildExtra(row, data);
                 try { await wpAiFor(extra.path, item.city, data, extra); } catch (_) {}
                 plan = wpDirectorPlan(item.city, data, null, extra);
             } catch (_) { plan = null; }
             if (!plan) { skip('the Director plan could not be worked out'); continue; }
             if (plan.skip) { skip(plan.skip); continue; }
             if (plan.noRaise || !plan.value) { skip(plan.noRaise || 'no raise in the Director plan'); continue; }
+            // 1.7.323: the EM Project's time before pickup (Today / Tomorrow /
+            // later days): outside its window = skipped; a % for this time
+            // ("10% >24hrs and 15% <24hrs") replaces the city %. Partner
+            // rules, your rules and exceptions are left as the Director has them.
+            const suggestion = plan.suggestion || {};
+            const fromCity = !suggestion.partner && !/^(your|exception|em project: no)/i.test(String(suggestion.text || '')) && !/held at|made smaller/i.test(String(suggestion.text || ''));
+            if (fromCity) {
+                const minutes = Number.isFinite(Number(extra && extra.tbo)) ? Number(extra.tbo) : Number.isFinite(Number(item.tboMinutes)) && item.tboMinutes !== null ? Number(item.tboMinutes) : NaN;
+                const timed = wpEmHoursRule(item.city, Number.isFinite(minutes) ? minutes / 60 : NaN);
+                if (timed.skip) { skip(timed.skip); continue; }
+                if (timed.percent && plan.value !== 'dctc' && suggestion.kind === 'pct' && Math.abs(Number(suggestion.percent) - (timed.percent + Number(suggestion.extraAdded || 0))) > 0.05) {
+                    const round1 = function(value) { return Math.round(value * 10) / 10; };
+                    const target = round1(timed.percent + Number(suggestion.extraAdded || 0));
+                    const noted = Number(plan.noted || 0);
+                    if (noted >= target - 0.5) { skip('already raised DC +' + noted + '% — ' + timed.text); continue; }
+                    const add = round1(target - noted);
+                    let min5 = null;
+                    try { min5 = wpRuleExceptionFor('min5', item.city); } catch (_) {}
+                    if (add < 5 && !min5) { skip('only +' + add + '% left to raise (to +' + target + '% in total) — raises under 5% are not done · ' + timed.text); continue; }
+                    plan = Object.assign({}, plan, {
+                        value: 'pct:' + add + ':' + target, add: add, target: target, note: 'raised to +' + target + '% DC',
+                        totalText: (add !== target ? '+' + add + '% more → +' + target + '% total' : '+' + target + '%') + ' (' + timed.text + ')',
+                        newDc: Number.isFinite(Number(plan.dc)) ? Math.ceil(Number(plan.dc) * (1 + add / 100) - 1e-9) : plan.newDc
+                    });
+                }
+            }
             if (plan.final && plan.value !== 'dctc' && !/^pct:/.test(plan.value)) { skip('no raise in the Director plan'); continue; }
             if (plan.value !== 'dctc' && !/^pct:\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(plan.value)) { skip('unknown raise "' + plan.value + '"'); continue; }
             if (plan.suggestion && plan.suggestion.check) { skip('EM Project condition to check by hand: ' + plan.suggestion.check); continue; }

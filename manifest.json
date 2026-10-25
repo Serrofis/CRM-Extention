@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "mod",
-  "version": "1.7.322",
+  "version": "1.7.323",
   "description": "Welcome Pickups CRM transfer tools with transfer details collection, WhatsApp image copy, batch task tools, and city vehicle capacity info.",
   "permissions": [
     "storage",
