@@ -28678,6 +28678,221 @@ async function wpTransferAssistantExtensionEnabled() {
             return window.setTimeout(function() { wpRemoteCmOut = wpRemoteCmSnapshot(); wpRemoteLoop().catch(function() {}); }, delay);
         });
     }
+    // ---- EM chain (1.7.321) ----
+    // City Manager → Ops Hub "EM chain" (PC and phone): the Chain (Select →
+    // Tag → Price Change → Remove Auto-C → Broadcast → 30 s → Enable Auto-C
+    // → one note) with the raise mod works out from the EM Project for each
+    // transfer: the same plan as mod's own cards (city rule, car type,
+    // conditions, your rules, what is already raised), each transfer read
+    // fresh from the CRM. Skipped and listed: no EM Project raise, assigned
+    // or cancelled, prices not read, a condition to check by hand, DC = TC,
+    // already raised, or raised by an EM chain in the last 12 hours.
+    // Transfers with the same raise go to the Hub together; it stops at the
+    // first Hub step that does not go through.
+    const WP_EM_CHAIN_KEY = 'wp_em_chain_done_v1';
+    var wpEmChainBusy = false;
+    function wpEmChainIdOf(item) {
+        return (String(item && item.url || '').match(/transfers\/(\d+)/) || [])[1] || '';
+    }
+    function wpEmChainDoneLoad() {
+        let store = {};
+        try { store = JSON.parse(localStorage.getItem(WP_EM_CHAIN_KEY) || '{}') || {}; } catch (_) {}
+        const now = Date.now();
+        Object.keys(store).forEach(function(id) { if (!store[id] || !(now - Number(store[id].at) < 12 * 3600000)) delete store[id]; });
+        return store;
+    }
+    function wpEmChainDoneAdd(ids, target) {
+        const store = wpEmChainDoneLoad();
+        ids.forEach(function(id) { store[String(id)] = { at: Date.now(), target: target }; });
+        try { localStorage.setItem(WP_EM_CHAIN_KEY, JSON.stringify(store)); } catch (_) {}
+    }
+    // The transfer's own row in the CRM list (mod's plan reads its TBO,
+    // Final BC timing and partner from it).
+    function wpEmChainRowFor(item, tabName) {
+        let table = null;
+        try { table = wpTodayCityFindTable(tabName); } catch (_) {}
+        const id = wpEmChainIdOf(item);
+        if (!table || !id) return null;
+        return Array.from(table.querySelectorAll('tr')).find(function(row) {
+            if (item.crmPath && row.dataset.wpCrmPath === item.crmPath) return true;
+            return Array.from(row.querySelectorAll('a[href*="/transfers/"]')).some(function(link) {
+                return (String(link.getAttribute('href') || '').match(/transfers\/(\d+)/) || [])[1] === id;
+            });
+        }) || null;
+    }
+    // → { groups: [{ add, target, items, ids, labels }], skipped: [{ label, city, why }] }
+    async function wpEmChainCheck(items, tabName, onProgress) {
+        const groups = {};
+        const skipped = [];
+        const already = wpEmChainDoneLoad();
+        const hm = function(at) { const d = new Date(Number(at)); return d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0'); };
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const id = wpEmChainIdOf(item);
+            const label = String(item && item.orderLabel || '').replace(/\s+/g, ' ').trim() || (id ? '#' + id : 'Transfer');
+            const skip = function(why) { skipped.push({ id: id, label: label, city: String(item && item.city || '?'), why: why }); };
+            if (onProgress) { try { onProgress(i + 1, items.length); } catch (_) {} }
+            if (!id) { skip('no transfer link'); continue; }
+            if (already[id]) { skip('EM chain already raised it at ' + hm(already[id].at) + ' (to +' + already[id].target + '%)'); continue; }
+            let data = null;
+            try { data = await wpFetchTransferCrmDetails(item.url, true); } catch (_) {}
+            if (!data || !data.prices || data.prices.dc === null || data.prices.dc === undefined || !Number.isFinite(Number(data.prices.dc))) { skip('CRM prices not read'); continue; }
+            if (data.cancelled) { skip('cancelled'); continue; }
+            if (data.assigned) { skip('already assigned'); continue; }
+            const row = wpEmChainRowFor(item, tabName);
+            if (!row) { skip('not found in the CRM list any more'); continue; }
+            let plan = null;
+            try {
+                const extra = wpDirectorBuildExtra(row, data);
+                try { await wpAiFor(extra.path, item.city, data, extra); } catch (_) {}
+                plan = wpDirectorPlan(item.city, data, null, extra);
+            } catch (_) { plan = null; }
+            if (!plan) { skip('the EM Project raise could not be worked out'); continue; }
+            if (plan.skip) { skip(plan.skip); continue; }
+            if (plan.noRaise) { skip(plan.noRaise); continue; }
+            if (plan.value === 'dctc') { skip('EM Project: DC = TC — use Custom with DC = TC'); continue; }
+            const parts = String(plan.value || '').match(/^pct:(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+            if (!parts) { skip('no EM Project raise'); continue; }
+            if (plan.suggestion && plan.suggestion.check) { skip('EM Project condition to check by hand: ' + plan.suggestion.check); continue; }
+            const add = Math.round(Number(parts[1]) * 10) / 10;
+            const target = Math.round(Number(parts[2]) * 10) / 10;
+            if (!(add >= 1 && add <= 25)) { skip('+' + add + '% is outside what the Hub takes (1 to 25%)'); continue; }
+            const key = add + '|' + target;
+            if (!groups[key]) groups[key] = { add: add, target: target, items: [], ids: [], labels: [] };
+            groups[key].items.push(item);
+            groups[key].ids.push(id);
+            groups[key].labels.push(label);
+        }
+        return { groups: Object.keys(groups).map(function(key) { return groups[key]; }).sort(function(a, b) { return a.add - b.add || a.target - b.target; }), skipped: skipped };
+    }
+    function wpEmChainGroupText(group) {
+        return '+' + group.add + '%' + (group.add !== group.target ? ' (→ +' + group.target + '% total)' : '') + ' on ' + group.ids.length +
+            ' (' + group.labels.slice(0, 5).join(', ') + (group.labels.length > 5 ? ' …' : '') + ')';
+    }
+    function wpEmChainSkipText(skipped) {
+        if (!skipped.length) return '';
+        return 'skipped ' + skipped.length + ': ' + skipped.slice(0, 6).map(function(entry) { return entry.label + ' (' + entry.city + ') ' + entry.why; }).join(' · ') + (skipped.length > 6 ? ' · …' : '');
+    }
+    // Runs the checked groups one after the other. opts: { city, by, say(text), untick(ids), tabName, logName }
+    async function wpEmChainRun(check, opts) {
+        opts = opts || {};
+        const say = typeof opts.say === 'function' ? opts.say : function() {};
+        const logName = opts.logName || ('City Manager' + (opts.city ? ' ' + opts.city : ''));
+        if (wpEmChainBusy) return { text: 'EM chain is already running — nothing more was started', tone: 'warn' };
+        wpEmChainBusy = true;
+        const runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        const report = [];
+        let tone = 'ok';
+        let stoppedAll = '';
+        let count = 0;
+        try {
+            const groups = check && check.groups || [];
+            for (let g = 0; g < groups.length; g++) {
+                const group = groups[g];
+                const label = '+' + group.add + '%';
+                if (stoppedAll) { report.push(label + ': not run (stopped before)'); continue; }
+                // Raised meanwhile (another EM chain, the phone): left out.
+                const recent = wpEmChainDoneLoad();
+                const ids = group.ids.filter(function(id) { return !recent[id]; });
+                if (ids.length < group.ids.length) report.push(label + ': ' + (group.ids.length - ids.length) + ' left out, an EM chain raised them meanwhile');
+                if (!ids.length) continue;
+                if (ids.length > 70) { report.push(label + ': ' + ids.length + ' transfers — the Hub takes at most 70 in one Price Change, not run (untick some)'); tone = 'warn'; continue; }
+                count += ids.length;
+                const price = { mode: 'pct', value: group.add };
+                const done = [];
+                let partial = 0;
+                const send = function(key, auto, keep) {
+                    return new Promise(function(resolve) {
+                        try {
+                            const request = { type: 'WP_HUB_SELECT', ids: ids, action: key, quiet: true, keep: keep === true, runId: runId + g + key.replace(/_/g, '') };
+                            if (auto) request.auto = auto;
+                            chrome.runtime.sendMessage(request, function(answer) {
+                                resolve(chrome.runtime.lastError || !answer ? { ok: false, message: chrome.runtime.lastError ? chrome.runtime.lastError.message : 'the Hub did not answer' } : answer);
+                            });
+                        } catch (error) { resolve({ ok: false, message: String(error && error.message || error) }); }
+                    });
+                };
+                const problem = function(answer, needsConfirm) {
+                    if (!answer || !answer.ok) return (answer && (answer.message || answer.reason)) || 'not done';
+                    if ((answer.missing || []).length) return answer.selected + ' of ' + answer.asked + ' are in the Hub list (missing #' + answer.missing.slice(0, 6).join(', #') + ')';
+                    if (needsConfirm === null) return '';
+                    if (!answer.pressed) return answer.actionError || 'the button was not pressed';
+                    if (needsConfirm && !answer.confirmed) return answer.why || 'the Hub dialog was not confirmed';
+                    return '';
+                };
+                const step = async function(name, key, auto, needsConfirm, keep) {
+                    say('EM chain ' + label + ' (' + (g + 1) + ' of ' + groups.length + ') · ' + name + '…');
+                    const answer = await send(key, auto, keep);
+                    // A Price Change that may have gone through is remembered, so it is never raised twice.
+                    if (key === 'price_change' && !(answer && (answer.pressed === false || (answer.missing || []).length))) wpEmChainDoneAdd(ids, group.target);
+                    const why = problem(answer, needsConfirm);
+                    if (why) {
+                        if (answer && (answer.missing || []).length && !answer.filtered && opts.untick) { try { const gone = opts.untick(answer.missing); if (gone) done.push(gone + ' unticked here'); } catch (_) {} }
+                        wpDashLog(logName + ' → Ops Hub EM chain ' + label + ': ' + name + ' — NOT done: ' + why, 'warn');
+                        return why;
+                    }
+                    const counts = String(answer.result || '').match(/(\d+)\s+succeeded(?:,\s*(\d+)\s+not needed)?(?:,\s*(\d+)\s+did not)?/i);
+                    const short = counts && Number(counts[3] || 0) > 0 ? ' (' + counts[1] + ' done, ' + counts[3] + ' did not)' : '';
+                    if (short) partial += 1;
+                    done.push(name + ' ✓' + short);
+                    wpDashLog(logName + ' → Ops Hub EM chain ' + label + ': ' + name + ' ✓' + (answer.result ? ' — Hub: ' + answer.result : '') + (Array.isArray(answer.details) && answer.details.length ? ' · ' + answer.details.join(' · ') : ''), short ? 'warn' : undefined);
+                    const dropped = (Array.isArray(answer.dropped) ? answer.dropped.map(String) : []).filter(function(id) { return ids.indexOf(id) >= 0; });
+                    if (dropped.length) {
+                        dropped.forEach(function(id) { ids.splice(ids.indexOf(id), 1); });
+                        if (opts.untick) { try { opts.untick(dropped); } catch (_) {} }
+                        done.push(dropped.length + ' dropped by the Hub (#' + dropped.slice(0, 6).join(', #') + ')');
+                        if (!ids.length) return 'the Hub dropped every transfer of this group';
+                    }
+                    return '';
+                };
+                let stopped = '', stoppedAt = '', autoCOff = false, broadcast = false;
+                const fail = function(name, why) { stopped = why; stoppedAt = name; };
+                let why = await step('Select', '', null, null, false);
+                if (why) fail('Select', why);
+                if (!stopped) { why = await step('Tag', 'tag', null, false, true); if (why) fail('Tag', why); }
+                if (!stopped) { why = await step('Price Change (' + wpHubPriceText(price) + ')', 'price_change', { note: '', price: price }, true, true); if (why) fail('Price Change', why); }
+                if (!stopped) { why = await step('Remove Auto-C', 'remove_auto_c', { note: '', price: null }, true, true); if (why) fail('Remove Auto-C', why); else autoCOff = true; }
+                if (!stopped) { why = await step('Broadcast', 'broadcast', { note: '', price: null }, true, true); if (why) fail('Broadcast', why); else broadcast = true; }
+                if (autoCOff) {
+                    if (broadcast) {
+                        for (let left = 30; left > 0; left--) { say('EM chain ' + label + ' · Broadcast sent — Enable Auto-C in ' + left + ' s…'); await new Promise(function(resolve) { window.setTimeout(resolve, 1000); }); }
+                    }
+                    why = await step('Enable Auto-C', 'enable_auto_c', { note: '', price: null }, true, true);
+                    if (why && !stopped) fail('Enable Auto-C', why);
+                    else if (why) stopped += ' · and Enable Auto-C did NOT go through (' + why + ') — Auto-C is still OFF on these, turn it back on';
+                }
+                // One note on each transfer, only when the broadcast went out.
+                const note = 'raised to +' + group.target + '% DC/ sent to BC, Group';
+                if (broadcast) {
+                    const chosen = group.items.filter(function(item) { return ids.indexOf(wpEmChainIdOf(item)) >= 0; });
+                    const batch = chosen.length ? wpCreateCityBatch(chosen, opts.tabName) : null;
+                    if (batch) {
+                        batch.broadcastMode = '';
+                        batch.noteOnly = true;
+                        wpOpenCityBatchTransfers(batch, null, note, '');
+                        if (opts.onBatch) { try { opts.onBatch(batch); } catch (_) {} }
+                        done.push('note "' + note + '" on ' + chosen.length);
+                    }
+                }
+                if (stopped) { stoppedAll = stopped; tone = 'warn'; }
+                else if (partial) tone = 'warn';
+                report.push(label + ' on ' + ids.length + ': ' + done.join(' · ') + (stopped ? ' · stopped at ' + stoppedAt + ': ' + stopped : ''));
+            }
+        } catch (error) {
+            stoppedAll = String(error && error.message || error);
+            tone = 'bad';
+            report.push('failed: ' + stoppedAll);
+        } finally {
+            wpEmChainBusy = false;
+        }
+        const skippedText = wpEmChainSkipText(check && check.skipped || []);
+        if (!count && !stoppedAll) tone = 'warn';
+        const text = (stoppedAll ? 'EM chain stopped — ' : !count ? 'EM chain — nothing was run — ' : tone === 'warn' ? 'EM chain done, but not everything went through — ' : '✓ EM chain done — ') +
+            report.join(' | ') + (skippedText ? ' | ' + skippedText : '');
+        wpHubHistoryAdd({ id: runId, action: 'EM chain', city: opts.city || '', count: count, text: text.replace(/^✓\s*/, ''), tone: tone, by: opts.by || 'PC' });
+        wpDashLog(logName + ' → Ops Hub ' + text, tone === 'bad' ? 'error' : tone === 'warn' ? 'warn' : 'ok');
+        return { text: text, tone: tone };
+    }
     // Phone: one of the Ops Hub's actions on the transfers ticked in the
     // phone's City Manager (1.7.224). Nobody is at the PC, so the Hub's
     // dialog is filled in and confirmed by the extension ("auto"); the Hub's
@@ -28686,7 +28901,9 @@ async function wpTransferAssistantExtensionEnabled() {
     var wpRemoteHubLast = null;
     const WP_HUB_PHONE_ACTIONS = {
         tag: { label: 'Tag', cap: 200 }, note: { label: 'Add note', cap: 200 }, remove_auto_c: { label: 'Remove Auto-C', cap: 100 },
-        enable_auto_c: { label: 'Enable Auto-C', cap: 100 }, broadcast: { label: 'Broadcast', cap: 100 }, price_change: { label: 'Price Change', cap: 70 }
+        enable_auto_c: { label: 'Enable Auto-C', cap: 100 }, broadcast: { label: 'Broadcast', cap: 100 }, price_change: { label: 'Price Change', cap: 70 },
+        // 1.7.321: the Chain with the EM Project raise per transfer
+        em_chain: { label: 'EM chain', cap: 70 }
     };
     async function wpRemoteCmHub(command) {
         const spec = WP_HUB_PHONE_ACTIONS[String(command.action || '')];
@@ -28696,11 +28913,14 @@ async function wpTransferAssistantExtensionEnabled() {
         const runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
         let count = 0;
         wpRemoteCmActiveAt = Date.now();
-        const finish = function(text, tone) {
+        const finish = function(text, tone, logged) {
             wpRemoteCmActiveAt = Date.now();
             wpRemoteHubLast = { text: text, tone: tone, at: Date.now(), action: spec ? spec.label : '?' };
-            wpDashLog('📱 Phone → Ops Hub (' + cityName + '): ' + text, tone === 'bad' ? 'error' : tone === 'warn' ? 'warn' : undefined);
-            wpHubHistoryAdd({ id: runId, action: spec ? spec.label : '?', city: cityName, count: count, text: text, tone: tone, by: 'phone' });
+            // 1.7.321: logged = the EM chain already wrote the Terminal line and the Hub history
+            if (!logged) {
+                wpDashLog('📱 Phone → Ops Hub (' + cityName + '): ' + text, tone === 'bad' ? 'error' : tone === 'warn' ? 'warn' : undefined);
+                wpHubHistoryAdd({ id: runId, action: spec ? spec.label : '?', city: cityName, count: count, text: text, tone: tone, by: 'phone' });
+            }
             wpRemoteCmOut = wpRemoteCmSnapshot() || { city: city, day: day, empty: true, hub: wpRemoteHubLast, hubHistory: wpHubHistoryLoad().slice(0, 8).map(wpHubHistoryLine) };
             wpRemoteLoop().catch(function() {});
         };
@@ -28720,6 +28940,30 @@ async function wpTransferAssistantExtensionEnabled() {
         if (!wanted.length) { finish('nothing was selected — nothing was run', 'warn'); return; }
         if (ids.length !== wanted.length) { finish((wanted.length - ids.length) + ' of the ' + wanted.length + ' selected transfers are no longer in ' + cityName + ' — open the city again on the phone. Nothing was run.', 'warn'); return; }
         if (ids.length > spec.cap) { finish(spec.label + ' takes at most ' + spec.cap + ' transfers at a time and ' + ids.length + ' were selected. Nothing was run.', 'warn'); return; }
+        // 1.7.321: EM chain — each transfer's raise is worked out here from
+        // the EM Project (the phone sends no amount); no rule = skipped.
+        if (command.action === 'em_chain') {
+            if (wpEmChainBusy) { finish('EM chain is already running on the PC — nothing more was started', 'warn'); return; }
+            const progress = function(text, push) {
+                wpRemoteCmActiveAt = Date.now();
+                wpRemoteHubLast = { text: text, tone: '', at: Date.now(), action: spec.label };
+                if (push) wpRemoteCmPush([100]);
+            };
+            progress('EM chain on ' + ids.length + ': checking the EM Project rules in the CRM…', true);
+            const chosen = items.filter(function(item) { return ids.indexOf(wpEmChainIdOf(item)) >= 0; });
+            let check = null;
+            try { check = await wpEmChainCheck(chosen, day); } catch (_) {}
+            if (!check) { finish('EM chain — the transfers could not be checked. Nothing was run.', 'bad'); return; }
+            check.skipped.forEach(function(entry) { wpDashLog('📱 Phone → EM chain: ' + entry.label + ' (' + entry.city + ') — skipped: ' + entry.why); });
+            if (!check.groups.length) { finish('EM chain — nothing was run: ' + (wpEmChainSkipText(check.skipped) || 'no EM Project raise'), 'warn'); return; }
+            progress('EM chain: ' + check.groups.map(wpEmChainGroupText).join(' · ') + ' — running in the Hub…', true);
+            const result = await wpEmChainRun(check, {
+                city: cityName, by: 'phone', tabName: day, logName: '📱 Phone → City Manager ' + cityName,
+                say: function(text) { progress(text, !/ in \d+ s…$/.test(text)); }
+            });
+            finish(result.text, result.tone, true);
+            return;
+        }
         const auto = {};
         if (command.action === 'note') {
             auto.note = String(command.note || '').replace(/\s+/g, ' ').trim().slice(0, 280);
@@ -35527,12 +35771,21 @@ async function wpTransferAssistantExtensionEnabled() {
         };
         let hubChainButton = null;
         let hubChainArmed = false;
+        let hubEmButton = null;
+        let hubEmArmed = null;
         const paintHubButton = function() {
             const ids = hubSelectedIds();
             if (hubChainButton) {
                 hubChainButton.textContent = hubChainArmed ? 'Chain on ' + ids.length + ' now — click again' : 'Chain' + (ids.length ? ' (' + ids.length + ')' : '');
                 hubChainButton.disabled = hubBusy || ids.length === 0;
                 hubChainButton.style.opacity = ids.length === 0 ? '0.45' : (hubBusy ? '0.6' : '1');
+            }
+            // 1.7.321: EM chain — armed only for the selection it was checked for
+            if (hubEmButton) {
+                if (hubEmArmed && hubEmArmed.sig !== ids.join(',')) hubEmArmed = null;
+                hubEmButton.textContent = hubEmArmed ? 'EM chain on ' + hubEmArmed.count + ' now — click again' : 'EM chain' + (ids.length ? ' (' + ids.length + ')' : '');
+                hubEmButton.disabled = hubBusy || ids.length === 0;
+                hubEmButton.style.opacity = ids.length === 0 ? '0.45' : (hubBusy ? '0.6' : '1');
             }
             const sig = ids.join(',');
             if (sig !== hubSig) {
@@ -35688,7 +35941,7 @@ async function wpTransferAssistantExtensionEnabled() {
             return { price: price, error: error, cap: price ? 70 : 100, note: typedNote || (did + 'sent to BC, Group') };
         };
         const hubChainRun = async function() {
-            if (hubBusy) return;
+            if (hubBusy || wpEmChainBusy) return;
             const ids = hubSelectedIds();
             if (!ids.length) return;
             const plan = hubChainPlan();
@@ -35814,6 +36067,81 @@ async function wpTransferAssistantExtensionEnabled() {
         });
         hubChainButton.addEventListener('click', function(event) { event.preventDefault(); event.stopPropagation(); hubChainRun(); });
         hubBox.appendChild(hubChainButton);
+
+        // ---- EM chain (1.7.321) ----
+        // First click: each ticked transfer is read fresh from the CRM and
+        // mod works out its EM Project raise; what will happen is shown
+        // (raise per group, skipped ones and why). Second click within 30 s
+        // runs the Chain per raise (wpEmChainRun). The price box below is
+        // not used; the note is "raised to +N% DC/ sent to BC, Group".
+        let hubEmTimer = null;
+        const hubEmRun = async function() {
+            if (hubBusy) return;
+            const ids = hubSelectedIds();
+            if (!ids.length) return;
+            const logName = 'City Manager' + (popupTitle ? ' ' + popupTitle : '');
+            const sig = ids.join(',');
+            if (wpEmChainBusy) { hubStatus.style.color = '#ffd27a'; hubStatus.textContent = 'EM chain is already running (PC or phone) — wait for it to finish.'; return; }
+            if (!hubEmArmed || hubEmArmed.sig !== sig || Date.now() - hubEmArmed.at > 30000) {
+                hubEmArmed = null;
+                hubChainArmed = false;
+                hubArmed = '';
+                hubBusy = true;
+                paintHubButton();
+                hubStatus.style.color = '#9aa6ad';
+                hubStatus.textContent = 'EM chain: reading ' + ids.length + ' transfer' + (ids.length === 1 ? '' : 's') + ' in the CRM…';
+                const chosen = items.filter(function(item) { return ids.indexOf(wpEmChainIdOf(item)) >= 0; });
+                let check = null;
+                try {
+                    check = await wpEmChainCheck(chosen, tabName, function(n, total) { hubStatus.textContent = 'EM chain: checking ' + n + ' of ' + total + ' in the CRM…'; });
+                } catch (error) {
+                    wpDashLog(logName + ' → EM chain: check failed — ' + String(error && error.message || error), 'error');
+                }
+                hubBusy = false;
+                if (!check) { hubStatus.style.color = '#ff9d94'; hubStatus.textContent = 'EM chain: the transfers could not be checked. Nothing was run.'; paintHubButton(); return; }
+                check.skipped.forEach(function(entry) { wpDashLog(logName + ' → EM chain: ' + entry.label + ' (' + entry.city + ') — skipped: ' + entry.why); });
+                const skippedText = wpEmChainSkipText(check.skipped);
+                hubStatus.style.color = '#ffd27a';
+                if (!check.groups.length) {
+                    hubStatus.textContent = 'EM chain: nothing to run — ' + (skippedText || 'no EM Project raise');
+                    paintHubButton();
+                    return;
+                }
+                const count = check.groups.reduce(function(sum, group) { return sum + group.ids.length; }, 0);
+                hubEmArmed = { sig: sig, check: check, count: count, at: Date.now() };
+                if (hubEmTimer) clearTimeout(hubEmTimer);
+                hubEmTimer = window.setTimeout(function() { hubEmArmed = null; paintHubButton(); }, 30000);
+                hubStatus.textContent = 'EM chain on ' + count + ': ' + check.groups.map(wpEmChainGroupText).join(' · ') +
+                    (skippedText ? '\n' + skippedText.charAt(0).toUpperCase() + skippedText.slice(1) : '') +
+                    '\nEach raise: Tag → Price Change → Remove Auto-C → Broadcast → 30 s → Enable Auto-C → note. Click EM chain again to run it.';
+                paintHubButton();
+                return;
+            }
+            const check = hubEmArmed.check;
+            hubEmArmed = null;
+            if (hubEmTimer) clearTimeout(hubEmTimer);
+            hubBusy = true;
+            paintHubButton();
+            const result = await wpEmChainRun(check, {
+                city: popupTitle, by: 'PC', tabName: tabName, logName: logName, untick: hubUntick,
+                say: function(text) { hubStatus.style.color = '#9aa6ad'; hubStatus.textContent = text; },
+                onBatch: function(batch) { try { startBatchSummary(batch); } catch (_) {} panel.dataset.wpLastBatchId = batch.batchId; panel._wpLastBatch = batch; }
+            });
+            hubStatus.style.color = result.tone === 'ok' ? '#6fd16f' : result.tone === 'bad' ? '#ff9d94' : '#ffd27a';
+            hubStatus.textContent = result.text;
+            hubBusy = false;
+            paintHubButton();
+        };
+        hubEmButton = document.createElement('button');
+        hubEmButton.type = 'button';
+        hubEmButton.className = 'wp-hub-action wp-hub-em-chain';
+        hubEmButton.title = 'The Chain with the EM Project raise: each ticked transfer is read in the CRM and gets the raise mod works out for it (city rule, car type, conditions, your rules, minus what is already raised). Transfers with no raise are skipped and listed. Same raise = one Chain in the Hub. Click twice.';
+        Object.assign(hubEmButton.style, {
+            display: 'block', width: '100%', background: 'rgba(255,179,71,0.12)', color: '#ffb347', border: '1px solid rgba(255,179,71,0.55)',
+            borderRadius: '9px', padding: '8px 10px', fontSize: '12.5px', fontWeight: '800', cursor: 'pointer', boxSizing: 'border-box', textAlign: 'left'
+        });
+        hubEmButton.addEventListener('click', function(event) { event.preventDefault(); event.stopPropagation(); hubEmRun(); });
+        hubBox.appendChild(hubEmButton);
 
         HUB_ACTIONS.forEach(function(action) {
             const button = document.createElement('button');
