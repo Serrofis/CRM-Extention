@@ -11339,10 +11339,10 @@ async function wpTransferAssistantExtensionEnabled() {
         const clock = function(at) { return new Date(at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }); };
         const ghasLine = state.ghas.at ? ' ghas worked on it ' + clock(state.ghas.at) + (state.ghas.how ? ' (' + state.ghas.how + ')' : '') + '.' : '';
         // Mint: you. Light purple (1.7.330): only ghas. Grey: nobody.
-        const colour = state.on ? '#8fffd5' : state.ghas.at ? '#e0ccff' : '';
+        const colour = state.on ? '#8fffd5' : state.ghas.at ? '#ff8fd5' : '';
         dot.style.background = colour || 'rgba(255,255,255,.06)';
         dot.style.border = colour ? '1px solid ' + colour : '1px solid rgba(255,255,255,.45)';
-        dot.style.boxShadow = colour ? '0 0 6px ' + (state.on ? 'rgba(143,255,213,.55)' : 'rgba(214,190,255,.85)') : 'none';
+        dot.style.boxShadow = colour ? '0 0 6px ' + (state.on ? 'rgba(143,255,213,.55)' : 'rgba(255,143,213,.55)') : 'none';
         dot.title = (state.on
             ? 'Worked on by you — ' + clock(state.at) + (state.how ? ' (' + state.how + ')' : '') + '.'
             : 'Not worked on by you' + (state.at ? ' (unmarked ' + clock(state.at) + ')' : '') + '.') +
@@ -11431,7 +11431,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!header) return;
             wpBulkCell(header, 'th', 'wp-sel-cell', true).title = 'Tick transfers to act on them together';
             const workedTh = wpBulkCell(header, 'th', 'wp-worked-cell', false);
-            workedTh.title = 'Worked on: mint = you, purple = ghas only, grey = nobody';
+            workedTh.title = 'Worked on: mint = you, pink = ghas only, grey = nobody';
             rows.forEach(function(row) {
                 if (row === header || row.classList.contains('wp-rx-detail') || !row.querySelector(':scope > td')) return;
                 try { wpBulkSetupRow(row); } catch (_) {}
