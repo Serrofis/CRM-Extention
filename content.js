@@ -11103,6 +11103,57 @@ async function wpTransferAssistantExtensionEnabled() {
     // own bar built for this one transfer, so everything it does — the
     // workflow in a background tab, the WhatsApp message — is the same. When
     // the work is done this page loads again to show the result.
+    // ---- Split message (1.7.337) ----
+    // Read from the open transfer page: traveller first name, From / To
+    // addresses, pickup date and time (transfer_from_datetime), the booking
+    // number (w-…) and the booked car.
+    function wpSplitInfoFromPage() {
+        const value = function(id) { const el = document.getElementById(id); return el ? String(el.value || '').replace(/\s+/g, ' ').trim() : ''; };
+        let car = '';
+        try { car = String(wpFindBookedCarType() || ''); } catch (_) {}
+        const booking = (String(document.body ? document.body.innerText : '').match(/\bw-\d+(?:-\d+)?\b/i) || String(document.title || '').match(/\bw-\d+(?:-\d+)?\b/i) || [])[0] || '';
+        return { name: value('traveler_first_name'), from: value('transfer_from_address'), to: value('transfer_to_address'), when: value('transfer_from_datetime'), booking: booking, car: car };
+    }
+    // { text, what, missing } — or { error } when the car is not a minivan / minibus.
+    function wpSplitMessage(info) {
+        info = info || {};
+        const car = String(info.car || '').toLowerCase().replace(/\s+/g, '');
+        const bus = /minibus|^bus$/.test(car), van = !bus && /minivan|^van$/.test(car);
+        if (!bus && !van) return { error: 'the booked car is ' + (info.car || 'not readable') + ', not a minivan or minibus' };
+        const missing = [];
+        const take = function(text, label) { if (!text) missing.push(label); return text || '(' + label + ')'; };
+        const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const parts = String(info.when || '').match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+        let date = '', time = '';
+        if (parts) {
+            const day = Number(parts[3]);
+            const suffix = day % 10 === 1 && day !== 11 ? 'st' : day % 10 === 2 && day !== 12 ? 'nd' : day % 10 === 3 && day !== 13 ? 'rd' : 'th';
+            date = day + suffix + ' of ' + months[Number(parts[2]) - 1] + ' ' + parts[1];
+            time = parts[4] + ':' + parts[5];
+        }
+        const name = take(String(info.name || '').split(' ')[0], 'name');
+        const from = take(info.from, 'pickup address');
+        const to = take(info.to, 'dropoff address');
+        date = take(date, 'date');
+        time = take(time, 'pickup time');
+        const booking = take(info.booking, 'booking number');
+        const text = [
+            'Dear ' + name + ',',
+            '',
+            'We are contacting you in regards to your Welcome Pickups transfer from ' + from + ' to ' + to + ', scheduled for the ' + date + ' at ' + time + ', under reference number ' + booking + '.',
+            '',
+            'Kindly be advised that regrettably, we are not able to accommodate your transfer with a ' + (bus ? 'minibus' : 'minivan') + ', but we will be able to accommodate your transfer with ' + (bus ? 'one minivan and one sedan vehicle' : 'two sedan vehicles') + ' with no additional cost to you, also offering you a more comfortable ride.',
+            '',
+            'In the event that you don\'t agree, kindly be advised that your transfer will be cancelled and fully refunded back to you.',
+            '',
+            'Should you require any further assistance, please do not hesitate to contact us.',
+            '',
+            'Kind regards,',
+            'Argiro',
+            'Welcome Pickups Support Team'
+        ].join('\n');
+        return { text: text, what: bus ? 'minibus → 1 minivan + 1 sedan' : 'minivan → 2 sedans', missing: missing };
+    }
     function wpTransferPageQuickbar() {
         if (!wpIsTransferDetailPage() || document.getElementById('wp-page-quickbar')) return;
         // not on the tabs the extension itself opened to do a job
@@ -11142,6 +11193,13 @@ async function wpTransferAssistantExtensionEnabled() {
         body.appendChild(row);
         table.appendChild(body);
         host.appendChild(table);
+        // 1.7.337: Split — the "two vehicles instead of a minivan / minibus" message for the traveller, copied
+        const split = document.createElement('a');
+        split.href = '#';
+        split.textContent = 'Split';
+        split.title = 'Copy the split message for the traveller: a minivan becomes 2 sedans, a minibus 1 minivan + 1 sedan (name, addresses, date, time and booking number filled in)';
+        Object.assign(split.style, { display: 'inline-block', padding: '7px 13px', borderRadius: '9px', background: 'rgba(14,20,22,0.62)', backdropFilter: 'blur(18px)', border: '1px solid rgba(143,255,213,0.45)', color: '#8fffd5', fontWeight: '700', textDecoration: 'none', cursor: 'pointer', boxShadow: '0 6px 18px rgba(0,0,0,0.35)' });
+        host.appendChild(split);
         host.appendChild(status);
         document.body.appendChild(host);
 
@@ -11150,6 +11208,15 @@ async function wpTransferAssistantExtensionEnabled() {
             status.style.display = text ? '' : 'none';
             status.style.color = tone === 'error' ? '#ff8a80' : tone === 'ok' ? '#6fd16f' : '#dfe4e6';
         };
+        split.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const info = wpSplitInfoFromPage();
+            const made = wpSplitMessage(info);
+            if (!made.text) { say('Split: ' + made.error, 'error'); return; }
+            const copied = wpCopyTextFromUserGesture(made.text);
+            say(copied ? 'Split message copied (' + made.what + ')' + (made.missing.length ? ' — not found on the page: ' + made.missing.join(', ') : '') : 'Split: could not copy', copied && !made.missing.length ? 'ok' : 'error');
+        });
         row.__wpTransferPage = true;
         row.__wpCityText = city;
         row.__wpOrderLabel = order ? '#' + order : '#' + id;
