@@ -8886,7 +8886,8 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpTravelerNotePath(url) {
         try {
             const parsed = new URL(url, location.href);
-            if (parsed.origin !== location.origin || !/^\/admin\/transfers\/\d+\/?$/.test(parsed.pathname)) return '';
+            // 1.7.325: the list links to /admin/transfers/<id>/details_v3
+            if (parsed.origin !== location.origin || !/^\/admin\/transfers\/\d+(?:\/details_v3)?\/?$/.test(parsed.pathname)) return '';
             return parsed.pathname.replace(/\/$/, '');
         } catch (_) { return ''; }
     }
