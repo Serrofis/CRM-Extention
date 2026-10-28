@@ -11338,7 +11338,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const state = wpWorkedState(id);
         const clock = function(at) { return new Date(at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }); };
         const ghasLine = state.ghas.at ? ' ghas worked on it ' + clock(state.ghas.at) + (state.ghas.how ? ' (' + state.ghas.how + ')' : '') + '.' : '';
-        // Mint: you. Light purple (1.7.330): only ghas. Grey: nobody.
+        // Mint: you. Pink (1.7.331, same strength as the mint): only ghas. Grey: nobody.
         const colour = state.on ? '#8fffd5' : state.ghas.at ? '#ff8fd5' : '';
         dot.style.background = colour || 'rgba(255,255,255,.06)';
         dot.style.border = colour ? '1px solid ' + colour : '1px solid rgba(255,255,255,.45)';
