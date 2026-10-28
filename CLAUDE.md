@@ -1,16 +1,16 @@
-# mod — Welcome Pickups CRM extension (Chrome MV3)
+# ghas (was "mod") — Welcome Pickups CRM extension (Chrome MV3)
 
 ## Token budget (most important)
 The user has a tight budget. Keep replies short, read only the code you need (grep first, never whole files), and avoid re-reading. Tests: "quick" (default for small changes) = syntax check + one targeted stand-in; "full" only when asked or for auto-cancel / anything that sends messages.
 
 ## Basics
-- CRM: https://crm.welcomepickups.com. The assistant is called "mod" (lower case) in everything the user sees; code identifiers keep old names (wpDirector…, wp_director_*).
+- CRM: https://crm.welcomepickups.com. The assistant is called "ghas" (lower case; was "mod" until 1.7.327) in everything the user sees; code identifiers keep old names (wpDirector…, wp_director_*).
 - Files: content.js (~43k lines: main IIFE + a "transfer tab" IIFE driven by URL params; runs on /admin/transfers/* only), background.js, manifest.json, popup.html/js, wp-whatsapp.js (WhatsApp Web, also inside the side panel frame), wp-whatsapp-main.js (page world: leave-page guard + Mute), wa-panel.html/js (side panel: WhatsApp + Slack button), wp-hub.js, offscreen.js, wp-tours.js (tour pages + Confluence S-rides sync; was a Tampermonkey script). phone_relay/ (Cloudflare worker) only if the relay changes.
 - Keep the Tailscale support (ts.net in manifest, content.js, background.js).
 - Comments mark changes with the version ("// 1.7.296: …").
 
 ## Every build
-1. Bump "version" in manifest.json (name stays "mod").
+1. Bump "version" in manifest.json (name stays "ghas").
 2. Syntax-check every .js file on its own (new Function in a headless browser) with a negative control (apostrophes in template strings broke a build before).
 3. Zip the folder Welcome_Pickups_Transfer_Assistant_1_7_NNN, check the zip opens cleanly.
 4. On the user's PC: copy the zip to C:\Users\serr\Desktop\crm tool\ and extract it there. Before building, check "crm tool" for a newer version made elsewhere, diff against the previous one and merge. Headless Edge there must use --user-data-dir="%TEMP%\wpe1".

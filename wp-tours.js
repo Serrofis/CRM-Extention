@@ -145,7 +145,7 @@
       toast.style.color = '#2E3B4D';
       toast.textContent = `✓ S-rides WhatsApp groups synced: ${count} cities`;
     } catch (err) {
-      console.log('[mod tours] S-rides sync failed:', err);
+      console.log('[ghas tours] S-rides sync failed:', err);
       toast.style.background = '#E05252';
       toast.textContent = '⚠ S-rides sync failed: ' + (err.message || err);
     }
@@ -325,7 +325,7 @@
       });
     }
 
-    console.log('[mod tours] No-driver highlighter running...');
+    console.log('[ghas tours] No-driver highlighter running...');
     scan();
     new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
     setInterval(scan, 2000);
@@ -507,7 +507,7 @@
     if (!tourDetailsPromise) {
       const url = findTourDetailsUrl();
       tourDetailsPromise = url
-        ? fetchDoc(url).catch(err => { console.log('[mod tours] Tour details fetch failed:', err); tourDetailsPromise = null; return null; })
+        ? fetchDoc(url).catch(err => { console.log('[ghas tours] Tour details fetch failed:', err); tourDetailsPromise = null; return null; })
         : Promise.resolve(null);
     }
     return tourDetailsPromise;
@@ -778,7 +778,7 @@
           copyTourBtn.textContent = `Copied ✓${missingNote} — no S-rides group for ${summary.city || 'this city'}`;
         }
       } catch (err) {
-        console.log('[mod tours] Copy tour info failed:', err);
+        console.log('[ghas tours] Copy tour info failed:', err);
         copyTourBtn.textContent = '⚠ Copy failed';
       }
       reset();
@@ -1050,7 +1050,7 @@
   function initNotepad() {
     const orderId = getOrderId();
     if (!orderId) {
-      console.log('[mod tours] Notepad: no order ID found on this page.');
+      console.log('[ghas tours] Notepad: no order ID found on this page.');
       return;
     }
     buildNotepad(orderId);
@@ -1358,7 +1358,7 @@
   // swapped for each tour's city)
   function initDriversPageLearner() {
     const chip = document.createElement('div');
-    chip.textContent = 'mod: use this list for tour drivers';
+    chip.textContent = 'ghas: use this list for tour drivers';
     Object.assign(chip.style, {
       position: 'fixed', right: '16px', bottom: '16px', zIndex: 999999, padding: '6px 12px',
       borderRadius: '999px', background: 'rgba(20,24,28,0.85)', color: '#8fffd5',
@@ -1367,11 +1367,11 @@
     chip.addEventListener('click', async () => {
       const params = new URLSearchParams(location.search);
       const cityParam = Array.from(params.keys()).find(k => /city/i.test(k) && params.get(k));
-      if (!cityParam) { chip.textContent = 'mod: filter a city first, then click again'; return; }
+      if (!cityParam) { chip.textContent = 'ghas: filter a city first, then click again'; return; }
       const found = parseTourDrivers(document);
       params.delete('page');
       await storeSet(TOUR_DRIVERS_PATH_KEY, { search: params.toString(), cityParam, savedAt: Date.now() });
-      chip.textContent = `mod: saved — ${found.length} tour driver(s) read on this page`;
+      chip.textContent = `ghas: saved — ${found.length} tour driver(s) read on this page`;
     });
     document.body.appendChild(chip);
   }
