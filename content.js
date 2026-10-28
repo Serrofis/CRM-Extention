@@ -8561,7 +8561,8 @@ async function wpTransferAssistantExtensionEnabled() {
         if (
             !initialInfo &&
             !initialPricing &&
-            !initialSkuComment
+            !initialSkuComment &&
+            !wpTravelerNoteForCell(cityCell)
         ) {
             return;
         }
@@ -8788,6 +8789,24 @@ async function wpTransferAssistantExtensionEnabled() {
 
                 }
 
+                // 1.7.324: the transfer's traveller comment (CRM), own section
+                const travelerNote =
+                    wpTravelerNoteForCell(cityCell);
+
+                if (
+                    travelerNote
+                ) {
+
+                    detailsHtml +=
+                        '<div class="wp-traveler-note">' +
+                        '<div class="wp-traveler-note-title">Traveller comment</div>' +
+                        '<div class="wp-traveler-note-text">' +
+                        escapeTooltipValue(travelerNote) +
+                        '</div>' +
+                        '</div>';
+
+                }
+
                 // 1.7.276: the local time there
                 let clockHtml = '';
                 try { const clockText = wpCityClockText(city); if (clockText) clockHtml = '<div class="wp-city-clock" style="margin:3px 0 4px;color:#8fffd5;font-weight:700;font-size:12px;white-space:nowrap">' + clockText.replace(/[&<>"']/g, '') + '</div>'; } catch (_) {}
@@ -8836,6 +8855,124 @@ async function wpTransferAssistantExtensionEnabled() {
                     'none';
             }
         );
+    }
+
+    // ---- Traveller comment on the city name (1.7.324) ----
+    // Each transfer row's city: the transfer's traveller comment (read from
+    // the transfer's CRM page, one page at a time, kept 6 hours in this
+    // browser only) gets its own section in the city hover, and the city
+    // name turns Welcome green (1.7.326) when there is one. Never sent to the relay.
+    const WP_TRAVELER_NOTE_KEY = 'wp_traveler_note_v1';
+    const WP_TRAVELER_NOTE_TTL = 6 * 60 * 60 * 1000;
+    const WP_TRAVELER_NOTE_CELLS = new Map();
+    const WP_TRAVELER_NOTE_QUEUE = [];
+    let wpTravelerNoteStore = null;
+    let wpTravelerNoteBusy = false;
+    function wpTravelerNoteLoad() {
+        if (wpTravelerNoteStore) return wpTravelerNoteStore;
+        try { wpTravelerNoteStore = JSON.parse(localStorage.getItem(WP_TRAVELER_NOTE_KEY) || '{}') || {}; } catch (_) { wpTravelerNoteStore = {}; }
+        return wpTravelerNoteStore;
+    }
+    function wpTravelerNoteSave() {
+        const store = wpTravelerNoteLoad();
+        const now = Date.now();
+        const paths = Object.keys(store).filter(function(path) { return store[path] && now - Number(store[path].at) < 3 * 24 * 60 * 60 * 1000; })
+            .sort(function(a, b) { return Number(store[b].at) - Number(store[a].at); }).slice(0, 800);
+        const kept = {};
+        paths.forEach(function(path) { kept[path] = store[path]; });
+        wpTravelerNoteStore = kept;
+        try { localStorage.setItem(WP_TRAVELER_NOTE_KEY, JSON.stringify(kept)); } catch (_) {}
+    }
+    function wpTravelerNotePath(url) {
+        try {
+            const parsed = new URL(url, location.href);
+            // 1.7.325: the list links to /admin/transfers/<id>/details_v3
+            if (parsed.origin !== location.origin || !/^\/admin\/transfers\/\d+(?:\/details_v3)?\/?$/.test(parsed.pathname)) return '';
+            return parsed.pathname.replace(/\/$/, '');
+        } catch (_) { return ''; }
+    }
+    function wpTravelerNoteRemember(url, text) {
+        const path = wpTravelerNotePath(url);
+        if (!path) return;
+        const store = wpTravelerNoteLoad();
+        store[path] = { t: String(text || '').trim().slice(0, 600), at: Date.now() };
+        wpTravelerNoteSave();
+        wpTravelerNoteApply(path);
+    }
+    function wpTravelerNoteForCell(cell) {
+        if (!cell || !cell.dataset) return '';
+        // The open transfer page: straight from its own box.
+        if (cell.id === 'wp-transfer-city-link') {
+            const box = document.getElementById('transfer_traveler_comment');
+            if (box) return String(box.value || box.textContent || '').trim();
+        }
+        const path = cell.dataset.wpTravelerPath;
+        const entry = path ? wpTravelerNoteLoad()[path] : null;
+        return entry ? String(entry.t || '') : '';
+    }
+    function wpTravelerNoteStyle() {
+        if (document.getElementById('wp-traveler-note-style')) return;
+        const style = document.createElement('style');
+        style.id = 'wp-traveler-note-style';
+        style.textContent =
+            'body .wp-city-has-traveler-note.wp-city-has-traveler-note, body .wp-city-has-traveler-note.wp-city-has-traveler-note a { color: #00cf95 !important; }' +
+            '#wp-city-price-tooltip .wp-traveler-note { margin-top: 6px !important; padding-top: 6px !important; border-top: 1px solid rgba(0,207,149,0.4) !important; max-width: 320px !important; white-space: normal !important; }' +
+            '#wp-city-price-tooltip .wp-traveler-note-title { color: #00cf95 !important; font-weight: 700 !important; font-size: 11px !important; margin-bottom: 2px !important; }' +
+            '#wp-city-price-tooltip .wp-traveler-note-text { color: #e6edf3 !important; font-size: 11px !important; line-height: 1.35 !important; white-space: pre-wrap !important; word-break: break-word !important; }';
+        (document.head || document.documentElement).appendChild(style);
+    }
+    function wpTravelerNoteMark(cell) {
+        const has = Boolean(wpTravelerNoteForCell(cell));
+        cell.classList.toggle('wp-city-has-traveler-note', has);
+        if (has && cell.dataset.wpPriceTooltipSetup !== 'true') {
+            try { setupCityPriceTooltip(cell, getTransferCityHoverData); } catch (_) {}
+        }
+    }
+    function wpTravelerNoteApply(path) {
+        const cells = WP_TRAVELER_NOTE_CELLS.get(path);
+        if (!cells) return;
+        cells.forEach(function(cell) {
+            if (!cell.isConnected || cell.dataset.wpTravelerPath !== path) { cells.delete(cell); return; }
+            wpTravelerNoteMark(cell);
+        });
+        if (!cells.size) WP_TRAVELER_NOTE_CELLS.delete(path);
+    }
+    // Transfer list row: remember which transfer the city cell belongs to,
+    // colour it from what is known, and queue a read when it is old.
+    function wpTravelerNoteWatch(cell, url) {
+        const path = wpTravelerNotePath(url);
+        if (!cell || !path) return;
+        wpTravelerNoteStyle();
+        cell.dataset.wpTravelerPath = path;
+        if (!WP_TRAVELER_NOTE_CELLS.has(path)) WP_TRAVELER_NOTE_CELLS.set(path, new Set());
+        WP_TRAVELER_NOTE_CELLS.get(path).add(cell);
+        wpTravelerNoteMark(cell);
+        const entry = wpTravelerNoteLoad()[path];
+        if (entry && Date.now() - Number(entry.at) < WP_TRAVELER_NOTE_TTL) return;
+        if (WP_TRAVELER_NOTE_QUEUE.indexOf(path) < 0) WP_TRAVELER_NOTE_QUEUE.push(path);
+        wpTravelerNotePump();
+    }
+    async function wpTravelerNotePump() {
+        if (wpTravelerNoteBusy) return;
+        wpTravelerNoteBusy = true;
+        try {
+            while (WP_TRAVELER_NOTE_QUEUE.length) {
+                const path = WP_TRAVELER_NOTE_QUEUE.shift();
+                const entry = wpTravelerNoteLoad()[path];
+                if ((entry && Date.now() - Number(entry.at) < WP_TRAVELER_NOTE_TTL) || !WP_TRAVELER_NOTE_CELLS.has(path)) continue;
+                try {
+                    const response = await fetch(path, { credentials: 'same-origin' });
+                    if (response.ok) {
+                        const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+                        const box = doc.getElementById('transfer_traveler_comment');
+                        if (box) wpTravelerNoteRemember(path, box.value || box.textContent || '');
+                    }
+                } catch (_) {}
+                await new Promise(function(resolve) { setTimeout(resolve, 400); });
+            }
+        } finally {
+            wpTravelerNoteBusy = false;
+        }
     }
 
     // ---- The destination's own clock (1.7.276) ----
@@ -11546,6 +11683,11 @@ async function wpTransferAssistantExtensionEnabled() {
             setupCity(
                 cityCell
             );
+
+            // 1.7.324: traveller comment in the city hover + city colour
+            if (transferLink) {
+                try { wpTravelerNoteWatch(cityCell, transferLink.href); } catch (_) {}
+            }
 
         }
 
@@ -16745,6 +16887,9 @@ async function wpTransferAssistantExtensionEnabled() {
             cityLink,
             getTransferCityHoverData
         );
+
+        // 1.7.324: Welcome green (1.7.326) when this transfer has a traveller comment
+        try { wpTravelerNoteStyle(); wpTravelerNoteMark(cityLink); } catch (_) {}
 
         cityLink.addEventListener(
             'click',
@@ -34237,6 +34382,10 @@ async function wpTransferAssistantExtensionEnabled() {
             wheelchair: bookedBox('transfer_wheelchair'),
             bulky: bookedBox('transfer_bulky_luggage')
         };
+        // 1.7.324: keep the traveller comment for the city hover
+        if (doc.getElementById('transfer_traveler_comment')) {
+            try { wpTravelerNoteRemember(key, data.booking.travelerNote); } catch (_) {}
+        }
 
         // Task notes: the CRM's notes table (#transfer-task-list), each row
         // "<span.task-label>Task</span>note text", in the order shown.
