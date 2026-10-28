@@ -27057,6 +27057,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // 1.7.290: transfers that appeared already under their limit (grey):
     // { first: the TBO when it appeared, at: the TBO it is cancelled at }.
     const WP_TOP_LATE_KEY = 'wp_top_late_v1';
+    const WP_TOP_GRACE_MS = 10 * 60000; // 1.7.336
     function wpTopLateAll() {
         try { const map = JSON.parse(localStorage.getItem(WP_TOP_LATE_KEY) || '{}'); return map && typeof map === 'object' ? map : {}; } catch (_) { return {}; }
     }
@@ -27130,11 +27131,15 @@ async function wpTransferAssistantExtensionEnabled() {
             // 1.7.290: it appeared already under its limit (grey) → not cancelled
             // at once: at 1:00 when it appeared at 1:01–1:59, at 0:30 when under 1:00
             const late = wpTopLateFor(item.id) || (Number.isFinite(item.firstTbo) && item.firstTbo < lim.limit ? wpTopLateSet(item.id, item.firstTbo) : null);
+            // 1.7.336: never auto-cancelled in its first 10 minutes on the list
+            // (one that appeared at 0:25, or at 0:39 for a pickup, was cancelled at once).
+            const firstSeen = Number(item.firstSeen) || now;
+            const graceLeft = Math.max(0, Math.ceil((firstSeen + WP_TOP_GRACE_MS - now) / 60000));
             // 1.7.296: shown before it happens — "cancel in 12m" on the row's
             // AutoCancel cell (last 30 min), and a Terminal line 10 min before.
             try {
                 const cancelTbo = late ? Number(late.at) : lim.cancelAt;
-                const cancelIn = Math.round(tbo - cancelTbo);
+                const cancelIn = Math.max(Math.round(tbo - cancelTbo), graceLeft);
                 const willCancel = wpBookingCancelOn() && !wpRuleExceptionFor('autocancel', item.city) && !state.topCancel[item.id] && (late || tbo >= lim.limit - 3);
                 if (willCancel && cancelIn <= 30 && cancelIn >= 0) {
                     entry.row.dataset.wpCancelAt = String(now + cancelIn * 60000);
@@ -27156,6 +27161,13 @@ async function wpTransferAssistantExtensionEnabled() {
             // 1.7.294: threshold for each transfer (Booking.com 2:02, drop-offs 1:10, pickups 0:40)
             } else if (tbo > lim.cancelAt || tbo < lim.limit - 3) return;
             if (state.topCancel[item.id]) return;
+            if (graceLeft > 0) {
+                if (!state.topTold['grace_' + item.id]) {
+                    state.topTold['grace_' + item.id] = now;
+                    wpDashLog('ghas: ' + item.label + ' (' + item.city + ') — ' + lim.kind + ', ' + wpTopHm(tbo) + ' to pickup, at its auto-cancel point but it just appeared: given 10 minutes (auto-cancel in ' + graceLeft + ' min if still unassigned)', 'warn');
+                }
+                return;
+            }
             const cancelException = wpRuleExceptionFor('autocancel', item.city);
             if (!wpBookingCancelOn() || cancelException) {
                 if (!state.topTold[item.id]) {
