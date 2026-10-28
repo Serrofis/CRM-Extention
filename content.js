@@ -1511,6 +1511,13 @@ async function wpTransferAssistantExtensionEnabled() {
             color: #c98ae6 !important;
         }
 
+        /* 1.7.333: "sent to suggested" → purple "sugg" */
+        td.wp-transfer-tags .wp-transfer-tag-suggested {
+            background: rgba(123, 63, 152, 0.24) !important;
+            border-color: rgba(123, 63, 152, 0.72) !important;
+            color: #c98ae6 !important;
+        }
+
         td.wp-transfer-tags .wp-transfer-tag-10 {
             background: rgba(181, 138, 5, 0.24) !important;
             border-color: rgba(181, 138, 5, 0.72) !important;
@@ -10217,6 +10224,14 @@ async function wpTransferAssistantExtensionEnabled() {
             return {
                 text: 'hero',
                 type: 'hero'
+            };
+        }
+
+        // 1.7.333: "sent to suggested" → "sugg". Order: BC & group < sugg < hero < final bc.
+        if (/\bsuggested\b/i.test(value)) {
+            return {
+                text: 'sugg',
+                type: 'suggested'
             };
         }
 
@@ -36963,6 +36978,7 @@ async function wpTransferAssistantExtensionEnabled() {
 
                     const tagColors = {
                         hero: { bg: 'rgba(130,65,200,0.24)', border: 'rgba(160,90,230,0.72)', text: '#c38aff' },
+                        suggested: { bg: 'rgba(130,65,200,0.24)', border: 'rgba(160,90,230,0.72)', text: '#c38aff' },
                         final: { bg: 'rgba(123,63,152,0.24)', border: 'rgba(123,63,152,0.72)', text: '#b66fd4' },
                         '10': { bg: 'rgba(181,138,5,0.24)', border: 'rgba(181,138,5,0.72)', text: '#d6ad22' },
                         '20': { bg: 'rgba(220,126,18,0.24)', border: 'rgba(220,126,18,0.72)', text: '#ffb347' },
@@ -41560,7 +41576,7 @@ async function wpTransferAssistantExtensionEnabled() {
             ...(function() {
                 const CELL = 'table.transfers td:is(.wp-transfer-tags,.wp-price-cell)';
                 const kinds = [
-                    ['final', '123,63,152', '#c98ae6'], ['hero', '123,63,152', '#c98ae6'],
+                    ['final', '123,63,152', '#c98ae6'], ['hero', '123,63,152', '#c98ae6'], ['suggested', '123,63,152', '#c98ae6'],
                     ['10', '181,138,5', '#e0b92e'], ['20', '220,126,18', '#ffb347'],
                     ['no-tag', '165,31,31', '#ff6b6b'],
                     ['bc', '110,118,124', '#aab3ba'], ['bc-grp', '110,118,124', '#aab3ba'], ['high-vol', '110,118,124', '#aab3ba'],
