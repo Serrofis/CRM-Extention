@@ -11169,6 +11169,220 @@ async function wpTransferAssistantExtensionEnabled() {
         wpSetupOrderQuickActions(row);
     }
 
+    // ---- 1.7.327: tick boxes + worked-on mark (Em Hailing lists) ----
+    // Left: a tick box in the City cell (Shift-click ticks a range). A
+    // quickbar button you press on a ticked transfer is then pressed on every
+    // ticked transfer too, each with its own row's rules; the ticks are
+    // cleared. BC&G / Final BC go one after another (each WhatsApp message
+    // waits for the previous one), and only with WhatsApp auto-send on.
+    // Right: a dot in the last cell — mint = worked on, grey ring = not.
+    // Set by your own quickbar / City Manager / phone / A/C Off actions and
+    // by notes you added through mod; a click on the dot turns it on or off.
+    const wpBulkSelected = new Set();
+    let wpBulkLastBox = null;
+    function wpBulkPage() {
+        return /[?&]em_hailing=true/.test(window.location.search) && !wpIsTransferDetailPage();
+    }
+    function wpBulkFindRows() {
+        const seen = {};
+        return Array.from(document.querySelectorAll('table.transfers tr')).filter(function(row) {
+            const id = row.__wpBulkId;
+            if (!id || seen[id] || !wpBulkSelected.has(id) || typeof row.__wpQuickBar !== 'function') return false;
+            seen[id] = true;
+            return true;
+        });
+    }
+    function wpBulkCountShow() {
+        let pill = document.getElementById('wp-bulk-pill');
+        const count = wpBulkSelected.size;
+        if (!count) { if (pill) pill.style.display = 'none'; return; }
+        if (!pill) {
+            pill = document.createElement('div');
+            pill.id = 'wp-bulk-pill';
+            Object.assign(pill.style, { position: 'fixed', left: '14px', bottom: '14px', zIndex: '2147483646', display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 9px', background: 'rgba(17,20,22,.88)', backdropFilter: 'blur(6px)', border: '1px solid rgba(143,255,213,.35)', borderRadius: '8px', color: '#8fffd5', font: '700 11px Consolas, monospace', boxShadow: '0 6px 18px rgba(0,0,0,.45)' });
+            const text = document.createElement('span');
+            text.className = 'wp-bulk-pill-text';
+            const clear = document.createElement('button');
+            clear.type = 'button';
+            clear.textContent = 'Clear';
+            clear.title = 'Untick all';
+            Object.assign(clear.style, { height: '21px', padding: '0 7px', background: '#111416', color: '#8fffd5', border: '1px solid rgba(143,255,213,.25)', borderRadius: '5px', font: '700 11px Consolas, monospace', cursor: 'pointer' });
+            clear.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); wpBulkClear(); });
+            pill.appendChild(text);
+            pill.appendChild(clear);
+            (document.body || document.documentElement).appendChild(pill);
+        }
+        pill.querySelector('.wp-bulk-pill-text').textContent = count + ' ticked — open the quickbar on a ticked one';
+        pill.style.display = 'flex';
+    }
+    function wpBulkClear() {
+        wpBulkSelected.clear();
+        wpBulkLastBox = null;
+        document.querySelectorAll('input.wp-bulk-sel').forEach(function(box) { box.checked = false; });
+        wpBulkCountShow();
+    }
+    // The choices of the bar you pressed.
+    function wpBulkPick(bar) {
+        const selects = bar.querySelectorAll('select');
+        const custom = bar.querySelector('input[type="text"]');
+        return { raise: selects[0] ? String(selects[0].value || '') : '', note: selects[1] ? String(selects[1].value || '') : '', custom: custom ? String(custom.value || '') : '' };
+    }
+    // The same choices in another row's own quickbar, then its own button.
+    function wpBulkPress(row, label, pick) {
+        const api = typeof row.__wpQuickBar === 'function' ? row.__wpQuickBar() : null;
+        const bar = api && api.bar;
+        const selects = bar ? bar.querySelectorAll('select') : [];
+        const button = bar ? Array.from(bar.querySelectorAll('button')).find(function(node) { return String(node.textContent || '').trim() === label; }) : null;
+        const link = row.querySelector('a[href*="/admin/transfers/"]');
+        const name = String(link ? link.textContent : row.__wpBulkId).trim();
+        if (!button || selects.length < 2 || !document.documentElement.contains(row)) { wpDashLog('mod: ticked ' + name + ' is no longer in the list — skipped', 'warn'); return false; }
+        const has = function(select, value) { return !value || Array.from(select.options).some(function(option) { return option.value === value; }); };
+        if (!has(selects[0], pick.raise) || !has(selects[1], pick.note)) { wpDashLog('mod: ticked ' + name + ' — that raise or note is not in its quickbar — skipped', 'warn'); return false; }
+        selects[0].value = pick.raise;
+        selects[1].value = pick.note;
+        selects[1].dispatchEvent(new Event('change'));
+        const custom = bar.querySelector('input[type="text"]');
+        if (custom) custom.value = pick.note === '__custom__' ? pick.custom : '';
+        button.click();
+        return true;
+    }
+    // After your own click on a ticked row's quickbar button.
+    function wpBulkFollow(sourceRow, label, pick) {
+        if (!sourceRow.__wpBulkId || !wpBulkSelected.has(sourceRow.__wpBulkId)) return;
+        const rows = wpBulkFindRows().filter(function(row) { return row.__wpBulkId !== sourceRow.__wpBulkId; });
+        const ids = rows.map(function(row) { return row.__wpBulkId; });
+        wpBulkClear();
+        if (!rows.length) return;
+        const whatsApp = label === 'BC&G' || label === 'Final BC';
+        if (whatsApp && !wpWhatsAppAutoSendOn()) {
+            wpDashLog('mod: ' + label + ' done for this transfer only — the other ' + rows.length + ' ticked need WhatsApp auto-send on (one clipboard for several messages would mix them up)', 'warn');
+            return;
+        }
+        wpDashLog('mod: ' + label + ' for ' + (rows.length + 1) + ' ticked transfers' + (whatsApp ? ', one after another' : ''));
+        let previous = sourceRow;
+        let waitFrom = Date.now();
+        let index = 0;
+        (function next() {
+            if (index >= ids.length) { wpDashLog('✓ mod: ' + label + ' started for all ' + (ids.length + 1) + ' ticked transfers'); return; }
+            // Each WhatsApp message waits for the previous hand-off (max 3 min).
+            if (whatsApp && previous.__wpHandOffBusy && Date.now() - waitFrom < 180000) { window.setTimeout(next, 1000); return; }
+            const id = ids[index];
+            // The list may have been refreshed: find the row again by its id.
+            let row = rows[index];
+            index += 1;
+            if (!document.documentElement.contains(row)) {
+                row = Array.from(document.querySelectorAll('table.transfers tr')).find(function(node) { return node.__wpBulkId === id && typeof node.__wpQuickBar === 'function'; }) || row;
+            }
+            wpBulkPress(row, label, pick);
+            previous = row;
+            waitFrom = Date.now();
+            window.setTimeout(next, whatsApp ? 3000 : 1500);
+        })();
+    }
+
+    const WP_WORKED_KEY = 'wp_worked_v1';
+    function wpWorkedLoad() {
+        try { return JSON.parse(localStorage.getItem(WP_WORKED_KEY) || '{}') || {}; } catch (_) { return {}; }
+    }
+    function wpWorkedMark(id, on, how) {
+        if (!id) return;
+        try {
+            const map = wpWorkedLoad();
+            const now = Date.now();
+            Object.keys(map).forEach(function(key) { if (!(now - Number(map[key] && map[key].at) < 7 * 86400000)) delete map[key]; });
+            map[id] = { at: now, on: Boolean(on), how: String(how || '') };
+            localStorage.setItem(WP_WORKED_KEY, JSON.stringify(map));
+        } catch (_) {}
+        wpWorkedPaintAll();
+    }
+    // { on, at, how }: your latest mark, or a newer note you added through mod.
+    function wpWorkedState(id) {
+        const entry = wpWorkedLoad()[id];
+        let noteAt = 0;
+        try {
+            ((JSON.parse(localStorage.getItem('wp_note_log_v1') || '{}') || {})[id] || []).forEach(function(note) {
+                if (note && note.by === 'you' && Number(note.at) > noteAt) noteAt = Number(note.at);
+            });
+        } catch (_) {}
+        if (entry && Number(entry.at) >= noteAt) return { on: Boolean(entry.on), at: Number(entry.at) || 0, how: String(entry.how || '') };
+        return noteAt ? { on: true, at: noteAt, how: 'note' } : { on: false, at: 0, how: '' };
+    }
+    function wpWorkedPaint(dot, id) {
+        const state = wpWorkedState(id);
+        const when = state.at ? new Date(state.at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+        dot.style.background = state.on ? '#8fffd5' : 'transparent';
+        dot.style.border = state.on ? '1px solid #8fffd5' : '1px solid rgba(255,255,255,.30)';
+        dot.style.boxShadow = state.on ? '0 0 6px rgba(143,255,213,.55)' : 'none';
+        dot.title = state.on
+            ? 'Worked on — ' + when + (state.how ? ' (' + state.how + ')' : '') + '. Click: mark as not worked on'
+            : 'Not worked on' + (state.at ? ' (unmarked ' + when + ')' : '') + '. Click: mark as worked on';
+    }
+    function wpWorkedSetupRow(row, id) {
+        const cell = row.lastElementChild;
+        if (!cell || cell.tagName !== 'TD') return;
+        let dot = cell.querySelector('.wp-worked-dot');
+        if (!dot) {
+            dot = document.createElement('span');
+            dot.className = 'wp-worked-dot';
+            Object.assign(dot.style, { float: 'right', display: 'inline-block', width: '9px', height: '9px', margin: '3px 2px 0 6px', borderRadius: '50%', boxSizing: 'border-box', cursor: 'pointer' });
+            dot.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+            dot.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const current = row.__wpBulkId || id;
+                wpWorkedMark(current, !wpWorkedState(current).on, 'by hand');
+            });
+            cell.appendChild(dot);
+        }
+        wpWorkedPaint(dot, row.__wpBulkId || id);
+    }
+    function wpBulkSetupRow(row, cityCell) {
+        if (!cityCell || row.__wpTransferPage || !wpBulkPage()) return;
+        const link = typeof wpGetTransferHistoryLinkFromRow === 'function' ? wpGetTransferHistoryLinkFromRow(row) : null;
+        const id = link ? wpOutcomeId(link.href) : '';
+        if (!id) return;
+        row.__wpBulkId = id;
+        let box = cityCell.querySelector('input.wp-bulk-sel');
+        if (!box) {
+            box = document.createElement('input');
+            box.type = 'checkbox';
+            box.className = 'wp-bulk-sel';
+            box.title = 'Tick several transfers (Shift-click: a range), then press a quickbar button on one of them: it is done for all ticked';
+            Object.assign(box.style, { margin: '0 5px 0 0', width: '13px', height: '13px', accentColor: '#8fffd5', cursor: 'pointer', verticalAlign: 'middle' });
+            box.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+            box.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const boxes = Array.from(document.querySelectorAll('input.wp-bulk-sel'));
+                const from = e.shiftKey && wpBulkLastBox ? boxes.indexOf(wpBulkLastBox) : -1;
+                const to = boxes.indexOf(box);
+                const range = from >= 0 && to >= 0 ? boxes.slice(Math.min(from, to), Math.max(from, to) + 1) : [box];
+                range.forEach(function(node) {
+                    node.checked = box.checked;
+                    const nodeRow = node.closest('tr');
+                    const nodeId = nodeRow && nodeRow.__wpBulkId;
+                    if (!nodeId) return;
+                    if (box.checked) wpBulkSelected.add(nodeId); else wpBulkSelected.delete(nodeId);
+                });
+                wpBulkLastBox = box;
+                wpBulkCountShow();
+            });
+            cityCell.insertBefore(box, cityCell.firstChild);
+        }
+        box.checked = wpBulkSelected.has(id);
+        wpWorkedSetupRow(row, id);
+    }
+    // Rows the CRM or mod redrew: put the box / dot back and repaint.
+    function wpWorkedPaintAll() {
+        document.querySelectorAll('table.transfers tr').forEach(function(row) {
+            if (!row.__wpBulkId) return;
+            try { wpBulkSetupRow(row, getCityCell(row)); } catch (_) {}
+        });
+    }
+    if (wpBulkPage()) {
+        window.setInterval(wpWorkedPaintAll, 5000);
+        window.addEventListener('storage', function(e) { if (e.key === WP_WORKED_KEY || e.key === 'wp_note_log_v1') wpWorkedPaintAll(); });
+    }
+
     function wpSetupOrderQuickActions(row) {
         if (!(row instanceof HTMLElement)) return;
 
@@ -11407,7 +11621,8 @@ async function wpTransferAssistantExtensionEnabled() {
         function button(label, title, handler) {
             const b=document.createElement('button'); b.type='button'; b.textContent=label; b.title=title;
             Object.assign(b.style,{height:'27px',background:'#111416',color:'#8fffd5',border:'1px solid rgba(143,255,213,.20)',borderRadius:'6px',padding:'4px 9px',fontSize:'11px',fontWeight:'700',cursor:'pointer',whiteSpace:'nowrap',flex:'0 0 auto'});
-            b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();handler();}); return b;
+            // 1.7.327: your own click on a ticked row: the same button on every ticked row
+            b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();const pick=e.isTrusted?wpBulkPick(bar):null;handler();if(pick)try{wpBulkFollow(row,label,pick);}catch(_){}}); return b;
         }
 
         const raise=document.createElement('select'); raise.title='Choose a raise percentage';
@@ -11568,6 +11783,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 if(typeof wpExtensionOpenInTab==='function')wpExtensionOpenInTab(url.toString(), {active:false, insert:true, setParent:true});
                 else window.open(url.toString(), '_blank');
                 wpDashLog(orderLabel() + ' (' + (cityText() || '?') + '): A/C Off tab opened');
+                try{ wpWorkedMark(wpOutcomeId(transferUrl), true, 'A/C Off'); }catch(_){}
                 try{ if(typeof row.__wpAfterOpen==='function') row.__wpAfterOpen('', false); }catch(_){}
             }catch(_){}
             closeBar();
@@ -11616,6 +11832,14 @@ async function wpTransferAssistantExtensionEnabled() {
             document.querySelectorAll('.wp-order-quick-popout').forEach(other=>{if(other!==bar&&typeof other.__wpClose==='function')other.__wpClose();});
             bar.style.display='flex';
             if(!onTransferPage&&typeof wpSetOrderQuickActionOpen==='function')wpSetOrderQuickActionOpen(true);
+            // 1.7.327: how many ticked transfers this bar's buttons act on
+            try{
+                let chip=bar.querySelector('.wp-bulk-chip');
+                const count=row.__wpBulkId&&wpBulkSelected.has(row.__wpBulkId)?wpBulkSelected.size:0;
+                if(!chip){ chip=document.createElement('span'); chip.className='wp-bulk-chip'; chip.title='The button you press is done for every ticked transfer'; Object.assign(chip.style,{height:'27px',lineHeight:'27px',padding:'0 8px',color:'#111416',background:'#8fffd5',borderRadius:'6px',fontSize:'11px',fontWeight:'800',whiteSpace:'nowrap',flex:'0 0 auto',boxSizing:'border-box'}); bar.insertBefore(chip,bar.firstChild); }
+                chip.textContent='All '+count+' ticked';
+                chip.style.display=count>1?'':'none';
+            }catch(_){}
             try{ showPrice(); }catch(_){}
             // Force layout after display so the popup dimensions are known before positioning.
             void bar.offsetWidth; positionBar();
@@ -11683,6 +11907,9 @@ async function wpTransferAssistantExtensionEnabled() {
             setupCity(
                 cityCell
             );
+
+            // 1.7.327: tick box (left) + worked-on dot (right)
+            try { wpBulkSetupRow(row, cityCell); } catch (_) {}
 
             // 1.7.324: traveller comment in the city hover + city colour
             if (transferLink) {
@@ -29500,6 +29727,8 @@ async function wpTransferAssistantExtensionEnabled() {
         options = options || {};
         wpNoteLogAdd(url, [options.needsEm ? 'em' : '', /last\s*resort/i.test(String(options.customMessage || '')) && /\d\s*%/.test(String(options.customMessage || '')) ? '' : options.raiseMessage, options.customMessage], options.director ? 'mod' : 'you');
         if (!options.director) { try { const touchedId = wpOutcomeId(url); if (touchedId) wpUserTouchedSet(touchedId); } catch (_) {} }
+        // 1.7.327: the worked-on dot on the Em Hailing list
+        if (!options.director) { try { wpWorkedMark(wpOutcomeId(url), true, options.broadcastMode === 'final' ? 'Final BC' : options.broadcastMode === 'send' ? 'BC' : 'quickbar'); } catch (_) {} }
         const actions = [];
         if (options.broadcastMode === 'final') actions.push('final');
         else if (options.broadcastMode === 'send') actions.push('bc');
