@@ -1511,11 +1511,11 @@ async function wpTransferAssistantExtensionEnabled() {
             color: #c98ae6 !important;
         }
 
-        /* 1.7.333: "sent to suggested" → purple "sugg" */
+        /* 1.7.333: "sent to suggested" → "sugg"; 1.7.334: blue to purple */
         td.wp-transfer-tags .wp-transfer-tag-suggested {
-            background: rgba(123, 63, 152, 0.24) !important;
-            border-color: rgba(123, 63, 152, 0.72) !important;
-            color: #c98ae6 !important;
+            background: linear-gradient(90deg, rgba(55, 126, 196, 0.24), rgba(123, 63, 152, 0.24)) !important;
+            border-color: rgba(100, 100, 180, 0.72) !important;
+            color: #9fa3f2 !important;
         }
 
         td.wp-transfer-tags .wp-transfer-tag-10 {
@@ -36978,7 +36978,7 @@ async function wpTransferAssistantExtensionEnabled() {
 
                     const tagColors = {
                         hero: { bg: 'rgba(130,65,200,0.24)', border: 'rgba(160,90,230,0.72)', text: '#c38aff' },
-                        suggested: { bg: 'rgba(130,65,200,0.24)', border: 'rgba(160,90,230,0.72)', text: '#c38aff' },
+                        suggested: { bg: 'linear-gradient(90deg,rgba(55,126,196,0.24),rgba(130,65,200,0.24))', border: 'rgba(110,110,215,0.72)', text: '#9fa3f2' },
                         final: { bg: 'rgba(123,63,152,0.24)', border: 'rgba(123,63,152,0.72)', text: '#b66fd4' },
                         '10': { bg: 'rgba(181,138,5,0.24)', border: 'rgba(181,138,5,0.72)', text: '#d6ad22' },
                         '20': { bg: 'rgba(220,126,18,0.24)', border: 'rgba(220,126,18,0.72)', text: '#ffb347' },
@@ -41576,7 +41576,7 @@ async function wpTransferAssistantExtensionEnabled() {
             ...(function() {
                 const CELL = 'table.transfers td:is(.wp-transfer-tags,.wp-price-cell)';
                 const kinds = [
-                    ['final', '123,63,152', '#c98ae6'], ['hero', '123,63,152', '#c98ae6'], ['suggested', '123,63,152', '#c98ae6'],
+                    ['final', '123,63,152', '#c98ae6'], ['hero', '123,63,152', '#c98ae6'],
                     ['10', '181,138,5', '#e0b92e'], ['20', '220,126,18', '#ffb347'],
                     ['no-tag', '165,31,31', '#ff6b6b'],
                     ['bc', '110,118,124', '#aab3ba'], ['bc-grp', '110,118,124', '#aab3ba'], ['high-vol', '110,118,124', '#aab3ba'],
@@ -41595,6 +41595,10 @@ async function wpTransferAssistantExtensionEnabled() {
                     rules.push(R + CELL + ':has(> ' + tag + '){background:rgba(' + kind[1] + ',.24)!important;background-color:rgba(' + kind[1] + ',.24)!important;box-shadow:inset 3px 0 0 ' + kind[2] + '!important}');
                     rules.push(R + CELL + ' > ' + tag + '{color:' + kind[2] + '!important}');
                 });
+                // 1.7.334: "sugg" goes from blue to purple (the hero purple)
+                const SUGG = '.wp-transfer-tag.wp-transfer-tag-suggested:only-child';
+                rules.push(R + CELL + ':has(> ' + SUGG + '){background:linear-gradient(90deg,rgba(55,126,196,.24),rgba(123,63,152,.24))!important;background-color:transparent!important;box-shadow:inset 3px 0 0 #74b8f4!important}');
+                rules.push(R + CELL + ' > span' + SUGG + '{background:linear-gradient(90deg,#74b8f4,#c98ae6)!important;-webkit-background-clip:text!important;background-clip:text!important;-webkit-text-fill-color:transparent!important;color:#9fa3f2!important}');
                 return rules;
             })(),
             // ---- 1.7.242: one look for everything, taken from the Controls window and the suggestion card:
