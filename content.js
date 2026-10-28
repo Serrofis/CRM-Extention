@@ -1465,10 +1465,10 @@ async function wpTransferAssistantExtensionEnabled() {
         }
 
         td.wp-price-cell .wp-transfer-tag-10 { background: rgba(181, 138, 5, 0.24) !important; border-color: rgba(181, 138, 5, 0.72) !important; color: #d6ad22 !important; }
-        td.wp-price-cell .wp-transfer-tag-20 { background: rgba(220, 126, 18, 0.24) !important; border-color: rgba(220, 126, 18, 0.72) !important; color: #00cf95 !important; }
+        td.wp-price-cell .wp-transfer-tag-20 { background: rgba(220, 126, 18, 0.24) !important; border-color: rgba(220, 126, 18, 0.72) !important; color: #ffb347 !important; }
         td.wp-price-cell .wp-transfer-tag-raised { background: rgba(219, 177, 35, 0.20) !important; border-color: rgba(219, 177, 35, 0.70) !important; color: #f2d45f !important; }
         td.wp-price-cell .wp-transfer-tag-dc-tc { background: rgba(55, 126, 196, 0.20) !important; border-color: rgba(55, 126, 196, 0.72) !important; color: #74b8f4 !important; }
-        td.wp-price-cell .wp-transfer-tag-tc-minus { background: rgba(220, 126, 18, 0.20) !important; border-color: rgba(220, 126, 18, 0.72) !important; color: #00cf95 !important; }
+        td.wp-price-cell .wp-transfer-tag-tc-minus { background: rgba(220, 126, 18, 0.20) !important; border-color: rgba(220, 126, 18, 0.72) !important; color: #ffb347 !important; }
 
         td.wp-transfer-tags .wp-transfer-tag {
             white-space: nowrap !important;
@@ -1520,7 +1520,7 @@ async function wpTransferAssistantExtensionEnabled() {
         td.wp-transfer-tags .wp-transfer-tag-20 {
             background: rgba(220, 126, 18, 0.24) !important;
             border-color: rgba(220, 126, 18, 0.72) !important;
-            color: #00cf95 !important;
+            color: #ffb347 !important;
         }
 
         /* Empty Last Transfer Task cells stay visually neutral.
@@ -1570,7 +1570,7 @@ async function wpTransferAssistantExtensionEnabled() {
         td.wp-transfer-tags .wp-transfer-tag-minus-tc {
             background: rgba(220, 126, 18, 0.20) !important;
             border-color: rgba(220, 126, 18, 0.72) !important;
-            color: #00cf95 !important;
+            color: #ffb347 !important;
         }
 
         @keyframes wpLeftFlash {
@@ -2831,7 +2831,7 @@ async function wpTransferAssistantExtensionEnabled() {
         }
 
         .wp-today-city-total-untagged {
-            color: #00cf95 !important;
+            color: #ffb347 !important;
             text-align: center !important;
             font-weight: 800 !important;
         }
@@ -2978,7 +2978,7 @@ async function wpTransferAssistantExtensionEnabled() {
         }
 
         .wp-today-city-untagged {
-            color: #00cf95 !important;
+            color: #ffb347 !important;
             font-weight: 800 !important;
             text-align: right !important;
         }
@@ -17694,7 +17694,7 @@ async function wpTransferAssistantExtensionEnabled() {
     const WP_DASH_WATCH_KEY = 'wp_dash_watch_v1';
     const WP_DASH_TAG_COLORS = {
         QB: '#8fffd5', RADAR: '#74a7ff', WA: '#6fd16f', CLIP: '#ffd27a',
-        PRICE: '#00cf95', 'A/C': '#6fd16f', RES: '#dfe4e6', SYS: '#7d8a90', DIR: '#c9a3ff'
+        PRICE: '#ffb347', 'A/C': '#6fd16f', RES: '#dfe4e6', SYS: '#7d8a90', DIR: '#c9a3ff'
     };
     const WP_DASH_TAG_LABELS = {
         QB: 'Quickbar', RADAR: 'Overview', WA: 'WhatsApp', CLIP: 'Clipboard',
@@ -19597,7 +19597,7 @@ async function wpTransferAssistantExtensionEnabled() {
             }
             const copied = await wpWriteClipboardText(text);
             if (!copied) {
-                status.style.color = '#00cf95';
+                status.style.color = '#ffb347';
                 status.textContent = 'Could not copy the details — click "Copy details & open WhatsApp"';
                 wpDashLog(logName + ': could not copy the WhatsApp message (page not focused) — open the image window from the Terminal and click "Copy details & open WhatsApp"', 'warn');
                 return false;
@@ -27829,17 +27829,17 @@ async function wpTransferAssistantExtensionEnabled() {
             ':is(#wp-suggest-history,#wp-director-queue) .wpsh-name{flex:1 1 auto;min-width:0;font-weight:700;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
             ':is(#wp-suggest-history,#wp-director-queue) .wpsh-answer{flex:0 0 auto;padding:1px 7px;border-radius:6px;font-weight:700;background:rgba(255,255,255,0.08);color:#cfd6da}',
             ':is(#wp-suggest-history,#wp-director-queue) .wpsh-answer.is-yes{background:rgba(111,209,111,0.16);color:#6fd16f}',
-            ':is(#wp-suggest-history,#wp-director-queue) .wpsh-answer.is-mid{background:rgba(255,179,71,0.16);color:#00cf95}',
+            ':is(#wp-suggest-history,#wp-director-queue) .wpsh-answer.is-mid{background:rgba(255,179,71,0.16);color:#ffb347}',
             ':is(#wp-suggest-history,#wp-director-queue) .wpsh-what{margin-top:3px;overflow-wrap:anywhere}',
-            ':is(#wp-suggest-history,#wp-director-queue) .wpsh-warn{color:#00cf95;margin-top:2px}',
+            ':is(#wp-suggest-history,#wp-director-queue) .wpsh-warn{color:#ffb347;margin-top:2px}',
             ':is(#wp-suggest-history,#wp-director-queue) .wpsh-result{color:#8b979e;margin-top:2px}',
             ':is(#wp-suggest-history,#wp-director-queue) .wpsh-result.is-ok{color:#6fd16f}',
             ':is(#wp-suggest-history,#wp-director-queue) .wpsh-result.is-bad{color:#ff8a80}',
-            ':is(#wp-suggest-history,#wp-director-queue) .wpsh-result.is-mid{color:#00cf95}',
+            ':is(#wp-suggest-history,#wp-director-queue) .wpsh-result.is-mid{color:#ffb347}',
             ':is(#wp-suggest-history,#wp-director-queue) .wpsh-empty{color:#8b979e;padding:26px 0;text-align:center}',
             ':is(#wp-suggest-history,#wp-director-queue) .wpsh-group{color:#8b979e;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:12px 0 2px}',
             // 1.7.252: coloured queue lines, and the little queue box above the Terminal
-            '#wp-director-queue .wpsh-row.is-wait{border-left:3px solid #00cf95;padding-left:9px}',
+            '#wp-director-queue .wpsh-row.is-wait{border-left:3px solid #ffb347;padding-left:9px}',
             '#wp-director-queue .wpsh-row.is-run{border-left:3px solid #6fd16f;padding-left:9px}',
             '#wp-director-queue .wpsh-row.is-off{border-left:3px solid #5c676d;padding-left:9px;opacity:.8}',
             '#wp-director-queue .wpsh-row.is-link{margin:0!important;border-radius:0 10px 10px 0}',
@@ -27847,12 +27847,12 @@ async function wpTransferAssistantExtensionEnabled() {
             '#wp-queue-mini .wpqm-head{display:flex;align-items:center;gap:8px;padding:8px 12px 7px;border-bottom:1px solid rgba(143,255,213,0.2);cursor:pointer;user-select:none}',
             '#wp-queue-mini .wpqm-title{color:#8fffd5;font-weight:700;margin-right:auto}',
             '#wp-queue-mini .wpqm-count{padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700}',
-            '#wp-queue-mini .wpqm-count.is-wait{background:rgba(255,179,71,0.16);color:#00cf95}',
+            '#wp-queue-mini .wpqm-count.is-wait{background:rgba(255,179,71,0.16);color:#ffb347}',
             '#wp-queue-mini .wpqm-count.is-run{background:rgba(111,209,111,0.16);color:#6fd16f}',
             '#wp-queue-mini .wpqm-body{max-height:min(46vh,430px);overflow-y:auto;scrollbar-width:thin}',
             '#wp-queue-mini .wpqm-row{padding:7px 12px 7px 10px;border-left:3px solid transparent;border-bottom:1px solid rgba(255,255,255,0.06)}',
             '#wp-queue-mini .wpqm-row:last-child{border-bottom:0}',
-            '#wp-queue-mini .wpqm-row.is-wait{border-left-color:#00cf95;background:rgba(255,179,71,0.05)}',
+            '#wp-queue-mini .wpqm-row.is-wait{border-left-color:#ffb347;background:rgba(255,179,71,0.05)}',
             '#wp-queue-mini .wpqm-row.is-run{border-left-color:#6fd16f;background:rgba(111,209,111,0.05)}',
             '#wp-queue-mini .wpqm-row.is-link{cursor:pointer}',
             '#wp-queue-mini .wpqm-row.is-link:hover{background:rgba(255,179,71,0.12)}',
@@ -27861,10 +27861,10 @@ async function wpTransferAssistantExtensionEnabled() {
             '#wp-queue-mini .wpqm-city{color:#fff;font-weight:700;white-space:nowrap}',
             '#wp-queue-mini .wpqm-order{color:#7fd0ff;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
             '#wp-queue-mini .wpqm-state{flex:0 0 auto;padding:0 7px;border-radius:8px;font-size:11px;font-weight:700}',
-            '#wp-queue-mini .wpqm-row.is-wait .wpqm-state{background:rgba(255,179,71,0.16);color:#00cf95}',
+            '#wp-queue-mini .wpqm-row.is-wait .wpqm-state{background:rgba(255,179,71,0.16);color:#ffb347}',
             '#wp-queue-mini .wpqm-row.is-run .wpqm-state{background:rgba(111,209,111,0.16);color:#6fd16f}',
             '#wp-queue-mini .wpqm-what{margin-top:2px;overflow-wrap:anywhere}',
-            '#wp-queue-mini .wpqm-flags{margin-top:1px;color:#00cf95;font-size:11px}'
+            '#wp-queue-mini .wpqm-flags{margin-top:1px;color:#ffb347;font-size:11px}'
         ].join('\n');
         (document.head || document.documentElement).appendChild(style);
     }
@@ -27894,7 +27894,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (index) { const plus = document.createElement('span'); plus.textContent = ' + '; plus.style.color = '#6f7b81'; line.appendChild(plus); }
             const piece = document.createElement('span');
             piece.textContent = part;
-            piece.style.color = /final/i.test(part) ? '#ff8a80' : /^raise|dc\s*=\s*tc|%/i.test(part) ? '#00cf95' : /^tag\b/i.test(part) ? '#c9a3ff' : /^note\b/i.test(part) ? '#9aa6ad' : /\bBC\b|broadcast/i.test(part) ? '#7fd0ff' : /a\/c|autocancel/i.test(part) ? '#6fd16f' : '#dfe4e6';
+            piece.style.color = /final/i.test(part) ? '#ff8a80' : /^raise|dc\s*=\s*tc|%/i.test(part) ? '#ffb347' : /^tag\b/i.test(part) ? '#c9a3ff' : /^note\b/i.test(part) ? '#9aa6ad' : /\bBC\b|broadcast/i.test(part) ? '#7fd0ff' : /a\/c|autocancel/i.test(part) ? '#6fd16f' : '#dfe4e6';
             if (/final/i.test(part)) piece.style.fontWeight = '700';
             line.appendChild(piece);
         });
@@ -34609,7 +34609,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (lastDcChange && lastDcChange.from !== null) {
             const delta = Math.round((lastDcChange.to - lastDcChange.from) * 10) / 10;
             if (delta > 0) {
-                slot.appendChild(tag('↑ +' + delta, '#00cf95', 'rgba(255,179,71,.5)', 'Last DC change: ' + money(lastDcChange.from) + ' ⇒ ' + money(lastDcChange.to) + ' (' + lastDcChange.when + ')'));
+                slot.appendChild(tag('↑ +' + delta, '#ffb347', 'rgba(255,179,71,.5)', 'Last DC change: ' + money(lastDcChange.from) + ' ⇒ ' + money(lastDcChange.to) + ' (' + lastDcChange.when + ')'));
             } else if (delta < 0) {
                 slot.appendChild(tag('↓ ' + delta, '#8fffd5', 'rgba(143,255,213,.45)', 'Last DC change: ' + money(lastDcChange.from) + ' ⇒ ' + money(lastDcChange.to) + ' (' + lastDcChange.when + ')'));
             }
@@ -34704,7 +34704,7 @@ async function wpTransferAssistantExtensionEnabled() {
         };
         if (data.assigned) add('✓ ' + data.assigned, '#6fd16f', 'rgba(111,209,111,.5)', 'Already assigned to ' + data.assigned + ' — batches skip it');
         if (data.acOn === false) add('A/C OFF', '#ff8a80', 'rgba(255,138,128,.5)', 'AutoCancel is OFF on this transfer');
-        if (data.acLocked) add('A/C LOCK', '#00cf95', 'rgba(255,179,71,.5)', 'Auto-cancellation Threshold: A/C must stay on');
+        if (data.acLocked) add('A/C LOCK', '#ffb347', 'rgba(255,179,71,.5)', 'Auto-cancellation Threshold: A/C must stay on');
         if (data.autohailOn === false) add('AH OFF', '#9da6ad', 'rgba(157,166,173,.45)', 'Autohail is OFF');
     }
 
@@ -35293,7 +35293,7 @@ async function wpTransferAssistantExtensionEnabled() {
         customRaiseInput.placeholder = '%';
         customRaiseInput.title = 'Total raise to reach, in % (e.g. 15)';
         Object.assign(customRaiseInput.style, {
-            flex: '0 0 58px', width: '58px', boxSizing: 'border-box', background: '#111416', color: '#00cf95', textAlign: 'center',
+            flex: '0 0 58px', width: '58px', boxSizing: 'border-box', background: '#111416', color: '#ffb347', textAlign: 'center',
             border: '1px solid rgba(255,179,71,0.45)', borderRadius: '9px', padding: '8px 6px', fontSize: '12px', fontWeight: '700', outline: 'none'
         });
         ['click', 'keydown', 'mousedown'].forEach(function(type) { customRaiseInput.addEventListener(type, function(event) { event.stopPropagation(); }); });
@@ -35304,7 +35304,7 @@ async function wpTransferAssistantExtensionEnabled() {
         customDcTcButton.title = 'On: Custom sets Driver Cost equal to Traveler Cost for each selected transfer (skipped when DC is already there). Off: Custom raises to the % in the box.';
         const paintDcTc = function() {
             Object.assign(customDcTcButton.style, {
-                flex: '0 0 auto', background: customDcTc ? '#00cf95' : '#111416', color: customDcTc ? '#2b1a03' : '#00cf95',
+                flex: '0 0 auto', background: customDcTc ? '#ffb347' : '#111416', color: customDcTc ? '#2b1a03' : '#ffb347',
                 border: '1px solid rgba(255,179,71,' + (customDcTc ? '1' : '0.45') + ')', borderRadius: '9px', padding: '8px 10px',
                 fontSize: '12px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap'
             });
@@ -35326,7 +35326,7 @@ async function wpTransferAssistantExtensionEnabled() {
         customRaiseButton.className = 'wp-today-city-orders-broadcast-action wp-raise-suggested wp-raise-custom';
         customRaiseButton.title = 'EM + raise each selected transfer to the % in the box (minus what is already raised: already +10%, custom 15 → +5%), or to DC = TC when that is switched on, + send to BC. The selected note is added too.';
         Object.assign(customRaiseButton.style, {
-            flex: '1 1 0', background: '#111416', color: '#00cf95', border: '1px solid rgba(255,179,71,0.45)',
+            flex: '1 1 0', background: '#111416', color: '#ffb347', border: '1px solid rgba(255,179,71,0.45)',
             borderRadius: '9px', padding: '8px 10px', fontSize: '12px', fontWeight: '700', cursor: 'pointer'
         });
         customRaiseButton._wpRestoreLabel = function() {
@@ -35633,7 +35633,7 @@ async function wpTransferAssistantExtensionEnabled() {
             { key: 'remove_auto_c', label: 'Remove Auto-C', cap: 100, color: '#cfd6da', title: 'Ticks them in the Hub and opens its "Remove Auto-C" dialog. You confirm there. At most 100 at a time.' },
             { key: 'enable_auto_c', label: 'Enable Auto-C', cap: 100, color: '#cfd6da', title: 'Ticks them in the Hub and opens its "Enable Auto-C" dialog. You confirm there. At most 100 at a time.' },
             { key: 'broadcast', label: 'Broadcast', cap: 100, color: '#cfd6da', title: 'Ticks them in the Hub and opens its "Broadcast" dialog. You confirm there. At most 100 at a time.' },
-            { key: 'price_change', label: 'Price Change', cap: 70, color: '#00cf95', title: 'Ticks them in the Hub and opens its "Price Change" dialog. You set the amount and confirm there. At most 70 transfers can change in one Price Change.' }
+            { key: 'price_change', label: 'Price Change', cap: 70, color: '#ffb347', title: 'Ticks them in the Hub and opens its "Price Change" dialog. You set the amount and confirm there. At most 70 transfers can change in one Price Change.' }
         ];
         let hubBusy = false;
         let hubSig = '';
@@ -36505,7 +36505,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     Object.assign(directionBadge.style, {
                         display: 'inline-flex', alignItems: 'center', padding: '1px 5px', borderRadius: '4px',
                         fontSize: '10px', lineHeight: '14px', fontWeight: '700', whiteSpace: 'nowrap',
-                        color: fromHub ? '#8fffd5' : '#00cf95',
+                        color: fromHub ? '#8fffd5' : '#ffb347',
                         border: '1px solid ' + (fromHub ? 'rgba(143,255,213,.45)' : 'rgba(255,179,71,.5)')
                     });
                     colDirection.appendChild(directionBadge);
@@ -36549,12 +36549,12 @@ async function wpTransferAssistantExtensionEnabled() {
                         hero: { bg: 'rgba(130,65,200,0.24)', border: 'rgba(160,90,230,0.72)', text: '#c38aff' },
                         final: { bg: 'rgba(123,63,152,0.24)', border: 'rgba(123,63,152,0.72)', text: '#b66fd4' },
                         '10': { bg: 'rgba(181,138,5,0.24)', border: 'rgba(181,138,5,0.72)', text: '#d6ad22' },
-                        '20': { bg: 'rgba(220,126,18,0.24)', border: 'rgba(220,126,18,0.72)', text: '#00cf95' },
+                        '20': { bg: 'rgba(220,126,18,0.24)', border: 'rgba(220,126,18,0.72)', text: '#ffb347' },
                         'raised-save': { bg: 'rgba(123,63,152,0.24)', border: 'rgba(123,63,152,0.72)', text: '#b66fd4' },
                         raised: { bg: 'rgba(181,138,5,0.24)', border: 'rgba(181,138,5,0.72)', text: '#d6ad22' },
                         'dc-tc': { bg: 'rgba(50,110,220,0.22)', border: 'rgba(70,130,255,0.70)', text: '#74a7ff' },
-                        'tc-minus': { bg: 'rgba(220,126,18,0.24)', border: 'rgba(220,126,18,0.72)', text: '#00cf95' },
-                        'minus-tc': { bg: 'rgba(220,126,18,0.24)', border: 'rgba(220,126,18,0.72)', text: '#00cf95' }
+                        'tc-minus': { bg: 'rgba(220,126,18,0.24)', border: 'rgba(220,126,18,0.72)', text: '#ffb347' },
+                        'minus-tc': { bg: 'rgba(220,126,18,0.24)', border: 'rgba(220,126,18,0.72)', text: '#ffb347' }
                     };
                     const colors = tagColors[String(tag.type || '')] || {
                         bg: 'rgba(110,118,124,0.16)',
@@ -37080,10 +37080,10 @@ async function wpTransferAssistantExtensionEnabled() {
                             tagSlot.querySelectorAll('.wp-price-tag').forEach(function(node) { node.remove(); });
                             const colors = {
                                 '10': ['#d6ad22', 'rgba(181,138,5,0.72)', 'rgba(181,138,5,0.24)'],
-                                '20': ['#00cf95', 'rgba(220,126,18,0.72)', 'rgba(220,126,18,0.24)'],
+                                '20': ['#ffb347', 'rgba(220,126,18,0.72)', 'rgba(220,126,18,0.24)'],
                                 raised: ['#d6ad22', 'rgba(181,138,5,0.72)', 'rgba(181,138,5,0.24)'],
                                 'dc-tc': ['#74a7ff', 'rgba(70,130,255,0.70)', 'rgba(50,110,220,0.22)'],
-                                'tc-minus': ['#00cf95', 'rgba(220,126,18,0.72)', 'rgba(220,126,18,0.24)']
+                                'tc-minus': ['#ffb347', 'rgba(220,126,18,0.72)', 'rgba(220,126,18,0.24)']
                             };
                             wpCrmPriceTags(data).forEach(function(tag) {
                                 const color = colors[tag.type] || colors.raised;
@@ -40334,7 +40334,7 @@ async function wpTransferAssistantExtensionEnabled() {
             T + 'tr.wp-rx-detail .wp-rx-item > .wp-rx-when{color:#8b9096!important;flex:0 0 auto!important;font-size:11px!important}',
             T + 'tr.wp-rx-detail .wp-rx-item > .wp-rx-what{flex:1 1 auto!important;min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}',
             T + 'tr.wp-rx-detail .wp-rx-muted{color:#8b9096!important}',
-            T + 'tr.wp-rx-detail .wp-rx-up{color:#00cf95!important}',
+            T + 'tr.wp-rx-detail .wp-rx-up{color:#ffb347!important}',
             T + 'tr.wp-rx-detail .wp-rx-down{color:#7fd39a!important}',
             T + 'tr.wp-rx-detail .wp-rx-neg{color:#ff8a80!important}',
             T + 'tr.wp-rx-detail .wp-rx-chips{display:flex!important;flex-wrap:wrap!important;gap:4px!important;margin-top:5px!important}',
@@ -40567,7 +40567,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     what.appendChild(el('span', up ? 'wp-rx-up' : 'wp-rx-down', ' (' + (stepPct > 0 ? '+' : '') + stepPct + '%)'));
                 }
                 const whoSpan = el('span', 'wp-rx-muted', ' · ' + who.text);
-                if (who.kind === 'hand') whoSpan.style.color = '#00cf95';
+                if (who.kind === 'hand') whoSpan.style.color = '#ffb347';
                 what.appendChild(whoSpan);
                 what.title = (change.synthetic ? 'Not in Admin History — the current price differs from its last entry' : change.when) +
                     ' · ' + change.field + ' ' + money(change.from) + ' → ' + money(change.to) + ' · ' + who.text;
@@ -41122,7 +41122,7 @@ async function wpTransferAssistantExtensionEnabled() {
             R + buttons + '.wp-quick-acoff{color:#6fd16f!important;border-color:rgba(111,209,111,0.5)!important}',
             R + buttons + '.wp-quick-acoff:hover:not(:disabled){background:rgba(111,209,111,0.10)!important;border-color:rgba(111,209,111,0.8)!important}',
             // Raise suggested (city popup): amber, like a raise
-            R + buttons + '.wp-raise-suggested.wp-raise-suggested.wp-raise-suggested{background:#111416!important;color:#00cf95!important;border-color:rgba(255,179,71,0.45)!important}',
+            R + buttons + '.wp-raise-suggested.wp-raise-suggested.wp-raise-suggested{background:#111416!important;color:#ffb347!important;border-color:rgba(255,179,71,0.45)!important}',
             R + buttons + '.wp-raise-suggested.wp-raise-suggested.wp-raise-suggested:hover:not(:disabled){background:rgba(255,179,71,0.10)!important;border-color:rgba(255,179,71,0.8)!important}',
             R + '#wp-today-city-window .wp-today-city-untagged-row{cursor:pointer!important}',
             R + '#wp-today-city-window .wp-today-city-untagged-row .wp-today-city-name{color:#ffd27a!important;font-weight:700!important}',
@@ -41145,12 +41145,12 @@ async function wpTransferAssistantExtensionEnabled() {
                 const CELL = 'table.transfers td:is(.wp-transfer-tags,.wp-price-cell)';
                 const kinds = [
                     ['final', '123,63,152', '#c98ae6'], ['hero', '123,63,152', '#c98ae6'],
-                    ['10', '181,138,5', '#e0b92e'], ['20', '220,126,18', '#00cf95'],
+                    ['10', '181,138,5', '#e0b92e'], ['20', '220,126,18', '#ffb347'],
                     ['no-tag', '165,31,31', '#ff6b6b'],
                     ['bc', '110,118,124', '#aab3ba'], ['bc-grp', '110,118,124', '#aab3ba'], ['high-vol', '110,118,124', '#aab3ba'],
                     ['dc-tc', '55,126,196', '#74b8f4'],
                     ['raised', '219,177,35', '#f2d45f'], ['raised-save', '219,177,35', '#f2d45f'],
-                    ['tc-minus', '220,126,18', '#00cf95'], ['minus-tc', '220,126,18', '#00cf95']
+                    ['tc-minus', '220,126,18', '#ffb347'], ['minus-tc', '220,126,18', '#ffb347']
                 ];
                 const rules = [
                     // 1.7.262: both columns as narrow as the TBO column (68px)
@@ -41181,7 +41181,7 @@ async function wpTransferAssistantExtensionEnabled() {
             R + buttons + ':is([class*="remove"], [class*="clear"]:not(.wp-transfer-history-clear:first-child)){color:#ff8a80!important;border-color:rgba(255,138,128,0.45)!important}',
             R + buttons + '.wp-final-bc.wp-final-bc.wp-final-bc{background:rgba(120,14,22,0.62)!important;color:#ffc2c2!important;border-color:rgba(255,120,120,0.35)!important}',
             R + buttons + '.wp-final-bc.wp-final-bc.wp-final-bc:hover:not(:disabled){background:rgba(150,20,30,0.72)!important;border-color:rgba(255,120,120,0.6)!important}',
-            R + buttons + '.wp-raise-suggested.wp-raise-suggested.wp-raise-suggested{background:rgba(255,255,255,0.08)!important;color:#00cf95!important;border-color:rgba(255,179,71,0.45)!important}',
+            R + buttons + '.wp-raise-suggested.wp-raise-suggested.wp-raise-suggested{background:rgba(255,255,255,0.08)!important;color:#ffb347!important;border-color:rgba(255,179,71,0.45)!important}',
             R + buttons + '.wp-quick-acoff{background:rgba(255,255,255,0.08)!important;color:#6fd16f!important;border-color:rgba(111,209,111,0.5)!important}',
             R + ':is(' + G + ' input:not([type="checkbox"]):not([type="radio"]), ' + G + ' select, ' + G + ' textarea){font-family:' + SANS + '!important;background:rgba(255,255,255,0.08)!important;color:#dfe4e6!important;border:1px solid rgba(143,255,213,0.32)!important;border-radius:9px!important}',
             R + ':is(#wp-transfer-watch-panel,#wp-ac-off-watch-panel).wp-dashboard-panel-collapsed{border-radius:9px!important}',
@@ -41236,7 +41236,7 @@ async function wpTransferAssistantExtensionEnabled() {
             R + '#wp-cm-head{position:fixed;z-index:2147483600;box-sizing:border-box;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid rgba(143,255,213,0.20);border-radius:18px 18px 0 0;font:12px ' + SANS + ';color:#8b979e;cursor:move;user-select:none}',
             R + '#wp-cm-head .wpcm-title{color:' + MINT + ';font-weight:700;font-size:13px;margin-right:6px;white-space:nowrap}',
             R + '#wp-cm-head .wpcm-pill{padding:2px 9px;border-radius:999px;background:rgba(255,255,255,0.10);color:#fff;font-size:12px;font-weight:600;white-space:nowrap}',
-            R + '#wp-cm-head .wpcm-pill.is-amber{background:rgba(255,179,71,0.16);color:#00cf95}',
+            R + '#wp-cm-head .wpcm-pill.is-amber{background:rgba(255,179,71,0.16);color:#ffb347}',
             R + '#wp-cm-head .wpcm-pill.is-red{background:rgba(255,107,94,0.18);color:#ff8a80}',
             R + '#wp-cm-head .wpcm-pill.is-click{cursor:pointer}',
             R + '#wp-cm-head .wpcm-space{flex:1 1 auto}',
@@ -41282,7 +41282,7 @@ async function wpTransferAssistantExtensionEnabled() {
             JOIN + CMO + ' .wp-ui-column-head{display:none!important}',
             // as in the picture: no location / pickup-drop-off columns, the partner as plain amber text
             JOIN + CMO + ' :is(.wp-ui-col-location,.wp-ui-col-direction){display:none!important}',
-            JOIN + CMO + ' .wp-today-city-order-partner-badge{background:transparent!important;border:0!important;padding:0!important;color:#00cf95!important;font-size:12px!important;font-weight:700!important}',
+            JOIN + CMO + ' .wp-today-city-order-partner-badge{background:transparent!important;border:0!important;padding:0!important;color:#ffb347!important;font-size:12px!important;font-weight:700!important}',
             JOIN + CMO + ' :is(.wp-today-city-orders-header,.wp-today-city-orders-group-title){backdrop-filter:blur(18px)!important;-webkit-backdrop-filter:blur(18px)!important}',
             JOIN + CMO + ' .wp-today-city-order-item{background:transparent!important;border:0!important;border-bottom:1px solid rgba(255,255,255,0.06)!important;border-radius:0!important;margin:0!important;padding:9px 14px!important;box-shadow:none!important}',
             JOIN + CMO + ' .wp-today-city-order-item:hover{background:rgba(255,255,255,0.04)!important}',
