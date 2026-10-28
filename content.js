@@ -11178,8 +11178,8 @@ async function wpTransferAssistantExtensionEnabled() {
     // ticked transfer too, each with its own row's rules; the ticks are
     // cleared. BC&G / Final BC go one after another (each WhatsApp message
     // waits for the previous one), and only with WhatsApp auto-send on.
-    // Right: a dot in the last column — mint = you worked on it, amber =
-    // only ghas did (1.7.328), grey = nobody. Yours is set by your own
+    // Right: a dot in the last column — mint = you worked on it, purple =
+    // only ghas did (1.7.329), grey = nobody. Yours is set by your own
     // quickbar / City Manager / phone / A/C Off actions and notes you added
     // through ghas; a click on the dot turns yours on or off.
     const wpBulkSelected = new Set();
@@ -11338,11 +11338,11 @@ async function wpTransferAssistantExtensionEnabled() {
         const state = wpWorkedState(id);
         const clock = function(at) { return new Date(at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }); };
         const ghasLine = state.ghas.at ? ' ghas worked on it ' + clock(state.ghas.at) + (state.ghas.how ? ' (' + state.ghas.how + ')' : '') + '.' : '';
-        // Mint: you. Amber: only ghas. Grey: nobody.
-        const colour = state.on ? '#8fffd5' : state.ghas.at ? '#ffc857' : '';
+        // Mint: you. Purple (1.7.329): only ghas. Grey: nobody.
+        const colour = state.on ? '#8fffd5' : state.ghas.at ? '#b38cff' : '';
         dot.style.background = colour || 'rgba(255,255,255,.06)';
         dot.style.border = colour ? '1px solid ' + colour : '1px solid rgba(255,255,255,.45)';
-        dot.style.boxShadow = colour ? '0 0 6px ' + (state.on ? 'rgba(143,255,213,.55)' : 'rgba(255,200,87,.5)') : 'none';
+        dot.style.boxShadow = colour ? '0 0 6px ' + (state.on ? 'rgba(143,255,213,.55)' : 'rgba(179,140,255,.55)') : 'none';
         dot.title = (state.on
             ? 'Worked on by you — ' + clock(state.at) + (state.how ? ' (' + state.how + ')' : '') + '.'
             : 'Not worked on by you' + (state.at ? ' (unmarked ' + clock(state.at) + ')' : '') + '.') +
@@ -11418,6 +11418,8 @@ async function wpTransferAssistantExtensionEnabled() {
             style.id = 'wp-bulk-style';
             style.textContent =
                 'table.transfers th.wp-sel-cell,table.transfers td.wp-sel-cell,table.transfers th.wp-worked-cell,table.transfers td.wp-worked-cell{width:1%!important;white-space:nowrap!important;padding:0 4px!important;text-align:center!important;vertical-align:middle!important}' +
+                // 1.7.329: the column before the dot (Driver) takes the spare width again, as when it was the last one
+                'table.transfers td:has(+ td.wp-worked-cell),table.transfers th:has(+ th.wp-worked-cell){width:100%!important;min-width:0!important;max-width:none!important;white-space:nowrap!important}' +
                 'table.transfers input.wp-bulk-sel{margin:0;width:13px;height:13px;accent-color:#8fffd5;cursor:pointer;vertical-align:middle;position:relative;z-index:2}' +
                 'table.transfers .wp-worked-dot{display:inline-block;width:10px;height:10px;border-radius:50%;box-sizing:border-box;cursor:pointer;vertical-align:middle}';
             (document.head || document.documentElement).appendChild(style);
@@ -11428,7 +11430,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!header) return;
             wpBulkCell(header, 'th', 'wp-sel-cell', true).title = 'Tick transfers to act on them together';
             const workedTh = wpBulkCell(header, 'th', 'wp-worked-cell', false);
-            workedTh.title = 'Worked on: mint = you, amber = ghas only, grey = nobody';
+            workedTh.title = 'Worked on: mint = you, purple = ghas only, grey = nobody';
             rows.forEach(function(row) {
                 if (row === header || row.classList.contains('wp-rx-detail') || !row.querySelector(':scope > td')) return;
                 try { wpBulkSetupRow(row); } catch (_) {}
