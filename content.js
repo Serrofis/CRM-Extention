@@ -22390,6 +22390,48 @@ async function wpTransferAssistantExtensionEnabled() {
             return Array.isArray(list) ? list.filter(function(entry) { return entry && entry.id && Number(entry.at) >= from; }) : [];
         } catch (_) { return []; }
     }
+    // 1.7.338: after an auto-cancel the History button turns red (with the
+    // number of new ones) until you open History, so you can check whether
+    // anything is left to do on that transfer.
+    const WP_AUTOCANCEL_SEEN_KEY = 'wp_autocancel_seen_v1';
+    function wpAutoCancelUnseen() {
+        let seen = 0;
+        try {
+            seen = Number(localStorage.getItem(WP_AUTOCANCEL_SEEN_KEY)) || 0;
+            if (!seen) { seen = Date.now(); localStorage.setItem(WP_AUTOCANCEL_SEEN_KEY, String(seen)); }
+        } catch (_) {}
+        return wpAutoCancelledList().filter(function(entry) { return Number(entry.at) > seen; }).length;
+    }
+    function wpAutoCancelMarkSeen() {
+        try { localStorage.setItem(WP_AUTOCANCEL_SEEN_KEY, String(Date.now())); } catch (_) {}
+        wpHistoryAlertPaint();
+    }
+    function wpHistoryAlertPaint() {
+        const unseen = wpAutoCancelUnseen();
+        const launcher = document.getElementById('wp-transfer-history-launcher');
+        const label = document.querySelector('#wp-transfer-history-panel .wp-transfer-history-title > span:first-child');
+        [launcher, label].forEach(function(node) {
+            if (!node) return;
+            if (unseen) {
+                node.style.setProperty('color', '#ffffff', 'important');
+                if (node === launcher) {
+                    node.style.setProperty('background', 'rgba(198,40,40,0.85)', 'important');
+                    node.style.setProperty('border-color', '#ff6b6b', 'important');
+                    node.style.setProperty('box-shadow', '0 0 12px rgba(255,80,80,0.55)', 'important');
+                } else {
+                    node.style.setProperty('background', 'rgba(198,40,40,0.85)', 'important');
+                    node.style.setProperty('border-radius', '6px', 'important');
+                    node.style.setProperty('padding', '0 6px', 'important');
+                }
+            } else {
+                ['color', 'background', 'border-color', 'box-shadow', 'border-radius', 'padding'].forEach(function(prop) { node.style.removeProperty(prop); });
+            }
+        });
+        if (launcher) {
+            launcher.textContent = unseen ? 'History · ' + unseen + ' auto-cancelled' : 'History';
+            launcher.title = unseen ? unseen + ' transfer' + (unseen === 1 ? ' was' : 's were') + ' auto-cancelled — open History to check them' : 'Open transfer history';
+        }
+    }
     function wpRenderAutoCancelled(panel) {
         const list = wpAutoCancelledList();
         const box = document.createElement('div');
@@ -22507,6 +22549,12 @@ async function wpTransferAssistantExtensionEnabled() {
 
         // 1.7.265: first, what our auto-cancel cancelled
         if (!closed) { try { wpRenderAutoCancelled(panel); } catch (_) {} }
+        // 1.7.338: red until you open History (or click in it)
+        try { wpHistoryAlertPaint(); } catch (_) {}
+        if (!panel.dataset.wpSeenHook) {
+            panel.dataset.wpSeenHook = '1';
+            panel.addEventListener('click', function() { if (!wpGetPanelClosed(WP_TRANSFER_HISTORY_CLOSED_KEY)) wpAutoCancelMarkSeen(); }, true);
+        }
 
         if (!history.length) {
             const empty = document.createElement('div');
@@ -24893,7 +24941,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const ready = [];
         (list || []).forEach(function(one) {
             const item = one.item, data = one.data, extra = one.extra;
-            if (!item || !data || !extra || extra.finalMode) return;
+            if (!item || !data || !extra) return;
             const tbo = Number(extra.tbo), due = Number(extra.finalDue);
             if (!Number.isFinite(tbo) || !Number.isFinite(due) || tbo > due + 60) return;
             if (sentMap[item.id]) return;
@@ -24904,6 +24952,9 @@ async function wpTransferAssistantExtensionEnabled() {
             }
             const tasks = Array.isArray(data.tasks) ? data.tasks : [];
             if (tasks.some(function(task) { return /sent to heroes/i.test(String(task && task.note || '')); })) { wpAutoHeroesMark(item.id, 'note already there'); return; }
+            // 1.7.338: not after a Final BC; not before "sent to suggested"
+            if (tasks.some(function(task) { try { const tag = wpDetectTransferTag(task && task.note || ''); return tag && tag.type === 'final'; } catch (_) { return false; } })) { wpAutoHeroesMark(item.id, 'after Final BC'); return; }
+            if (!wpAutoSuggestedDone(state, item.id, tasks.map(function(task) { return String(task && task.note || ''); }).join('\n'))) return;
             // a raise of mod's running on it: next look
             if (item.status === 'inflight' || item.status === 'approved') return;
             if (!wpHeroDetailsText(data, item.city)) return;
@@ -24985,7 +25036,9 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!item || sent[item.id] || ['closed', 'inflight', 'approved', 'gone'].indexOf(item.status) >= 0) return false;
             if (now - Number(state.heroTry[item.id] || 0) < 2 * 60000) return false;
             if (!item.city || !wpLooksLikeCityName(item.city)) return false;
-            return Number.isFinite(timing.tbo) && Number.isFinite(timing.finalDue) && !timing.finalMode && timing.tbo <= timing.finalDue + 60 + extraMinutes;
+            // 1.7.338: at Final BC time too, once it was sent to suggested
+            if (!wpAutoSuggestedDone(state, item.id, '')) return false;
+            return Number.isFinite(timing.tbo) && Number.isFinite(timing.finalDue) && timing.tbo <= timing.finalDue + 60 + extraMinutes;
         };
         const due = entries.filter(function(entry) { return dueWithin(entry, 0); }).sort(function(a, b) { return a.timing.tbo - b.timing.tbo; });
         const first = due[0];
@@ -25001,7 +25054,7 @@ async function wpTransferAssistantExtensionEnabled() {
             try { data = await wpFetchTransferCrmDetails(entry.item.path, true); } catch (_) {}
             if (!data) continue;
             if (data.cancelled || data.assigned) { wpAutoHeroesMark(entry.item.id, data.cancelled ? 'cancelled' : 'assigned'); continue; }
-            list.push({ row: entry.row, item: entry.item, data: data, extra: { tbo: entry.timing.tbo, finalDue: entry.timing.finalDue, finalMode: false } });
+            list.push({ row: entry.row, item: entry.item, data: data, extra: { tbo: entry.timing.tbo, finalDue: entry.timing.finalDue, finalMode: Boolean(entry.timing.finalMode) } });
         }
         // the ones read early (due within 10 min) count as due now
         list.forEach(function(one) { if (one.extra.tbo > one.extra.finalDue + 60) one.extra.tbo = one.extra.finalDue + 60; });
@@ -25035,6 +25088,43 @@ async function wpTransferAssistantExtensionEnabled() {
             localStorage.setItem(WP_AUTO_SUGGESTED_SENT_KEY, JSON.stringify(map));
         } catch (_) {}
     }
+    // 1.7.338: any wording of "sent to suggested" ("sugg", "suggestions"…)
+    function wpNoteSaysSuggested(text) {
+        return /\bsugg(?:est(?:ed|ion|ions)?)?\b/i.test(String(text || ''));
+    }
+    // Sent to suggested already (or nothing to send, or the step is off).
+    function wpAutoSuggestedDone(state, id, notes) {
+        if (!wpAutoSuggestedOn() || wpNoteSaysSuggested(notes)) return true;
+        if (wpAutoSuggestedSent()[id]) return true;
+        return Boolean(state && state.sugNone && state.sugNone[id]);
+    }
+    // 1.7.338: Final BC only after "sent to suggested" and then the heroes
+    // (when the city has a hero with a fitting car). '' = Final BC can go.
+    // Waits at most 10 minutes, then Final BC goes anyway (said once).
+    function wpAutoFinalWaitFor(state, item, data, city) {
+        const tasks = Array.isArray(data && data.tasks) ? data.tasks : [];
+        const notes = tasks.map(function(task) { return String(task && task.note || ''); }).join('\n');
+        let wait = '';
+        if (!wpAutoSuggestedDone(state, item.id, notes)) wait = 'sent to suggested';
+        else if (wpAutoHeroesOn() && !/\bhero(?:es)?\b/i.test(notes) && !wpAutoHeroesSent()[item.id] && !wpRuleExceptionFor('heroes', city)) {
+            let fit = [];
+            try { fit = wpHeroesForCar(wpGetHeroDriversForCity(city) || [], String(data && data.carType || '')).filter(function(hero) { return wpHeroPhone(hero.whatsapp); }); } catch (_) {}
+            if (fit.length) wait = 'sent to heroes';
+        }
+        if (!wait && wpHeroRunActive) wait = 'the WhatsApp messages being sent';
+        state.finalWait = state.finalWait || {};
+        if (!wait) { delete state.finalWait[item.id]; return ''; }
+        const first = Number(state.finalWait[item.id]) || Date.now();
+        state.finalWait[item.id] = first;
+        if (Date.now() - first > 10 * 60000) {
+            if (state.finalWait['told_' + item.id] !== 1) {
+                state.finalWait['told_' + item.id] = 1;
+                wpDashLog('ghas: ' + item.label + ' (' + city + ') — waited 10 min for "' + wait + '" before Final BC; Final BC goes now', 'warn');
+            }
+            return '';
+        }
+        return wait;
+    }
     async function wpAutoSuggestedSweep(state, entries) {
         if (!wpAutoSuggestedOn() || wpHeroRunActive) return;
         const now = Date.now();
@@ -25047,7 +25137,8 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!item || sent[item.id] || ['closed', 'inflight', 'approved', 'queued', 'gone', 'yours'].indexOf(item.status) >= 0) return false;
             if (now - Number(state.sugTry[item.id] || 0) < 15 * 60000) return false;
             if (!item.city || !wpLooksLikeCityName(item.city)) return false;
-            if (!timing || timing.finalMode || item.finalMode || !Number.isFinite(timing.tbo) || timing.tbo <= 0) return false;
+            // 1.7.338: at Final BC time too — suggested comes first, then heroes, then Final BC
+            if (!timing || !Number.isFinite(timing.tbo) || timing.tbo <= 0) return false;
             const touched = wpUserTouchedAt(item.id);
             return !(touched && now - touched < 10 * 60000);
         };
@@ -25069,7 +25160,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!data) continue;
             if (data.cancelled || data.assigned) { wpAutoSuggestedMark(item.id, data.cancelled ? 'cancelled' : 'assigned'); continue; }
             const tasks = Array.isArray(data.tasks) ? data.tasks : [];
-            const noted = tasks.find(function(task) { return /sent\s+to\s+[^\n]*suggested|\bfinal\s*bc\b/i.test(String(task && task.note || '')); });
+            const noted = tasks.find(function(task) { return wpNoteSaysSuggested(task && task.note) || /\bfinal\s*bc\b/i.test(String(task && task.note || '')); });
             if (noted) { wpAutoSuggestedMark(item.id, 'note already there'); continue; }
             if (!wpHeroDetailsText(data, city)) continue;
             let list = [];
@@ -27173,6 +27264,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 sent.result = result.status;
                 try { wpSuggestResult(id, result.status === 'done' ? 'done — cancelled (No Available driver)' : result.status === 'skipped' ? 'skipped — ' + (result.reason || '') : 'failed — ' + (result.reason || 'not cancelled')); } catch (_) {}
                 try { if (result.status === 'done') wpRenderTransferHistory(); } catch (_) {}
+                try { wpHistoryAlertPaint(); } catch (_) {}
             } else if (now - Number(sent.at) > 3 * 60000) {
                 sent.result = 'failed';
                 try { wpSuggestResult(id, 'failed — no result from the transfer tab in 3 min'); } catch (_) {}
@@ -27397,6 +27489,18 @@ async function wpTransferAssistantExtensionEnabled() {
             item.reason = plan.skip;
             item.nextAt = extra.finalSent ? now + 12 * 3600000 : later(10 * 60000);
             return;
+        }
+        // 1.7.338: the order is always sent to suggested → heroes → Final BC
+        if (plan.final) {
+            const waitFor = wpAutoFinalWaitFor(state, item, data, item.city);
+            if (waitFor) {
+                const why = 'Final BC after ' + waitFor;
+                if (item.reason !== why) wpDashLog('🤖 ghas: ' + item.label + ' (' + item.city + ') — ⏰ Final BC time: first ' + waitFor + ', then Final BC');
+                item.status = 'skip';
+                item.reason = why;
+                item.nextAt = now + 60000;
+                return;
+            }
         }
         const key = wpAutoPlanKey(plan);
         if (item.noRaise && item.noRaise === key && !plan.final && !plan.tagOnly) {
@@ -27868,6 +27972,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!state.items.ac || state.items.ac.status !== 'dismissed') wpAutoAcCheck(state, mode, false);
             await wpAutoAcOffCheck(state, entries);
             try { wpAutoTopRuleCheck(state, entries); } catch (_) {}
+            try { wpHistoryAlertPaint(); } catch (_) {}
             try { await wpAutoHeroesSweep(state, entries); } catch (_) {}
             try { await wpAutoSuggestedSweep(state, entries); } catch (_) {}
             try { wpAutoBoxResults(state); } catch (_) {}
@@ -30052,6 +30157,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 event.preventDefault();
                 event.stopPropagation();
                 wpSetPanelClosed(WP_TRANSFER_HISTORY_CLOSED_KEY, false);
+                try { localStorage.setItem(WP_AUTOCANCEL_SEEN_KEY, String(Date.now())); } catch (_) {}
                 panel.style.setProperty('bottom', wpHistoryStackOffsets().panel + 'px', 'important');
                 panel.style.setProperty('right', '14px', 'important');
                 panel.style.setProperty('top', 'auto', 'important');
