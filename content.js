@@ -13426,26 +13426,31 @@ async function wpTransferAssistantExtensionEnabled() {
     // Price tags into the Tags cell (next to the note tag) + the Car cell.
     // 1.7.339: child seats of a transfer, booked or written in its notes.
     // Per type the higher of the two (a note repeating the booking is not
-    // counted twice); a note's "car seat" / "baby seat" with no type counts
-    // on top only beyond what is booked.
+    // counted twice). 1.7.340: the number may come after the word ("Booster
+    // seats: 2", the CRM's "Preselected extras"), and a seat with no type
+    // ("baby seat", "car seat") counts only as the largest such mention, never
+    // on top of the booked ones ("Baby seats: 1 /// newborn baby seat" = 1).
     const WP_SEAT_WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
+    const WP_SEATS_VERSION = 2;
     function wpChildSeatCount(booking) {
         if (!booking) return 0;
         const text = [booking.travelerNote, booking.driverNote, booking.pickupNote].join(' \n ').toLowerCase();
-        const noted = { infant: 0, child: 0, booster: 0, any: 0 };
-        const re = /(?:(\d+|a|an|one|two|three|four|five|six)\s*(?:x\s*)?)?(booster(?:\s*seat)?s?|infant\s*(?:car\s*)?(?:carrier|seat|capsule)s?|baby\s*(?:carrier|capsule)s?|child\s*seats?|toddler\s*seats?|(?:car|baby|kids?)\s*seats?)/g;
+        const noted = { infant: 0, child: 0, booster: 0 };
+        let anyMax = 0;
+        const re = /(?:\b(\d+|a|an|one|two|three|four|five|six)\s*(?:x\s*)?)?\b(booster(?:\s*seat)?s?|infant\s*(?:car\s*)?(?:carrier|seat|capsule)s?|baby\s*(?:carrier|capsule)s?|child\s*seats?|toddler\s*seats?|(?:car|baby|kids?)\s*seats?)(?:\s*(?:[:=x×]\s*|\(\s*)(\d+))?/g;
         let match;
         while ((match = re.exec(text))) {
-            const count = match[1] ? (WP_SEAT_WORDS[match[1]] || parseInt(match[1], 10) || 1) : 1;
+            const before = match[1] ? (WP_SEAT_WORDS[match[1]] || parseInt(match[1], 10) || 1) : 0;
+            const after = match[3] ? parseInt(match[3], 10) : 0;
+            const count = after || before || 1;
             if (count > 9) continue;
             const word = match[2];
-            const type = /^booster/.test(word) ? 'booster' : /^infant|^baby\s*(carrier|capsule)/.test(word) ? 'infant' : /^(child|toddler)/.test(word) ? 'child' : 'any';
-            noted[type] += count;
+            const type = /^booster/.test(word) ? 'booster' : /^infant|^baby\s*(carrier|capsule)/.test(word) ? 'infant' : /^(child|toddler)/.test(word) ? 'child' : '';
+            if (type) noted[type] += count; else anyMax = Math.max(anyMax, count);
         }
         const n = function(value) { return Number(value) > 0 ? Number(value) : 0; };
-        const booked = n(booking.infant) + n(booking.child) + n(booking.booster);
         const typed = Math.max(n(booking.infant), noted.infant) + Math.max(n(booking.child), noted.child) + Math.max(n(booking.booster), noted.booster);
-        return typed + Math.max(0, noted.any - Math.max(0, booked - noted.infant - noted.child - noted.booster));
+        return Math.max(typed, anyMax);
     }
     // Pink city name: a sedan with 2+ child seats, a minivan with 4+.
     function wpSeatsTooMany(entry) {
@@ -13564,7 +13569,8 @@ async function wpTransferAssistantExtensionEnabled() {
             if (row.dataset.wpCrmPath !== path) row.dataset.wpCrmPath = path;
             wpRowCrmPaint(row);
             const entry = store[path];
-            if ((!entry || now - entry.at > WP_ROW_CRM_FRESH) && !wpRowCrmQueued.has(path)) {
+            // 1.7.340: entries read before the seat count (or with an older count) are read again
+            if ((!entry || now - entry.at > WP_ROW_CRM_FRESH || entry.seatsV !== WP_SEATS_VERSION) && !wpRowCrmQueued.has(path)) {
                 wpRowCrmQueued.add(path);
                 wpRowCrmQueue.push(path);
             }
@@ -13596,7 +13602,7 @@ async function wpTransferAssistantExtensionEnabled() {
             wpRowCrmBusy++;
             wpFetchTransferCrmDetails(path, true).then(function(data) {
                 const store = wpRowCrmLoad();
-                store[path] = { at: Date.now(), tags: wpCrmPriceTags(data), car: data && data.carType || '', seats: wpChildSeatCount(data && data.booking) };
+                store[path] = { at: Date.now(), tags: wpCrmPriceTags(data), car: data && data.carType || '', seats: wpChildSeatCount(data && data.booking), seatsV: WP_SEATS_VERSION };
                 try { localStorage.setItem(WP_ROW_CRM_KEY, JSON.stringify(store)); } catch (_) {}
                 document.querySelectorAll('table.transfers > tbody > tr').forEach(function(row) {
                     if (row.dataset.wpCrmPath === path) wpRowCrmPaint(row);
@@ -35133,7 +35139,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // loader, so the same transfer is not fetched again within 5 min.
         try {
             const rowStore = wpRowCrmLoad();
-            rowStore[key] = { at: Date.now(), tags: wpCrmPriceTags(data), car: data.carType || '', seats: wpChildSeatCount(data.booking) };
+            rowStore[key] = { at: Date.now(), tags: wpCrmPriceTags(data), car: data.carType || '', seats: wpChildSeatCount(data.booking), seatsV: WP_SEATS_VERSION };
             localStorage.setItem(WP_ROW_CRM_KEY, JSON.stringify(rowStore));
         } catch (_) {}
         return data;
