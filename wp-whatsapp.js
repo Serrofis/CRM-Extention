@@ -1139,7 +1139,7 @@
         });
         const beat = function(ready) {
             try { chrome.storage.local.set({ [BOX_KEY]: { at: Date.now(), ready: Boolean(ready) } }); } catch (_) {}
-            say(ready ? 'logged in — mod sends from here' : 'not logged in — scan the QR code once (mod uses a WhatsApp tab meanwhile)');
+            say(ready ? 'logged in — ghas sends from here' : 'not logged in — scan the QR code once (ghas uses a WhatsApp tab meanwhile)');
         };
         (async function() {
             // a page that is still loading keeps the last "logged in" (a send's reload)

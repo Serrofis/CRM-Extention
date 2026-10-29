@@ -688,7 +688,7 @@ async function wpPlaySound(kind) {
             await chrome.offscreen.createDocument({
                 url: 'offscreen.html',
                 reasons: ['AUDIO_PLAYBACK'],
-                justification: 'mod / Autopilot alert sound'
+                justification: 'ghas / Autopilot alert sound'
             });
         }
     } catch (_) {}

@@ -4,7 +4,7 @@
 // changed by the dashboard tab itself, so the Terminal says what changed.
 const EM_URL = 'https://crm.welcomepickups.com/admin/transfers/index_v2?em_hailing=true&em_hailing_period=today_tomorrow&filters%5Bcity%5D=all&filters%5Bdate%5D=';
 const SWITCHES = [
-    ['director', 'mod', 'Watches Em Hailing and suggests'],
+    ['director', 'ghas', 'Watches Em Hailing and suggests'],
     ['full', 'Full auto', 'Answers its own suggestions, silently'],
     ['bkcancel', 'Auto-cancel', 'Booking 2:02 · drop-offs 1:10 · pickups 0:40'],
     ['wa', 'WhatsApp auto-send', 'BC&G / Final BC messages go out by themselves'],
@@ -51,11 +51,11 @@ function render(found) {
     if (!state) {
         $('dot').className = 'dot off';
         $('state').textContent = found ? 'The Em Hailing tab is still loading' : 'No Em Hailing tab open';
-        $('state2').textContent = found ? 'Try again in a moment, or refresh that tab.' : 'mod works on the Em Hailing page — open it below.';
+        $('state2').textContent = found ? 'Try again in a moment, or refresh that tab.' : 'ghas works on the Em Hailing page — open it below.';
     } else {
         const mode = state.mode === 'off' ? 'off' : state.paused ? 'paused' : state.full ? 'auto' : 'on';
         $('dot').className = 'dot ' + mode;
-        $('state').textContent = mode === 'off' ? 'mod is off' : mode === 'paused' ? 'mod is paused' : mode === 'auto' ? 'mod is on · Full auto' : 'mod is on · asking you';
+        $('state').textContent = mode === 'off' ? 'ghas is off' : mode === 'paused' ? 'ghas is paused' : mode === 'auto' ? 'ghas is on · Full auto' : 'ghas is on · asking you';
         const bits = [];
         if (state.paused) bits.push(state.paused);
         if (state.waiting) bits.push(state.waiting + ' waiting');
