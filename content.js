@@ -11350,7 +11350,8 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpBulkPick(bar) {
         const selects = bar.querySelectorAll('select');
         const custom = bar.querySelector('input[type="text"]');
-        return { raise: selects[0] ? String(selects[0].value || '') : '', note: selects[1] ? String(selects[1].value || '') : '', custom: custom ? String(custom.value || '') : '' };
+        const amount = bar.querySelector('input.wp-raise-amount');
+        return { raise: selects[0] ? String(selects[0].value || '') : '', note: selects[1] ? String(selects[1].value || '') : '', custom: custom ? String(custom.value || '') : '', amount: amount ? String(amount.value || '') : '' };
     }
     // The same choices in another row's own quickbar, then its own button.
     function wpBulkPress(row, label, pick) {
@@ -11368,6 +11369,8 @@ async function wpTransferAssistantExtensionEnabled() {
         selects[1].dispatchEvent(new Event('change'));
         const custom = bar.querySelector('input[type="text"]');
         if (custom) custom.value = pick.note === '__custom__' ? pick.custom : '';
+        const amount = bar.querySelector('input.wp-raise-amount'); // 1.7.343
+        if (amount) amount.value = pick.raise === '__amount__' ? (pick.amount || '') : '';
         button.click();
         return true;
     }
@@ -11682,6 +11685,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const config = wpGetManagedCostOptions().find(function(item) { return String(item.value) === String(value); });
             const pct = String(value).match(/^pct:([\d.]+):([\d.]+)$/);
             if (!config && pct) return '+' + pct[1] + '% (+' + pct[2] + '% total)';
+            if (/^eur:/.test(String(value))) return 'to ' + String(value).slice(4) + '€';
             return config ? config.label : '+' + value + '%';
         }
 
@@ -11810,13 +11814,21 @@ async function wpTransferAssistantExtensionEnabled() {
         Object.assign(raise.style,{height:'27px',minWidth:'105px',padding:'3px 7px',background:'#111416',color:'#8fffd5',border:'1px solid rgba(143,255,213,.20)',borderRadius:'6px',fontSize:'11px',outline:'none'});
         let o=document.createElement('option'); o.value=''; o.textContent='Raise %'; raise.appendChild(o);
         (typeof wpGetManagedCostOptions==='function'?wpGetManagedCostOptions():[]).forEach(config=>{o=document.createElement('option');o.value=String(config.value);o.textContent=String(config.label||('+'+config.value+'%'));raise.appendChild(o);});
+        // 1.7.343: Custom amount: last option; type the exact new driver cost.
+        o=document.createElement('option');o.value='__amount__';o.textContent='Custom amount…';raise.appendChild(o);
+        const customAmount=document.createElement('input'); customAmount.type='number'; customAmount.min='1'; customAmount.step='1'; customAmount.placeholder='DC €'; customAmount.title='Exact new driver cost'; customAmount.className='wp-raise-amount';
+        Object.assign(customAmount.style,{display:'none',height:'27px',width:'72px',boxSizing:'border-box',padding:'3px 6px',background:'#111416',color:'#e8eef0',border:'1px solid rgba(143,255,213,.30)',borderRadius:'6px',fontSize:'11px',outline:'none',flex:'0 0 auto'});
+        customAmount.addEventListener('click',e=>e.stopPropagation());
+        customAmount.addEventListener('keydown',e=>e.stopPropagation());
+        function raiseChoice(){ if(raise.value!=='__amount__') return String(raise.value||'').trim(); const n=parseFloat(String(customAmount.value||'').replace(',','.')); return Number.isFinite(n)&&n>0 ? 'eur:'+(Math.round(n*100)/100) : ''; }
 
         // 1.7.264: the driver cost this raise gives, shown as soon as a % is picked
         const priceNote=document.createElement('span'); priceNote.title='Driver cost now and after this raise';
         Object.assign(priceNote.style,{display:'none',height:'27px',lineHeight:'27px',padding:'0 8px',color:'#ffd27a',border:'1px solid rgba(255,210,122,.35)',borderRadius:'6px',fontSize:'11px',fontWeight:'700',whiteSpace:'nowrap',flex:'0 0 auto',boxSizing:'border-box'});
         let priceData=null, priceAsked=false;
         function showPrice(){
-            const value=String(raise.value||'').trim();
+            customAmount.style.display=raise.value==='__amount__'?'':'none';
+            const value=raiseChoice();
             if(!value){ priceNote.style.display='none'; try{positionBar();}catch(_){} return; }
             priceNote.style.display='';
             if(!priceData){
@@ -11831,11 +11843,12 @@ async function wpTransferAssistantExtensionEnabled() {
             const money=function(amount){ return (Math.round(Number(amount)*100)/100)+'€'; };
             const dc=priceData.dc===null||priceData.dc===undefined?NaN:Number(priceData.dc);
             const config=wpGetManagedCostOptions().find(function(item){ return String(item.value)===value; });
-            const next=config&&config.dcEqualsTc ? (priceData.tc===null||priceData.tc===undefined?NaN:Number(priceData.tc)) : Number(wpCalculateRaisedDriverCost(String(dc),value));
+            const next=/^eur:/.test(value) ? Number(value.slice(4)) : config&&config.dcEqualsTc ? (priceData.tc===null||priceData.tc===undefined?NaN:Number(priceData.tc)) : Number(wpCalculateRaisedDriverCost(String(dc),value));
             priceNote.textContent=Number.isFinite(dc)&&Number.isFinite(next)&&next>0 ? 'DC '+money(dc)+' → '+money(next) : 'DC: price not read';
             try{positionBar();}catch(_){}
         }
-        raise.addEventListener('change',showPrice);
+        raise.addEventListener('change',function(){ showPrice(); if(raise.value==='__amount__'){ customAmount.value=''; try{customAmount.focus();}catch(_){} } });
+        customAmount.addEventListener('input',showPrice);
 
         const note=document.createElement('select'); note.title='Choose a task note';
         Object.assign(note.style,{height:'27px',minWidth:'230px',maxWidth:'340px',padding:'3px 7px',background:'#111416',color:'#8fffd5',border:'1px solid rgba(143,255,213,.20)',borderRadius:'6px',fontSize:'11px',outline:'none',flex:'0 1 300px'});
@@ -11868,7 +11881,7 @@ async function wpTransferAssistantExtensionEnabled() {
         });
 
         function getQuickWorkflowOptions(broadcastMode) {
-            let raiseValue = String(raise.value || '').trim();
+            let raiseValue = raiseChoice();
             const selectedNote = noteText();
             const customMessage = /^em$/i.test(selectedNote) ? '' : selectedNote;
             // A last-resort note carries its own raise when none is chosen.
@@ -11982,6 +11995,7 @@ async function wpTransferAssistantExtensionEnabled() {
 
         // Order: Raise / Note / BC (+ A/C 30s) / Final BC / Apply / gap / A/C Off
         bar.appendChild(raise);
+        bar.appendChild(customAmount);
         bar.appendChild(priceNote);
         bar.appendChild(note);
         bar.appendChild(customNote);
@@ -14050,8 +14064,15 @@ async function wpTransferAssistantExtensionEnabled() {
 
                 const dcEqualsTc = Boolean(managedCostOption && managedCostOption.dcEqualsTc);
                 const dcBeforeRaise = parseFloat(String(field.value || '').replace(',', '.'));
+                // 1.7.343: Custom amount ('eur:<new DC>'): writes that exact driver cost.
+                const exactAmount = String(select.value).match(/^eur:([\d.]+)$/);
 
-                if (dcEqualsTc) {
+                if (exactAmount) {
+                    field.value = exactAmount[1];
+                    field.dispatchEvent(new Event('input', { bubbles: true }));
+                    field.dispatchEvent(new Event('change', { bubbles: true }));
+                    costPercent = !Number.isFinite(dcBeforeRaise) || Number(exactAmount[1]) > dcBeforeRaise ? 1 : 0;
+                } else if (dcEqualsTc) {
                     // Treated like a real raise below (task text + A/C off).
                     if (!wpApplyDriverCostEqualsTravelerCost(field)) return;
                     costPercent = 1;
@@ -14074,7 +14095,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 // ordered batch workflow can still clear this exact text after
                 // its explicit raise task has been created, so it cannot become
                 // a duplicate there.
-                if (!dcEqualsTc && costPercent > 0 && typeof wpSetTaskMessageFromDriverCostIncrease === 'function') {
+                if (!exactAmount && !dcEqualsTc && costPercent > 0 && typeof wpSetTaskMessageFromDriverCostIncrease === 'function') {
                     wpSetTaskMessageFromDriverCostIncrease(taskPercent);
                 }
 
@@ -18901,6 +18922,7 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpCalculateRaisedDriverCost(oldPrice, raiseValue) {
         const value = String(raiseValue || '').trim();
         if (!value || value === '0') return '';
+        if (/^eur:[\d.]+$/.test(value)) return value.slice(4); // 1.7.343: Custom amount
         const match = String(oldPrice || '').match(/\d+(?:[.,]\d+)?/);
         if (!match) return '';
         const base = parseFloat(match[0].replace(',', '.'));
@@ -19337,6 +19359,8 @@ async function wpTransferAssistantExtensionEnabled() {
         // Suggested raise: the note shows the total the transfer is raised to.
         const suggested = value.match(/^pct:([\d.]+):([\d.]+)$/);
         if (suggested) return 'raised to +' + suggested[2] + '% DC/ sent to BC, Group';
+        // 1.7.343: Custom amount: the exact new driver cost.
+        if (/^eur:[\d.]+$/.test(value)) return 'raised to ' + value.slice(4) + '€ DC/ sent to BC, Group';
 
         try {
             const config = wpGetManagedCostOptions().find(function(item) {
@@ -29329,7 +29353,9 @@ async function wpTransferAssistantExtensionEnabled() {
         const selects = bar ? bar.querySelectorAll('select') : [];
         if (!bar || selects.length < 2) { wpDashLog('📱 Phone: that transfer is no longer in the list — nothing done', 'warn'); return; }
         const has = function(select, value) { return Array.from(select.options).some(function(option) { return option.value === value; }); };
-        const raise = String(command.raise || '');
+        // 1.7.343: the phone's Custom amount comes as 'eur:<new driver cost>'
+        const amountMatch = String(command.raise || '').match(/^eur:(\d+(?:\.\d+)?)$/);
+        const raise = amountMatch ? '__amount__' : String(command.raise || '');
         const note = String(command.note || '');
         if (!has(selects[0], raise) || !has(selects[1], note)) { wpDashLog('📱 Phone: that raise or note is not in the quickbar any more — nothing done', 'warn'); return; }
         // 1.7.266: the phone's BC is the one with the WhatsApp group, as before
@@ -29341,9 +29367,11 @@ async function wpTransferAssistantExtensionEnabled() {
         selects[1].dispatchEvent(new Event('change'));
         const custom = bar.querySelector('input[type="text"]');
         if (note === '__custom__' && custom) custom.value = String(command.custom || '');
+        const amount = bar.querySelector('input.wp-raise-amount');
+        if (amount) amount.value = amountMatch ? amountMatch[1] : '';
         const link = found.row.querySelector('a[href*="/admin/transfers/"]');
         wpDashLog('📱 Phone: ' + labels[command.action] + ' — ' + String(link ? link.textContent : command.item).trim() +
-            (selects[0].value ? ' · raise ' + selects[0].options[selects[0].selectedIndex].textContent : '') +
+            (amountMatch ? ' · driver cost to ' + amountMatch[1] + '€' : selects[0].value ? ' · raise ' + selects[0].options[selects[0].selectedIndex].textContent : '') +
             (note ? ' · note "' + (note === '__custom__' ? String(command.custom || '') : note) + '"' : ''));
         button.click();
     }
@@ -43696,6 +43724,13 @@ async function wpTransferAssistantExtensionEnabled() {
             select.appendChild(option);
             optionExists = true;
         }
+        if (!optionExists && /^eur:[\d.]+$/.test(value)) { // 1.7.343: Custom amount
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = 'DC ' + value.slice(4) + '€';
+            select.appendChild(option);
+            optionExists = true;
+        }
         if (!optionExists) return false;
 
         try {
@@ -44406,7 +44441,7 @@ async function wpTransferAssistantExtensionEnabled() {
 
         wpStep('Workflow started' +
             (broadcastMode === 'send' ? ' — BC (A/C Off)' : broadcastMode === 'final' ? ' — Final BC (A/C On)' : '') +
-            (priceIncrease && priceIncrease !== '0' ? ', price ' + (/^pct:/.test(priceIncrease) ? '+' + priceIncrease.split(':')[1] + '% (suggested, total +' + priceIncrease.split(':')[2] + '%)' : priceIncrease === 'dctc' ? 'DC = TC' : '+' + priceIncrease) : '') +
+            (priceIncrease && priceIncrease !== '0' ? ', price ' + (/^pct:/.test(priceIncrease) ? '+' + priceIncrease.split(':')[1] + '% (suggested, total +' + priceIncrease.split(':')[2] + '%)' : priceIncrease === 'dctc' ? 'DC = TC' : /^eur:/.test(priceIncrease) ? 'DC ' + priceIncrease.slice(4) + '€' : '+' + priceIncrease) : '') +
             (needsEm ? ', untagged' : ', tagged'));
 
         // Already assigned to a driver: nothing to do (no notes, raise,
