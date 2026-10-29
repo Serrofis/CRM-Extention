@@ -10270,10 +10270,8 @@ async function wpTransferAssistantExtensionEnabled() {
         // to BC,posted on group", "BC/group", "BC & G").
         if (/\bBC\b[^\n]*?\b(?:group|grp)\b/i.test(value) ||
             /\bBC\s*(?:&|and|,|\/|\+)\s*G\b/i.test(value)) {
-            return {
-                text: 'BC & G',
-                type: 'bc-grp'
-            };
+            // 1.7.341: no BC & G tag any more — such a note shows no tag
+            return null;
         }
 
         // Plain broadcast references -> BC. Keep the more specific BC & G
