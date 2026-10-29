@@ -10325,6 +10325,40 @@ async function wpTransferAssistantExtensionEnabled() {
         return tag && WP_PRICE_TAG_TYPES.indexOf(tag.type) < 0 ? tag : null;
     }
 
+    // 1.7.342: the last tag of a transfer stays when a newer note is not a
+    // tag: taken from its earlier notes (CRM details already read, newest
+    // first), else the tag this PC last saw on it (kept 3 days).
+    const WP_LAST_NOTE_TAG_KEY = 'wp_last_note_tag_v1';
+    function wpLastNoteTagAll() {
+        try { const map = JSON.parse(localStorage.getItem(WP_LAST_NOTE_TAG_KEY) || '{}'); return map && typeof map === 'object' ? map : {}; } catch (_) { return {}; }
+    }
+    function wpLastNoteTagRemember(row, tag) {
+        let path = '';
+        try { path = wpRowCrmPath(row); } catch (_) {}
+        if (!path || !tag) return;
+        const map = wpLastNoteTagAll();
+        const old = map[path];
+        if (old && old.type === tag.type && old.text === tag.text) return;
+        const now = Date.now();
+        Object.keys(map).forEach(function(key) { if (now - Number(map[key] && map[key].at) > 3 * 86400000) delete map[key]; });
+        map[path] = { type: tag.type, text: tag.text, at: now };
+        try { localStorage.setItem(WP_LAST_NOTE_TAG_KEY, JSON.stringify(map)); } catch (_) {}
+    }
+    function wpEarlierNoteTag(row) {
+        let path = '';
+        try { path = wpRowCrmPath(row); } catch (_) {}
+        if (!path) return null;
+        try {
+            const cached = WP_CRM_DETAILS_CACHE.get(path) || WP_CRM_DETAILS_CACHE.get(path.replace(/\/details_v\d+\/?$/, ''));
+            const tasks = cached && cached.data && Array.isArray(cached.data.tasks) ? cached.data.tasks : [];
+            for (const task of tasks) {
+                const found = wpDetectNoteTag(String(task && task.note || '').replace(/\s+/g, ' ').trim());
+                if (found) { wpLastNoteTagRemember(row, found); return found; }
+            }
+        } catch (_) {}
+        const kept = wpLastNoteTagAll()[path];
+        return kept && kept.type ? { type: String(kept.type), text: String(kept.text || kept.type) } : null;
+    }
     function wpUpdateTransferTag(row, taskText) {
         wpUpdateTransferNoteTag(row, taskText);
         // Keep the real price tags (loaded in the background) in place.
@@ -10343,7 +10377,10 @@ async function wpTransferAssistantExtensionEnabled() {
             .replace(/\s+/g, ' ')
             .trim();
 
-        const tag = wpDetectNoteTag(cleanTaskText);
+        let tag = wpDetectNoteTag(cleanTaskText);
+        // 1.7.342: a newer note that is not a tag keeps the last tag
+        if (tag) wpLastNoteTagRemember(row, tag);
+        else if (cleanTaskText) tag = wpEarlierNoteTag(row);
 
         // Performance (1.7.185): the cell was emptied and rebuilt on every
         // pass; now only when the tag is different or the badge is missing.
