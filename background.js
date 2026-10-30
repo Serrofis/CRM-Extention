@@ -390,12 +390,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // question to the phone and the tapped answer back. Only a Cloudflare
     // Worker address (https://….workers.dev) or, since 1.7.268, a relay you host
     // yourself behind Tailscale Funnel (https://….ts.net, with an optional port),
+    // 1.7.344: also Evan's own domain (https://….eserris.com, e.g. wlcm.eserris.com).
     // and only these calls.
     if (message.type === 'WP_REMOTE') {
         const base = String(message.url || '').replace(/\/+$/, '');
         const path = String(message.path || '');
         const key = String(message.key || '');
-        if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net)(:\d{2,5})?$/.test(base) || ['/api/claim', '/api/pair-code', '/api/unpair', '/api/sync', '/api/settings'].indexOf(path) < 0 || !/^[A-Za-z0-9_-]{32,200}$/.test(key)) {
+        if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/.test(base) || ['/api/claim', '/api/pair-code', '/api/unpair', '/api/sync', '/api/settings'].indexOf(path) < 0 || !/^[A-Za-z0-9_-]{32,200}$/.test(key)) {
             sendResponse({ ok: false, error: 'the relay address or key is not valid' });
             return;
         }

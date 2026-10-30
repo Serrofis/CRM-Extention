@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ghas",
-  "version": "1.7.343",
+  "version": "1.7.344",
   "description": "Welcome Pickups CRM transfer tools with transfer details collection, WhatsApp image copy, batch task tools, and city vehicle capacity info.",
   "permissions": [
     "storage",
@@ -23,6 +23,7 @@
     "http://127.0.0.1/*",
     "https://*.workers.dev/*",
     "https://*.ts.net/*",
+    "https://*.eserris.com/*",
     "https://ops-intelligence-hub.vercel.app/*",
     "https://docs.google.com/*",
     "https://drive.google.com/*",

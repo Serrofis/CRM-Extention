@@ -28921,7 +28921,8 @@ async function wpTransferAssistantExtensionEnabled() {
     const WP_REMOTE_CFG_KEY = 'wp_remote_cfg_v1';
     // 1.7.268: a Cloudflare Worker (….workers.dev) or a relay you host yourself
     // behind Tailscale Funnel (….ts.net, with an optional port such as :8443).
-    const WP_REMOTE_URL = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net)(:\d{2,5})?$/;
+    // 1.7.344: or Evan's own domain (….eserris.com, e.g. https://wlcm.eserris.com).
+    const WP_REMOTE_URL = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/;
     var wpRemoteLastSig = '';
     var wpRemoteLastPut = 0;
     var wpRemoteBusy = false;
@@ -30063,7 +30064,7 @@ async function wpTransferAssistantExtensionEnabled() {
         };
         add('div', '📱 Phone app', { fontSize: '16px', fontWeight: '700' });
         add('div', 'ghas\'s questions on your phone: tap Yes / No raise / Not now there and it is pressed here. This PC has to stay on with this CRM tab open. The question text goes through the relay you host (passenger and driver notes are not sent). With the phone on, a question waits 10 minutes instead of 60 seconds.', { color: '#9aa6ad', margin: '4px 0 10px' });
-        add('div', 'Relay address (your Cloudflare Worker or Tailscale Funnel address)', { color: '#7d8a90', fontSize: '12px', marginTop: '6px' });
+        add('div', 'Relay address (e.g. https://wlcm.eserris.com or your Tailscale Funnel address)', { color: '#7d8a90', fontSize: '12px', marginTop: '6px' });
         const urlInput = add('input');
         urlInput.type = 'text';
         urlInput.value = cfg.url;
@@ -30081,7 +30082,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const say = function(text, good) { status.textContent = text; status.style.color = good === true ? '#6fd16f' : good === false ? '#ff9d94' : '#cfd6da'; };
         const connect = async function() {
             const url = String(urlInput.value || '').trim().replace(/\/+$/, '').toLowerCase();
-            if (!WP_REMOTE_URL.test(url)) { say('✗ The address must look like https://name.your-tailnet.ts.net:8443 or https://name.your-account.workers.dev', false); return false; }
+            if (!WP_REMOTE_URL.test(url)) { say('✗ The address must look like https://name.your-tailnet.ts.net:8443 or https://name.eserris.com', false); return false; }
             const now = wpRemoteConfig();
             // One key per relay, made here; the relay remembers the first one it sees.
             if (now.url !== url || !now.key) {
@@ -30176,7 +30177,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 const result = await wpSyncTick(true);
                 codeBox.style.display = 'none';
                 if (result && result.ok) say('✓ This PC is linked: your rules, WhatsApp links and Hub history now stay the same on both. Press "Turn on" if this PC should also serve the phone when the other one is off.', true);
-                else say('✓ Linked, but the sync did not answer (' + (result && result.error || 'no answer') + '). Paste the newest worker.js into Cloudflare, then it starts by itself.', false);
+                else say('✓ Linked, but the sync did not answer (' + (result && result.error || 'no answer') + '). Put the newest worker.js on the relay server, then it starts by itself.', false);
             });
             codeInput.focus();
         });
