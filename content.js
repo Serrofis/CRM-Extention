@@ -12035,6 +12035,17 @@ async function wpTransferAssistantExtensionEnabled() {
                 chip.textContent='All '+count+' ticked';
                 chip.style.display=count>1?'':'none';
             }catch(_){}
+            // 1.7.345: on your first open, Raise starts on the EM Project suggested raise for this city (and car)
+            try{
+                if(!raise.__wpSuggested&&!raise.value){
+                    raise.__wpSuggested=true;
+                    const carCell=row.querySelector(':scope > td.wp-car-cell');
+                    const tip=wpParseEmRaiseSuggestion(cityText(),carCell?String(carCell.textContent||'').trim():'');
+                    const pick=tip&&tip.kind==='pct'?Array.from(raise.options).find(function(option){ return option.value!==''&&option.value!=='__amount__'&&Number(option.value)===Number(tip.percent); }):
+                        tip&&tip.kind==='dctc'?Array.from(raise.options).find(function(option){ const config=wpGetManagedCostOptions().find(function(item){ return String(item.value)===option.value; }); return config&&config.dcEqualsTc; }):null;
+                    if(pick){ raise.value=pick.value; raise.title='Suggested raise (EM Project): '+String(tip.text||'').slice(0,120); }
+                }
+            }catch(_){}
             try{ showPrice(); }catch(_){}
             // Force layout after display so the popup dimensions are known before positioning.
             void bar.offsetWidth; positionBar();
