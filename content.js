@@ -19516,61 +19516,112 @@ async function wpTransferAssistantExtensionEnabled() {
     // 1.7.347: City Manager auto mode: every city of the list, top to bottom,
     // that has untagged transfers: open it, tick only the untagged ones, run the
     // Ops Hub chain (Tag → Price Change from the box → Remove Auto-C → Broadcast
-    // → Enable Auto-C → note → image to the group), wait for its note + image,
-    // then the next city. One page refresh at the end.
+    // → Ask best drivers → Enable Auto-C → note → image to the group), wait for
+    // its note + image, then the next city.
+    // 1.7.348: the whole page is refreshed after each city; where it is (the
+    // cities, the next one) is kept in wp_cm_auto_v1 and it goes on after the
+    // refresh. Left alone for 20 min (page closed): it does not go on.
     var wpCmAutoRunning = false;
     var wpCmAutoStop = false;
-    async function wpCmAutoRun(tab, paint) {
-        if (wpCmAutoRunning) return;
+    const WP_CM_AUTO_KEY = 'wp_cm_auto_v1';
+    function wpCmAutoLoad() {
+        try { const state = JSON.parse(localStorage.getItem(WP_CM_AUTO_KEY) || 'null'); if (state && Array.isArray(state.cities) && Date.now() - Number(state.at || 0) < 20 * 60000) return state; } catch (_) {}
+        return null;
+    }
+    function wpCmAutoSave(state) {
+        try { if (state) { state.at = Date.now(); localStorage.setItem(WP_CM_AUTO_KEY, JSON.stringify(state)); } else localStorage.removeItem(WP_CM_AUTO_KEY); } catch (_) {}
+    }
+    function wpCmAutoRows() {
         const text = function(node) { return String(node ? node.textContent : '').replace(/\s+/g, ' ').trim(); };
-        const pause = function(ms) { return new Promise(function(resolve) { window.setTimeout(resolve, ms); }); };
-        const cities = Array.from(document.querySelectorAll('#wp-today-city-window .wp-today-city-summary > .wp-today-city-stat'))
+        return Array.from(document.querySelectorAll('#wp-today-city-window .wp-today-city-summary > .wp-today-city-stat'))
             .filter(function(row) { return !/wp-today-city-(booking|untagged|tbo-alert)-row/.test(row.className); })
             .map(function(row) { return { city: text(row.querySelector('.wp-today-city-name')), u: Number(text(row.querySelector('.wp-today-city-untagged'))) || 0 }; })
-            .filter(function(entry) { return entry.city && entry.u > 0; });
+            .filter(function(entry) { return entry.city; });
+    }
+    // also when the City Manager was closed by the refresh (its list not built yet)
+    window.setTimeout(function() {
+        if (wpCmAutoLoad() && !wpCmAutoRunning && document.getElementById('wp-today-city-toggle')) wpCmAutoStep();
+    }, 8000);
+    function wpCmAutoRun(tab, paint) {
+        if (wpCmAutoRunning) return;
+        const cities = wpCmAutoRows().filter(function(entry) { return entry.u > 0; }).map(function(entry) { return entry.city; });
         if (!cities.length) { wpDashLog('City Manager auto: no city has untagged transfers', 'warn'); return; }
+        wpDashLog('City Manager auto: chain on the untagged transfers of ' + cities.length + ' cit' + (cities.length === 1 ? 'y' : 'ies') + ', top to bottom — the page refreshes after each');
+        wpCmAutoSave({ tab: tab === 'tomorrow' ? 'tomorrow' : 'today', cities: cities, index: 0, ran: 0 });
+        return wpCmAutoStep(paint);
+    }
+    var wpCmAutoPaint = null;
+    async function wpCmAutoStep(paint) {
+        let state = wpCmAutoLoad();
+        if (!state || wpCmAutoRunning) return;
+        paint = paint || wpCmAutoPaint;
+        const pause = function(ms) { return new Promise(function(resolve) { window.setTimeout(resolve, ms); }); };
         wpCmAutoRunning = true;
         wpCmAutoStop = false;
         wpDashSetBusy(true);
-        wpDashLog('City Manager auto: chain on the untagged transfers of ' + cities.length + ' cit' + (cities.length === 1 ? 'y' : 'ies') + ', top to bottom');
-        let ran = 0;
+        let reload = false;
         try {
-            for (let i = 0; i < cities.length; i++) {
-                if (wpCmAutoStop) { wpDashLog('City Manager auto: stopped by you after ' + ran + ' cit' + (ran === 1 ? 'y' : 'ies'), 'warn'); break; }
-                const entry = cities[i];
-                if (paint) paint((i + 1) + '/' + cities.length + ' ' + entry.city);
-                try { wpTodayCityOpenCityWindow(entry.city, tab); } catch (_) {}
-                await pause(1200);
-                const panel = document.getElementById('wp-today-city-orders-window');
-                if (!panel || typeof panel._wpAutoChain !== 'function') { wpDashLog('City Manager auto: ' + entry.city + ' did not open — skipped', 'warn'); continue; }
+            // after a refresh: the City Manager open and its list read in
+            // (the refresh closes it: opened again here, like a click on "City Manager")
+            for (let i = 0; i < 60 && !document.getElementById('wp-today-city-window'); i++) await pause(1000);
+            const overview = document.getElementById('wp-today-city-window');
+            if (!overview) return; // not a page with the City Manager: leave it for that page
+            if (overview.classList.contains('is-closed')) {
+                const toggle = document.getElementById('wp-today-city-toggle');
+                if (toggle) toggle.click();
+                await pause(600);
+                if (overview.classList.contains('is-closed')) { wpDashLog('City Manager auto: the City Manager could not be opened — stopped', 'error'); wpCmAutoSave(null); return; }
+            }
+            for (let i = 0; i < 60 && !wpCmAutoRows().length; i++) await pause(1000);
+            const fresh = {};
+            wpCmAutoRows().forEach(function(entry) { fresh[entry.city] = entry.u; });
+            let index = Number(state.index) || 0;
+            while (index < state.cities.length && !(fresh[state.cities[index]] > 0)) index++;
+            if (index >= state.cities.length) { wpDashLog('City Manager auto: done (' + (state.ran || 0) + ' cit' + (state.ran === 1 ? 'y' : 'ies') + ')'); wpCmAutoSave(null); return; }
+            const city = state.cities[index];
+            if (paint) paint((index + 1) + '/' + state.cities.length + ' ' + city);
+            wpTodayCitySelectedTab = state.tab;
+            try { wpTodayCityOpenCityWindow(city, state.tab); } catch (_) {}
+            await pause(1200);
+            const panel = document.getElementById('wp-today-city-orders-window');
+            state.index = index + 1;
+            if (!panel || typeof panel._wpAutoChain !== 'function') {
+                wpDashLog('City Manager auto: ' + city + ' did not open — skipped', 'warn');
+            } else {
+                wpCmAutoSave(state);
                 const before = panel._wpLastBatch;
                 const result = await panel._wpAutoChain();
-                if (!result.count) { wpDashLog('City Manager auto: ' + entry.city + ' — no untagged transfers any more'); continue; }
-                ran++;
-                wpDashLog('City Manager auto: ' + entry.city + ' (' + result.count + ') — ' + result.text.replace(/\n/g, ' '), /^✓/.test(result.text) ? undefined : 'warn');
-                // the Hub itself is not working: the next cities would fail the same way
-                if (/stopped at Select|Hub not reached|did not answer/i.test(result.text)) { wpDashLog('City Manager auto: stopped — the Hub is not answering', 'error'); break; }
-                // this city's note + image first (at most 4 min)
-                const batch = panel._wpLastBatch !== before ? panel._wpLastBatch : null;
-                const startedAt = Date.now();
-                while (Date.now() - startedAt < 240000) {
-                    let open = 0;
-                    if (batch && Array.isArray(batch.orderedItems)) {
-                        for (let k = 0; k < batch.orderedItems.length; k++) { try { if (!localStorage.getItem('wp_batch_result_v1_' + batch.batchId + '_' + k)) open++; } catch (_) {} }
+                if (result.count) {
+                    state.ran = (state.ran || 0) + 1;
+                    wpDashLog('City Manager auto: ' + city + ' (' + result.count + ') — ' + result.text.replace(/\n/g, ' '), /^✓/.test(result.text) ? undefined : 'warn');
+                    // the Hub itself is not working: the next cities would fail the same way
+                    if (/stopped at Select|Hub not reached|did not answer/i.test(result.text)) { wpDashLog('City Manager auto: stopped — the Hub is not answering', 'error'); wpCmAutoSave(null); return; }
+                    // this city's note + image (and its WhatsApp send) first, at most 4 min
+                    const batch = panel._wpLastBatch !== before ? panel._wpLastBatch : null;
+                    const startedAt = Date.now();
+                    let calm = 0;
+                    while (calm < 3 && Date.now() - startedAt < 240000) {
+                        let open = 0;
+                        if (batch && Array.isArray(batch.orderedItems)) {
+                            for (let k = 0; k < batch.orderedItems.length; k++) { try { if (!localStorage.getItem('wp_batch_result_v1_' + batch.batchId + '_' + k)) open++; } catch (_) {} }
+                        }
+                        calm = !open && !wpCmImagePending && !Object.keys(wpWhatsAppFallbacks).length && wpDashBusyCount <= 1 ? calm + 1 : 0;
+                        await pause(2000);
                     }
-                    if (!open && !wpCmImagePending && !Object.keys(wpWhatsAppFallbacks).length) break;
-                    await pause(2000);
+                } else {
+                    wpDashLog('City Manager auto: ' + city + ' — no untagged transfers any more');
                 }
-                await pause(1500);
             }
+            if (wpCmAutoStop || !wpCmAutoLoad()) { wpDashLog('City Manager auto: stopped by you after ' + city, 'warn'); wpCmAutoSave(null); return; }
+            if (state.index >= state.cities.length) { wpDashLog('City Manager auto: done (' + (state.ran || 0) + ' cit' + (state.ran === 1 ? 'y' : 'ies') + ') — refreshing the page'); wpCmAutoSave(null); }
+            else { wpCmAutoSave(state); wpDashLog('City Manager auto: refreshing the page — next: ' + state.cities[state.index]); }
+            reload = true;
         } catch (error) {
             wpDashLog('City Manager auto failed: ' + String(error && error.message || error), 'error');
+            wpCmAutoSave(null);
         } finally {
-            wpCmAutoRunning = false;
-            wpDashSetBusy(false);
-            if (paint) paint('');
-            wpDashLog('City Manager auto: done (' + ran + ' cit' + (ran === 1 ? 'y' : 'ies') + ')');
-            if (ran) wpCmReloadWhenIdle('City Manager auto');
+            if (reload) { window.setTimeout(function() { location.reload(); }, 500); }
+            else { wpCmAutoRunning = false; wpDashSetBusy(false); if (paint) paint(''); }
         }
     }
     // Watches a batch's results (also when its window is closed); all in → refresh.
@@ -36769,7 +36820,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const warn = function(text) { hubChainArmed = false; hubStatus.style.color = '#ffd27a'; hubStatus.textContent = text; paintHubButton(); };
             if (plan.error) { warn('Chain: ' + plan.error + '.'); try { hubValueInput.focus(); } catch (_) {} return; }
             if (ids.length > plan.cap) { warn('Chain: at most ' + plan.cap + ' transfers at once' + (plan.price ? ' with a price change' : '') + ' — ' + ids.length + ' are ticked. Untick some and run it again for the rest.'); return; }
-            const order = ['Tag'].concat(plan.price ? ['Price Change (' + wpHubPriceText(plan.price) + ')'] : []).concat(['Remove Auto-C', 'Broadcast', 'wait 30 s', 'Enable Auto-C', 'note "' + plan.note + '" on each transfer']);
+            const order = ['Tag'].concat(plan.price ? ['Price Change (' + wpHubPriceText(plan.price) + ')'] : []).concat(['Remove Auto-C', 'Broadcast', 'Ask best drivers', 'wait 30 s', 'Enable Auto-C', 'note "' + plan.note + '" on each transfer']);
             if (!hubChainArmed) {
                 hubChainArmed = true;
                 if (hubChainTimer) clearTimeout(hubChainTimer);
@@ -36843,6 +36894,28 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (!stopped && plan.price) { why = await step('Price Change', 'price_change', { note: '', price: plan.price }, true, true); if (why) fail('Price Change', why); }
                 if (!stopped) { why = await step('Remove Auto-C', 'remove_auto_c', { note: '', price: null }, true, true); if (why) fail('Remove Auto-C', why); else autoCOff = true; }
                 if (!stopped) { why = await step('Broadcast', 'broadcast', { note: '', price: null }, true, true); if (why) fail('Broadcast', why); else broadcast = true; }
+                // 1.7.348: Ask best drivers after the broadcast (40 at a time, the Hub's limit);
+                // when it does not go through the chain goes on, the note just leaves it out
+                let asked = false;
+                if (broadcast) {
+                    const all = ids.slice();
+                    for (let from = 0; from < all.length; from += 40) {
+                        const part = all.slice(from, from + 40);
+                        const label = 'Ask best drivers' + (all.length > 40 ? ' ' + (from + 1) + '–' + (from + part.length) : '');
+                        say('Chain · ' + label + '…');
+                        const answer = await new Promise(function(resolve) {
+                            try {
+                                chrome.runtime.sendMessage({ type: 'WP_HUB_SELECT', ids: part, action: 'ask', quiet: true, keep: false, runId: runId + 'ask' + from, auto: { note: '', price: null } }, function(reply) {
+                                    resolve(chrome.runtime.lastError || !reply ? { ok: false, message: chrome.runtime.lastError ? chrome.runtime.lastError.message : 'the Hub did not answer' } : reply);
+                                });
+                            } catch (error) { resolve({ ok: false, message: String(error && error.message || error) }); }
+                        });
+                        const why = problem(answer, true);
+                        if (why) { done.push(label + ' — not done: ' + why); wpDashLog(logName + ' → Ops Hub chain: ' + label + ' — NOT done: ' + why, 'warn'); }
+                        else { asked = true; done.push(label + ' ✓'); wpDashLog(logName + ' → Ops Hub chain: ' + label + ' ✓' + (answer.result ? ' — Hub: ' + answer.result : '')); }
+                    }
+                }
+                if (asked) plan.note = plan.note + ' / asked best drivers';
                 if (autoCOff) {
                     if (broadcast) {
                         for (let left = 30; left > 0; left--) { say('Chain · Broadcast sent — Enable Auto-C in ' + left + ' s…'); await new Promise(function(resolve) { window.setTimeout(resolve, 1000); }); }
@@ -40555,7 +40628,7 @@ async function wpTransferAssistantExtensionEnabled() {
             autoTab.addEventListener('click', function(event) {
                 event.preventDefault();
                 event.stopPropagation();
-                if (wpCmAutoRunning) { wpCmAutoStop = true; autoTab.textContent = 'Stopping after this city…'; return; }
+                if (wpCmAutoRunning || wpCmAutoLoad()) { wpCmAutoStop = true; wpCmAutoSave(null); autoTab.textContent = 'Stopping after this city…'; return; }
                 if (Date.now() - autoArmed > 8000) {
                     autoArmed = Date.now();
                     autoTab.textContent = 'Start auto? Click again';
@@ -40568,6 +40641,9 @@ async function wpTransferAssistantExtensionEnabled() {
             });
             tabs.appendChild(autoTab);
             content.appendChild(tabs);
+            // 1.7.348: after the refresh between two cities, auto mode goes on by itself
+            wpCmAutoPaint = paintAuto;
+            if (wpCmAutoLoad()) { paintAuto('…'); window.setTimeout(function() { wpCmAutoStep(paintAuto); }, 3000); }
 
             todayTab.addEventListener('click', function(event) {
                 event.preventDefault();

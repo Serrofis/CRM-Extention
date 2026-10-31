@@ -237,7 +237,43 @@
         let dialog = null;
         for (let i = 0; i < 24 && !dialog; i++) { dialog = dialogNow(); if (!dialog) await pause(250); }
         const cancel = async function() { const button = dialogNow() ? buttonNamed(/^Cancel$/i, dialogNow()) : null; if (button) { button.click(); await pause(300); } };
-        if (!dialog) return { confirmed: false, why: 'the Hub did not open its ' + spec.label + ' dialog' };
+        if (!dialog) return { confirmed: false, why: 'the Hub did not open its ' + (spec.label || 'Ask best drivers') + ' dialog' };
+        // 1.7.348: Ask best drivers (the chain): the Hub plans who to ask, then its
+        // last button reads "Ask N drivers about M transfers". After sending, the
+        // dialog stays open with a Close button: its text is the result.
+        if (action === 'ask') {
+            if (!/Ask best drivers/.test(text(dialog))) { await cancel(); return { confirmed: false, why: 'the Hub opened a different dialog' }; }
+            let go = null;
+            for (let i = 0; i < 120; i++) {
+                dialog = dialogNow();
+                if (!dialog) return { confirmed: false, why: 'the Ask dialog closed' };
+                go = Array.from(dialog.querySelectorAll('button')).filter(function(button) { return /^Ask \d+ drivers? about \d+ transfers?/.test(text(button)); }).pop() || null;
+                if (go && !go.disabled) break;
+                if (/Nobody to ask|Could not plan|Sending is off/.test(text(dialog)) && !/Planning who to ask/.test(text(dialog))) break;
+                await pause(250);
+            }
+            if (!go || go.disabled) {
+                const why = (text(dialog).match(/Nobody to ask[^.]*\.?|Could not plan[^.]*|Sending is off[^.]*/) || ['nobody to ask'])[0];
+                await cancel();
+                return { confirmed: false, why: why.slice(0, 160) };
+            }
+            if (dryRun) { await cancel(); return { confirmed: false, dryRun: true, ready: true, why: text(go) }; }
+            const label = text(go);
+            go.click();
+            let closeButton = null;
+            for (let i = 0; i < 480; i++) {
+                await pause(250);
+                const now = dialogNow();
+                if (!now) break;
+                closeButton = buttonNamed(/^Close$/i, now);
+                if (closeButton && !/Sending /.test(text(now))) break;
+                closeButton = null;
+            }
+            const after = dialogNow();
+            const failed = after ? (text(after).match(/Send failed[^.]*/) || [''])[0] : '';
+            if (closeButton) { closeButton.click(); await pause(300); }
+            return { confirmed: true, result: label.replace(/^Ask/, 'Asked') + (failed ? ' · ' + failed.slice(0, 120) : ''), details: [], dropped: [], stillOpen: Boolean(dialogNow()) };
+        }
         // The dialog's title is its heading (checked on the live Hub,
         // 2026-10-09: an <h3>, no aria-label).
         const title = (dialog.getAttribute('aria-label') || '').trim() || text(dialog.querySelector('h1, h2, h3'));
@@ -342,7 +378,7 @@
             result.confirmed = true;
             return result;
         }
-        if (options.auto && spec.label) {
+        if (options.auto && (spec.label || action === 'ask')) { // 1.7.348: Ask confirmed for the chain
             const outcome = await confirmDialog(action, options.auto, result.selected, options.dryRun === true);
             Object.assign(result, outcome);
             result.auto = true;
