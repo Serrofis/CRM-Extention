@@ -234,18 +234,28 @@
     // dryRun: everything except the last click, then Cancel — for testing.
     async function confirmDialog(action, auto, expected, dryRun) {
         const spec = BAR[action];
-        let dialog = null;
-        for (let i = 0; i < 24 && !dialog; i++) { dialog = dialogNow(); if (!dialog) await pause(250); }
-        const cancel = async function() { const button = dialogNow() ? buttonNamed(/^Cancel$/i, dialogNow()) : null; if (button) { button.click(); await pause(300); } };
-        if (!dialog) return { confirmed: false, why: 'the Hub did not open its ' + (spec.label || 'Ask best drivers') + ' dialog' };
         // 1.7.348: Ask best drivers (the chain): the Hub plans who to ask, then its
         // last button reads "Ask N drivers about M transfers". After sending, the
         // dialog stays open with a Close button: its text is the result.
         if (action === 'ask') {
-            if (!/Ask best drivers/.test(text(dialog))) { await cancel(); return { confirmed: false, why: 'the Hub opened a different dialog' }; }
+            // 1.7.350: the Ask popup is not a [role=dialog]: found by its heading
+            const askBox = function() {
+                // the heading (not the bar's own button), then up to the box with Cancel / Close
+                const heads = Array.from(document.querySelectorAll('h1, h2, h3, h4, div, span, p')).filter(function(node) { return node.children.length === 0 && text(node) === 'Ask best drivers' && !node.closest('button'); });
+                for (const head of heads) {
+                    let box = head;
+                    while (box && box !== document.body && !Array.from(box.querySelectorAll('button')).some(function(button) { return /^(Cancel|Close)$/i.test(text(button)); })) box = box.parentElement;
+                    if (box && box !== document.body && text(box).length < 4000) return box;
+                }
+                return null;
+            };
+            const cancel = async function() { const box = askBox(); const button = box ? buttonNamed(/^Cancel$/i, box) : null; if (button) { button.click(); await pause(300); } };
+            let dialog = null;
+            for (let i = 0; i < 40 && !dialog; i++) { dialog = askBox(); if (!dialog) await pause(250); }
+            if (!dialog) return { confirmed: false, why: 'the Hub did not open its Ask best drivers popup' };
             let go = null;
             for (let i = 0; i < 120; i++) {
-                dialog = dialogNow();
+                dialog = askBox();
                 if (!dialog) return { confirmed: false, why: 'the Ask dialog closed' };
                 go = Array.from(dialog.querySelectorAll('button')).filter(function(button) { return /^Ask \d+ drivers? about \d+ transfers?/.test(text(button)); }).pop() || null;
                 if (go && !go.disabled) break;
@@ -263,17 +273,21 @@
             let closeButton = null;
             for (let i = 0; i < 480; i++) {
                 await pause(250);
-                const now = dialogNow();
+                const now = askBox();
                 if (!now) break;
                 closeButton = buttonNamed(/^Close$/i, now);
                 if (closeButton && !/Sending /.test(text(now))) break;
                 closeButton = null;
             }
-            const after = dialogNow();
+            const after = askBox();
             const failed = after ? (text(after).match(/Send failed[^.]*/) || [''])[0] : '';
             if (closeButton) { closeButton.click(); await pause(300); }
-            return { confirmed: true, result: label.replace(/^Ask/, 'Asked') + (failed ? ' · ' + failed.slice(0, 120) : ''), details: [], dropped: [], stillOpen: Boolean(dialogNow()) };
+            return { confirmed: true, result: label.replace(/^Ask/, 'Asked') + (failed ? ' · ' + failed.slice(0, 120) : ''), details: [], dropped: [], stillOpen: Boolean(askBox()) };
         }
+        let dialog = null;
+        for (let i = 0; i < 24 && !dialog; i++) { dialog = dialogNow(); if (!dialog) await pause(250); }
+        const cancel = async function() { const button = dialogNow() ? buttonNamed(/^Cancel$/i, dialogNow()) : null; if (button) { button.click(); await pause(300); } };
+        if (!dialog) return { confirmed: false, why: 'the Hub did not open its ' + (spec.label || 'Ask best drivers') + ' dialog' };
         // The dialog's title is its heading (checked on the live Hub,
         // 2026-10-09: an <h3>, no aria-label).
         const title = (dialog.getAttribute('aria-label') || '').trim() || text(dialog.querySelector('h1, h2, h3'));
