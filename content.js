@@ -19539,9 +19539,16 @@ async function wpTransferAssistantExtensionEnabled() {
             .filter(function(entry) { return entry.city; });
     }
     // also when the City Manager was closed by the refresh (its list not built yet)
-    window.setTimeout(function() {
-        if (wpCmAutoLoad() && !wpCmAutoRunning && document.getElementById('wp-today-city-toggle')) wpCmAutoStep();
-    }, 8000);
+    // 1.7.349: checked every 3 s for 3 min (a big list takes long to load), not once at 8 s
+    (function() {
+        if (!wpCmAutoLoad()) return;
+        let tries = 0;
+        const kick = window.setInterval(function() {
+            tries++;
+            if (!wpCmAutoLoad() || wpCmAutoRunning || tries > 60) { clearInterval(kick); return; }
+            if (document.getElementById('wp-today-city-toggle') || document.getElementById('wp-today-city-window')) { clearInterval(kick); wpCmAutoStep(); }
+        }, 3000);
+    })();
     function wpCmAutoRun(tab, paint) {
         if (wpCmAutoRunning) return;
         const cities = wpCmAutoRows().filter(function(entry) { return entry.u > 0; }).map(function(entry) { return entry.city; });
@@ -19572,7 +19579,11 @@ async function wpTransferAssistantExtensionEnabled() {
                 await pause(600);
                 if (overview.classList.contains('is-closed')) { wpDashLog('City Manager auto: the City Manager could not be opened — stopped', 'error'); wpCmAutoSave(null); return; }
             }
-            for (let i = 0; i < 60 && !wpCmAutoRows().length; i++) await pause(1000);
+            // the list of the day auto mode works on, drawn now (not at the next refresh round)
+            try { if (wpTodayCitySelectedTab !== state.tab) { wpTodayCitySelectedTab = state.tab; } wpTodayCityUpdate(); } catch (_) {}
+            for (let i = 0; i < 60 && !wpCmAutoRows().length; i++) { await pause(1000); if (i % 10 === 9) { try { wpTodayCityUpdate(); } catch (_) {} } }
+            if (!wpCmAutoRows().length) { wpDashLog('City Manager auto: the City Manager list did not load after the refresh — stopped', 'error'); wpCmAutoSave(null); return; }
+            if (Number(state.index) > 0) wpDashLog('City Manager auto: picking up after the refresh — ' + (Number(state.index) + 1) + '/' + state.cities.length);
             const fresh = {};
             wpCmAutoRows().forEach(function(entry) { fresh[entry.city] = entry.u; });
             let index = Number(state.index) || 0;
