@@ -566,9 +566,10 @@ async function wpHubSelect(rawIds, rawAction, options, senderTabId) {
     // One of the Hub bar's buttons, or '' for "select only".
     const action = ['ask', 'share', 'tag', 'note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change'].indexOf(String(rawAction || '')) >= 0 ? String(rawAction) : '';
     // auto (phone app): the Hub's dialog is filled in and confirmed there.
-    // Only for the actions with a plain dialog; never Ask / Share.
+    // Only for the actions with a plain dialog; never Share. 1.7.351: and Ask
+    // (only the City Manager chain asks for it: its last step before Enable Auto-C).
     let auto = null;
-    if (options.auto && ['note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change'].indexOf(action) >= 0) {
+    if (options.auto && ['note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change', 'ask'].indexOf(action) >= 0) {
         const price = options.auto.price && typeof options.auto.price === 'object' ? options.auto.price : null;
         auto = {
             note: String(options.auto.note || '').replace(/\s+/g, ' ').trim().slice(0, 280),
