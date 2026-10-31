@@ -19430,7 +19430,22 @@ async function wpTransferAssistantExtensionEnabled() {
     // City Manager "Generate image": reads each transfer's "Copy details
     // for EM" text and car type from its CRM page in the background (no
     // tabs), stores them like the tab collector does, then shows the image.
-    async function wpGenerateTransfersImage(items, tabName, groupName) {
+    // 1.7.346: the same transfers twice within a minute give one image (not two);
+    // fresh = read the CRM pages again (after a Hub price change / broadcast).
+    var wpCmImagePending = 0;
+    var wpCmImageLast = { key: '', at: 0 };
+    async function wpGenerateTransfersImage(items, tabName, groupName, fresh) {
+        const list = (items || []).filter(function(item) { return item && item.url; });
+        const key = list.map(function(item) { return String(item.url); }).sort().join('|');
+        if (key && key === wpCmImageLast.key && Date.now() - wpCmImageLast.at < 60000) {
+            wpDashLog('City Manager: the image for these ' + list.length + ' transfer' + (list.length === 1 ? ' was' : 's was') + ' just sent — not sent again', 'warn');
+            return;
+        }
+        wpCmImageLast = { key: key, at: Date.now() };
+        wpCmImagePending++;
+        try { await wpGenerateTransfersImageNow(list, tabName, groupName, fresh === true); } finally { wpCmImagePending--; }
+    }
+    async function wpGenerateTransfersImageNow(items, tabName, groupName, fresh) {
         const batch = wpCreateCityBatch((items || []).filter(function(item) { return item && item.url; }), tabName);
         if (!batch) return;
         const total = batch.orderedItems.length;
@@ -19443,7 +19458,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 const index = next++;
                 const item = batch.orderedItems[index];
                 try {
-                    let data = await wpFetchTransferCrmDetails(item.url);
+                    let data = await wpFetchTransferCrmDetails(item.url, fresh);
                     if (!data || typeof data.emDetails !== 'string') data = await wpFetchTransferCrmDetails(item.url, true);
                     const details = data && data.emDetails;
                     if (!details) { failed++; continue; }
@@ -19472,6 +19487,71 @@ async function wpTransferAssistantExtensionEnabled() {
         // city's WhatsApp group straight away, like after a broadcast.
         batch._wpSendNow = true;
         wpShowCityTransfersImage(batch);
+    }
+
+    // 1.7.346: after a City Manager batch, the page is refreshed once nothing
+    // is busy any more (no image being made, no WhatsApp hand-off waiting,
+    // quickbar closed). Still busy after 5 minutes: not refreshed, the Terminal says so.
+    var wpCmReloadTimer = null;
+    function wpCmReloadWhenIdle(label, batch) {
+        if (wpCmReloadTimer) return;
+        const startedAt = Date.now();
+        let calm = 0;
+        // a BC / Final BC batch: its image + WhatsApp message first (up to 2 min)
+        const imageDue = Boolean(batch && (batch.broadcastMode === 'send' || batch.broadcastMode === 'final'));
+        wpCmReloadTimer = window.setInterval(function() {
+            const idle = (!imageDue || batch._wpImageShown || Date.now() - startedAt > 120000) && wpDashBusyCount === 0 && !wpCmImagePending && !Object.keys(wpWhatsAppFallbacks).length && !wpOrderQuickActionOpen;
+            calm = idle ? calm + 1 : 0;
+            if (calm >= 3) {
+                clearInterval(wpCmReloadTimer);
+                wpDashLog((label || 'City Manager') + ': batch finished — refreshing the page');
+                window.setTimeout(function() { location.reload(); }, 300);
+            } else if (Date.now() - startedAt > 5 * 60000) {
+                clearInterval(wpCmReloadTimer);
+                wpCmReloadTimer = null;
+                wpDashLog((label || 'City Manager') + ': batch finished — not refreshed (still busy after 5 min), refresh the page yourself', 'warn');
+            }
+        }, 2000);
+    }
+    // Watches a batch's results (also when its window is closed); all in → refresh.
+    function wpCmWatchBatch(batch, label) {
+        if (!batch || !Array.isArray(batch.orderedItems)) return;
+        const total = batch.orderedItems.length;
+        const startedAt = Date.now();
+        const timer = window.setInterval(function() {
+            let finished = 0;
+            for (let i = 0; i < total; i++) { try { if (localStorage.getItem('wp_batch_result_v1_' + batch.batchId + '_' + i)) finished++; } catch (_) {} }
+            if (finished >= total) { clearInterval(timer); wpCmReloadWhenIdle(label); }
+            else if (Date.now() - startedAt > 30 * 60000) clearInterval(timer);
+        }, 2000);
+    }
+    // 1.7.346: Ops Hub price changes are remembered per transfer (2 h), so the
+    // note after a Hub broadcast says what was done: "raised +10% DC/ sent to BC, Group".
+    var wpHubPriceMem = {};
+    function wpHubRememberPrice(ids, price) {
+        if (!price) return;
+        (ids || []).forEach(function(id) { wpHubPriceMem[String(id)] = { price: price, at: Date.now() }; });
+    }
+    function wpHubDoneNote(ids) {
+        let price = null;
+        (ids || []).some(function(id) { const mem = wpHubPriceMem[String(id)]; if (mem && Date.now() - mem.at < 2 * 3600000) { price = mem.price; return true; } return false; });
+        const did = price ? (price.mode === 'pct' ? 'raised +' + price.value + '% DC' : price.mode === 'add' ? 'raised +€' + price.value + ' DC' : 'DC set to €' + price.value) + '/ ' : '';
+        return did + 'sent to BC, Group';
+    }
+    // 1.7.346: a Hub Broadcast that went through (PC or phone): the note on each
+    // of these transfers, the image of only these to the city group, then a refresh.
+    function wpCmAfterHubBroadcast(chosen, ids, tabName, label) {
+        if (!chosen || !chosen.length) return '';
+        const note = wpHubDoneNote(ids);
+        const batch = wpCreateCityBatch(chosen, tabName);
+        if (batch) {
+            batch.broadcastMode = '';
+            batch.noteOnly = true;
+            wpOpenCityBatchTransfers(batch, null, note, '');
+            wpCmWatchBatch(batch, label);
+        }
+        wpGenerateTransfersImage(chosen, tabName, '', true).catch(function() {});
+        return note;
     }
 
     function wpOpenCityBatchTransfers(batch, openAllButton, taskMessage, priceIncreaseValue) {
@@ -29565,6 +29645,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // own guardrails still decide what each transfer may get. What happened
     // goes to the Terminal, the Hub history and back to the phone.
     var wpRemoteHubLast = null;
+    var wpRemoteCmLastSel = null; // 1.7.346: the phone's last ticked transfers (for its Send image)
     const WP_HUB_PHONE_ACTIONS = {
         tag: { label: 'Tag', cap: 200 }, note: { label: 'Add note', cap: 200 }, remove_auto_c: { label: 'Remove Auto-C', cap: 100 },
         enable_auto_c: { label: 'Enable Auto-C', cap: 100 }, broadcast: { label: 'Broadcast', cap: 100 }, price_change: { label: 'Price Change', cap: 70 }
@@ -29598,6 +29679,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const wanted = (command.sel || []).map(function(label) { return String(label).replace(/\s+/g, ' ').trim(); }).filter(Boolean);
         const ids = wanted.map(function(label) { return idOf[label]; }).filter(Boolean);
         count = wanted.length;
+        if (wanted.length) wpRemoteCmLastSel = { city: city, day: day, sel: wanted, at: Date.now() }; // 1.7.346
         if (!wanted.length) { finish('nothing was selected — nothing was run', 'warn'); return; }
         if (ids.length !== wanted.length) { finish((wanted.length - ids.length) + ' of the ' + wanted.length + ' selected transfers are no longer in ' + cityName + ' — open the city again on the phone. Nothing was run.', 'warn'); return; }
         if (ids.length > spec.cap) { finish(spec.label + ' takes at most ' + spec.cap + ' transfers at a time and ' + ids.length + ' were selected. Nothing was run.', 'warn'); return; }
@@ -29632,6 +29714,15 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         if (!answer.pressed) { finish(what + ' — not opened in the Hub: ' + (answer.actionError || '?'), 'warn'); return; }
         const outcome = wpHubAutoOutcome(what, answer, ids.length);
+        // 1.7.346: as on the PC: price remembered for the note; a Broadcast → note + image of only these + refresh
+        if (answer.confirmed && command.action === 'price_change') wpHubRememberPrice(ids, auto.price);
+        if (answer.confirmed && command.action === 'broadcast') {
+            const dropped = Array.isArray(answer.dropped) ? answer.dropped.map(String) : [];
+            const sent = ids.filter(function(id) { return dropped.indexOf(id) < 0; });
+            const chosen = items.filter(function(item) { const id = (String(item && item.url || '').match(/transfers\/(\d+)/) || [])[1] || ''; return id && sent.indexOf(id) >= 0; });
+            const note = wpCmAfterHubBroadcast(chosen, sent, day, 'City Manager ' + cityName);
+            if (note) outcome.text += ' · note "' + note + '" + image of ' + chosen.length + ' to the group';
+        }
         finish(outcome.text, outcome.tone);
     }
 
@@ -29713,6 +29804,23 @@ async function wpTransferAssistantExtensionEnabled() {
         if (!panel) { stop('no transfers for that city any more'); return; }
         const acts = wpRemoteCmScope(panel);
         // Group buttons: Open all / Generate image (these work on the PC's screen).
+        // 1.7.346: Send image with transfers ticked on the phone (now or for its last Hub run, 30 min):
+        // one image of only those, whichever group's Send image was pressed.
+        if (command.action === 'image') {
+            const last = wpRemoteCmLastSel && wpRemoteCmLastSel.city === city && wpRemoteCmLastSel.day === day && Date.now() - wpRemoteCmLastSel.at < 30 * 60000 ? wpRemoteCmLastSel.sel : [];
+            const sel = (command.sel || []).length ? command.sel.map(function(label) { return String(label).replace(/\s+/g, ' ').trim(); }) : last;
+            if (sel.length) {
+                let all = [];
+                try { all = wpTodayCityGetOrdersForCity(city, day) || []; } catch (_) {}
+                const chosen = all.filter(function(item) { return sel.indexOf(String(item && item.orderLabel || '').replace(/\s+/g, ' ').trim()) >= 0; });
+                if (chosen.length) {
+                    wpDashLog('📱 Phone: City Manager — Send image · ' + chosen.length + ' selected');
+                    wpGenerateTransfersImage(chosen, day, 'selected', true).catch(function() {});
+                    wpRemoteCmPush([1500]);
+                    return;
+                }
+            }
+        }
         if (command.action === 'openall' || command.action === 'image') {
             const section = Array.from(panel.querySelectorAll('.wp-today-city-orders-group')).find(function(node) { return text(node.querySelector('.wp-today-city-orders-group-title > span')) === String(command.group || ''); });
             const wanted = command.action === 'openall' ? 'Open all' : 'Generate image';
@@ -29730,6 +29838,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const present = new Set(boxes.map(labelOf));
         const missing = Array.from(want).filter(function(label) { return !present.has(label); });
         if (!want.size) { stop('nothing was selected'); return; }
+        wpRemoteCmLastSel = { city: city, day: day, sel: Array.from(want), at: Date.now() }; // 1.7.346
         if (missing.length) { stop(missing.length + ' of the ' + want.size + ' selected transfers are no longer there — open the city again on the phone'); return; }
         const noteSelect = acts.querySelector('select.wp-city-note-select');
         const noteInput = acts.querySelector('input.wp-city-task-message-input');
@@ -35782,9 +35891,11 @@ async function wpTransferAssistantExtensionEnabled() {
 
             render();
             panel._wpSummaryPoll = window.setInterval(function() {
-                if (render() || Date.now() - startedAt > 30 * 60 * 1000) {
+                const finished = render();
+                if (finished || Date.now() - startedAt > 30 * 60 * 1000) {
                     clearInterval(panel._wpSummaryPoll);
                     panel._wpSummaryPoll = null;
+                    if (finished) wpCmReloadWhenIdle('City Manager', batch); // 1.7.346: always refresh after a batch
                 }
             }, 2000);
         }
@@ -36541,6 +36652,14 @@ async function wpTransferAssistantExtensionEnabled() {
                         } catch (_) {}
                         if (gone) answer.details = (Array.isArray(answer.details) ? answer.details : []).concat([gone + ' unticked here (#' + goneIds.slice(0, 6).join(', #') + ')']);
                         const outcome = wpHubAutoOutcome(what, answer, chunk.length);
+                        // 1.7.346: price remembered for the note; a Broadcast → note + image + refresh
+                        if (answer.confirmed && action.key === 'price_change') wpHubRememberPrice(chunk, auto.price);
+                        if (answer.confirmed && action.key === 'broadcast') {
+                            const sent = chunk.filter(function(id) { return goneIds.indexOf(id) < 0; });
+                            const chosen = items.filter(function(item) { const id = (String(item && item.url || '').match(/transfers\/(\d+)/) || [])[1] || ''; return id && sent.indexOf(id) >= 0; });
+                            const note = wpCmAfterHubBroadcast(chosen, sent, tabName, logName);
+                            if (note) outcome.text += '\nNote "' + note + '" + image of ' + chosen.length + ' to the group';
+                        }
                         done(outcome.text + (answer.confirmed && left > 0 ? '\n' + left + ' more to go: press ' + action.label + ' again for the next part.' : ''),
                             outcome.tone === 'ok' ? '#6fd16f' : '#ffd27a', outcome.tone === 'ok' ? undefined : 'warn', answer.confirmed === true);
                         return;
@@ -36683,6 +36802,8 @@ async function wpTransferAssistantExtensionEnabled() {
                         noted = chosen.length;
                         done.push('note on ' + noted);
                     }
+                    // 1.7.346: then the image of only these transfers to the city group
+                    if (chosen.length) { wpGenerateTransfersImage(chosen, tabName, '', true).catch(function() {}); done.push('image of ' + chosen.length); }
                 }
                 const summary = done.join(' · ') + (stopped ? ' · stopped at ' + stoppedAt + ': ' + stopped : '') + (noted ? ' — the note "' + plan.note + '" is being written on ' + noted + ' transfer' + (noted === 1 ? '' : 's') : '');
                 say((stopped ? 'Chain stopped — ' : partialSteps ? 'Chain done, but not every transfer went through — ' : '✓ Chain done — ') + summary, stopped || partialSteps ? '#ffd27a' : '#6fd16f');
@@ -37049,7 +37170,9 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (!groupItems.length || groupImage.disabled) return;
                 groupImage.disabled = true;
                 groupImage.textContent = 'Generating…';
-                wpGenerateTransfersImage(groupItems, tabName, groupName).finally(function() {
+                // 1.7.346: transfers ticked → the image of only those (one image, whichever group's button)
+                const ticked = items.filter(function(item, index) { return selected.has(index); });
+                wpGenerateTransfersImage(ticked.length ? ticked : groupItems, tabName, ticked.length ? 'selected' : groupName).finally(function() {
                     groupImage.disabled = !groupItems.length;
                     groupImage.textContent = 'Generate image';
                 });
