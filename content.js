@@ -24254,7 +24254,17 @@ async function wpTransferAssistantExtensionEnabled() {
     try { if (window.wpRuleExceptionFor !== wpRuleExceptionFor) window.wpRuleExceptionFor = wpRuleExceptionFor; } catch (_) {}
     function wpRuleExceptionFor(of, city) {
         const key = wpNormalizeCityKey(String(city || ''));
-        return wpRuleExceptions(of).filter(function(rule) { return rule.city === key; })[0] || null;
+        const list = wpRuleExceptions(of);
+        // 1.7.368: a built-in rule switched OFF in the Rules window = an "off" exception for every city (city '*')
+        return list.filter(function(rule) { return rule.city === key; })[0] || list.filter(function(rule) { return rule.city === '*' && rule.mode === 'off'; })[0] || null;
+    }
+    // 1.7.368: switch a built-in rule on / off everywhere
+    function wpRuleBuiltInOn(of) {
+        return !wpRuleExceptions(of).some(function(rule) { return rule.city === '*' && rule.mode === 'off'; });
+    }
+    function wpRuleBuiltInSet(of, on) {
+        const rest = wpRulesLoad().filter(function(rule) { return !(rule.kind === 'except' && rule.of === of && rule.city === '*'); });
+        wpRulesSave(on ? rest : rest.concat([{ kind: 'except', of: of, city: '*', cityName: 'Every city', mode: 'off', all: true, at: Date.now(), text: 'switched off in the Rules window' }]));
     }
     function wpRuleExceptionText(rule) {
         const meta = WP_RULE_EXCEPT_OF[rule.of] || { off: 'the rule does not count here' };
@@ -24336,11 +24346,37 @@ async function wpTransferAssistantExtensionEnabled() {
             const node = add('div', 'wpr-row' + (opts.top ? ' is-top' : '') + (opts.mine ? ' is-mine' : ''), null, body);
             const top = add('div', 'wpr-name', null, node);
             add('span', null, name, top);
-            if (opts.state !== undefined) add('span', 'wpr-state ' + (opts.state ? 'is-on' : 'is-off'), opts.state ? 'ON' : 'OFF', top);
+            if (opts.state !== undefined) {
+                const stateChip = add('span', 'wpr-state ' + (opts.state ? 'is-on' : 'is-off'), opts.state ? 'ON' : 'OFF', top);
+                // 1.7.368: the same switch as in Controls, clickable here too
+                if (opts.stateKey) {
+                    stateChip.style.cursor = 'pointer';
+                    stateChip.title = opts.state ? 'Switch off' : 'Switch on';
+                    stateChip.addEventListener('click', function() {
+                        if (opts.stateKey === 'full') { try { wpAutoFullSet(!opts.state, 'Rules window'); } catch (_) {} }
+                        else { try { localStorage.setItem(opts.stateKey, opts.state ? '0' : '1'); } catch (_) {} }
+                        try { wpDashPaintSwitches(); } catch (_) {}
+                        if (opts.stateKey !== 'full') wpDashLog(name + ': ' + (opts.state ? 'OFF' : 'ON') + ' (Rules window)');
+                        wpRulesWindow(true);
+                    });
+                }
+            }
             if (opts.exceptOf) {
                 const count = wpRuleExceptions(opts.exceptOf).length;
                 const link = add('span', 'wpr-link', 'Exceptions' + (count ? ' (' + count + ')' : ''), top);
                 link.addEventListener('click', function() { wpRulesWindowOpenExc[opts.exceptOf] = !wpRulesWindowOpenExc[opts.exceptOf]; wpRulesWindow(true); });
+            }
+            // 1.7.368: the rule itself on / off
+            if (opts.onoff) {
+                const isOn = Boolean(opts.onoff.on);
+                const sw = add('span', 'wpr-state ' + (isOn ? 'is-on' : 'is-off'), isOn ? 'ON' : 'OFF', top);
+                sw.style.cursor = 'pointer';
+                sw.title = isOn ? 'Switch this rule off' : 'Switch this rule on';
+                sw.addEventListener('click', function() {
+                    opts.onoff.set(!isOn);
+                    wpDashLog('📘 Rule switched ' + (isOn ? 'OFF' : 'ON') + ': ' + name);
+                    wpRulesWindow(true);
+                });
             }
             // 1.7.367: Gradual on / off for a raise
             if (opts.gradual) {
@@ -24428,30 +24464,30 @@ async function wpTransferAssistantExtensionEnabled() {
         try { full = wpAutoFullOn(); } catch (_) {}
 
         group('Above every other rule');
-        row('Booking.com is never left unassigned under 2:00 to pickup', 'Final BC from ' + hm(180) + ' at the latest, whatever another rule says.', { top: true, exceptOf: 'toprule' });
-        row('Auto-cancel "No Available driver"', 'Still unassigned at its limit → EM tag if missing, note "cancelled as NAD", Auto Cancel. Booking.com at 2:02 · drop-offs (to an airport / port / station) at 1:10 · pickups at 0:40. One that appears already under its limit (grey) keeps the existing late-arrival exception: cancelled at 1:00 if it appeared at 1:01–1:59, at 0:30 if it appeared under 1:00. Off: ghas only warns.', { top: true, state: autoCancel, exceptOf: 'autocancel' });
+        row('Booking.com is never left unassigned under 2:00 to pickup', 'Final BC from ' + hm(180) + ' at the latest, whatever another rule says.', { top: true, exceptOf: 'toprule', onoff: { on: wpRuleBuiltInOn('toprule'), set: function(on) { wpRuleBuiltInSet('toprule', on); } } });
+        row('Auto-cancel "No Available driver"', 'Still unassigned at its limit → EM tag if missing, note "cancelled as NAD", Auto Cancel. Booking.com at 2:02 · drop-offs (to an airport / port / station) at 1:10 · pickups at 0:40. One that appears already under its limit (grey) keeps the existing late-arrival exception: cancelled at 1:00 if it appeared at 1:01–1:59, at 0:30 if it appeared under 1:00. Off: ghas only warns.', { top: true, state: autoCancel, stateKey: 'wp_booking_autocancel_v1', exceptOf: 'autocancel' });
 
         group('Raises');
-        row('Booking.com +20%', 'Instead of the city\'s EM Project %; it wins over a city NO (a city where EM Project says never to raise stays a no). Every other transfer: the city\'s EM Project %.', { exceptOf: 'booking', gradual: { on: wpGradualBuiltIn('booking'), set: function(on) { wpGradualSetBuiltIn('booking', on); } } });
-        row('Airbnb +10%', 'Instead of the city\'s EM Project %, the same way.', { exceptOf: 'airbnb', gradual: { on: wpGradualBuiltIn('airbnb'), set: function(on) { wpGradualSetBuiltIn('airbnb', on); } } });
+        row('Booking.com +20%', 'Instead of the city\'s EM Project %; it wins over a city NO (a city where EM Project says never to raise stays a no). Every other transfer: the city\'s EM Project %.', { exceptOf: 'booking', onoff: { on: wpRuleBuiltInOn('booking'), set: function(on) { wpRuleBuiltInSet('booking', on); } }, gradual: { on: wpGradualBuiltIn('booking'), set: function(on) { wpGradualSetBuiltIn('booking', on); } } });
+        row('Airbnb +10%', 'Instead of the city\'s EM Project %, the same way.', { exceptOf: 'airbnb', onoff: { on: wpRuleBuiltInOn('airbnb'), set: function(on) { wpRuleBuiltInSet('airbnb', on); } }, gradual: { on: wpGradualBuiltIn('airbnb'), set: function(on) { wpGradualSetBuiltIn('airbnb', on); } } });
         row('The city\'s EM Project %', 'Every transfer without a partner raise or a rule of yours.', { gradual: { on: wpGradualBuiltIn('em'), set: function(on) { wpGradualSetBuiltIn('em', on); } } });
-        row(WP_RULE_EXCEPT_OF.dctc.name, 'From ' + hm(240) + ' to pickup (1 hour before Final BC) the driver cost goes up to the traveler cost, and stays there through Final BC.', { exceptOf: 'dctc' });
-        row(WP_RULE_EXCEPT_OF.nofinal.name, 'A city with NO in EM Project gets no raise at a normal BC, and +10% at Final BC.', { exceptOf: 'nofinal' });
-        row('No raises under 5%', 'When less than +5% is left to reach the level, nothing is raised. Your own Edit is not held back.', { exceptOf: 'min5' });
-        row('What is already raised counts', 'The notes ("raised to +10% DC"…) and raises by hand in the price history: only the difference is raised.', { exceptOf: 'noted' });
-        row('Your raise after Final BC', 'Writes one note only: "raised a bit more to save" (ghas\'s own raises keep their notes).', { exceptOf: 'afterfinal' });
+        row(WP_RULE_EXCEPT_OF.dctc.name, 'From ' + hm(240) + ' to pickup (1 hour before Final BC) the driver cost goes up to the traveler cost, and stays there through Final BC.', { exceptOf: 'dctc', onoff: { on: wpRuleBuiltInOn('dctc'), set: function(on) { wpRuleBuiltInSet('dctc', on); } } });
+        row(WP_RULE_EXCEPT_OF.nofinal.name, 'A city with NO in EM Project gets no raise at a normal BC, and +10% at Final BC.', { exceptOf: 'nofinal', onoff: { on: wpRuleBuiltInOn('nofinal'), set: function(on) { wpRuleBuiltInSet('nofinal', on); } } });
+        row('No raises under 5%', 'When less than +5% is left to reach the level, nothing is raised. Your own Edit is not held back.', { exceptOf: 'min5', onoff: { on: wpRuleBuiltInOn('min5'), set: function(on) { wpRuleBuiltInSet('min5', on); } } });
+        row('What is already raised counts', 'The notes ("raised to +10% DC"…) and raises by hand in the price history: only the difference is raised.', { exceptOf: 'noted', onoff: { on: wpRuleBuiltInOn('noted'), set: function(on) { wpRuleBuiltInSet('noted', on); } } });
+        row('Your raise after Final BC', 'Writes one note only: "raised a bit more to save" (ghas\'s own raises keep their notes).', { exceptOf: 'afterfinal', onoff: { on: wpRuleBuiltInOn('afterfinal'), set: function(on) { wpRuleBuiltInSet('afterfinal', on); } } });
 
         group('Timing');
-        row(WP_RULE_EXCEPT_OF.heroes.name, 'Still unassigned at ' + hm(240) + ' (Booking.com) / 1 hour before its Final BC time → sent to the city\'s heroes whose car type fits the booked car (no car type written = sent too), note "sent to heroes". Once per transfer.', { state: heroesOn, exceptOf: 'heroes' });
+        row(WP_RULE_EXCEPT_OF.heroes.name, 'Still unassigned at ' + hm(240) + ' (Booking.com) / 1 hour before its Final BC time → sent to the city\'s heroes whose car type fits the booked car (no car type written = sent too), note "sent to heroes". Once per transfer.', { state: heroesOn, stateKey: 'wp_auto_heroes_v1', exceptOf: 'heroes' });
         row('Final BC time', 'Booking.com from ' + hm(180) + ' · others from ' + hm(NORMAL_FLASH_END + 10) + ' · drop-offs to an airport / port / station from ' + hm(NORMAL_FLASH_END + 10 + SPECIAL_NORMAL_SHIFT) + ' (your "Final BC at …" rules can change it, not later than 3:00 for Booking.com).', { exceptOf: 'finaltime' });
 
         group('A/C');
-        row('A/C off', 'AutoCancel under 60 min, not at Final BC time, TBO not orange / red → AutoCancel off, on the A/C Off list. Ticked back on by someone → off the list, asked again.', { exceptOf: 'acoff' });
-        row('A/C back on', '2 minutes after its timer on the A/C Off list ends, unless the TBO is orange / red.', { exceptOf: 'acon' });
+        row('A/C off', 'AutoCancel under 60 min, not at Final BC time, TBO not orange / red → AutoCancel off, on the A/C Off list. Ticked back on by someone → off the list, asked again.', { exceptOf: 'acoff', onoff: { on: wpRuleBuiltInOn('acoff'), set: function(on) { wpRuleBuiltInSet('acoff', on); } } });
+        row('A/C back on', '2 minutes after its timer on the A/C Off list ends, unless the TBO is orange / red.', { exceptOf: 'acon', onoff: { on: wpRuleBuiltInOn('acon'), set: function(on) { wpRuleBuiltInSet('acon', on); } } });
 
         group('Other');
-        row('Wheelchair / bulky luggage', 'Named in the notes → the box is ticked and saved.', { state: tick, exceptOf: 'tickbox' });
-        row('Full auto', 'Answers its own suggestions, silently (no card, no sound, nothing to the phone); written in the Terminal and the history.', { state: full, exceptOf: 'fullauto' });
+        row('Wheelchair / bulky luggage', 'Named in the notes → the box is ticked and saved.', { state: tick, stateKey: 'wp_tick_boxes_v1', exceptOf: 'tickbox' });
+        row('Full auto', 'Answers its own suggestions, silently (no card, no sound, nothing to the phone); written in the Terminal and the history.', { state: full, stateKey: 'full', exceptOf: 'fullauto' });
 
         group('Your rules');
         const mine = wpRulesLoad().filter(function(rule) { return rule && rule.kind !== 'except' && rule.kind !== 'gradual'; });
@@ -24460,6 +24496,12 @@ async function wpTransferAssistantExtensionEnabled() {
             const raises = String(rule.kind || '') === '' && wpRulePct(rule) > 0 && !rule.onlyFinal; // 1.7.367
             row(wpRuleText(rule), rule.text ? '“' + String(rule.text).slice(0, 160) + '”' : '', {
                 mine: true,
+                onoff: { on: !rule.off, set: function(on) {
+                    wpRulesSave(wpRulesLoad().map(function(other) {
+                        if (other.at === rule.at && other.kind === rule.kind && other.city === rule.city && other.partner === rule.partner) { const copy = Object.assign({}, other); if (on) delete copy.off; else copy.off = true; return copy; }
+                        return other;
+                    }));
+                } },
                 gradual: raises ? { on: Boolean(rule.gradual), set: function(on) {
                     wpRulesSave(wpRulesLoad().map(function(other) {
                         if (other.at === rule.at && other.kind === rule.kind && other.city === rule.city && other.partner === rule.partner) { const copy = Object.assign({}, other); if (on) copy.gradual = true; else delete copy.gradual; return copy; }
@@ -24480,7 +24522,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const when = wpRuleWhen(rule);
         const conds = wpRuleConds(rule);
         return wpRuleLabel(rule) + ' → ' + wpRuleDoes(rule) + (conds.length ? ' · ' + conds.join(' · ') : '') +
-            (rule.section === 'today' ? ' · Today section only' : '') + (rule.when === 'final' && !rule.onlyFinal ? ' · at Final BC' : rule.when === 'normal' ? ' · at normal BC' : '') + (when ? ' · ' + when : '');
+            (rule.off ? ' · switched OFF' : '') + (rule.section === 'today' ? ' · Today section only' : '') + (rule.when === 'final' && !rule.onlyFinal ? ' · at Final BC' : rule.when === 'normal' ? ' · at normal BC' : '') + (when ? ' · ' + when : '');
     }
     // What the rules are checked against: the transfer's city, partner,
     // whether it is Final BC time, and what was read from its CRM page.
@@ -24562,6 +24604,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 Object.keys(rule.cond || {}).length * 10 + (Array.isArray(rule.days) && rule.days.length ? 5 : 0);
         };
         return wpRulesLoad().filter(function(rule) {
+            if (rule.off) return false; // 1.7.368: switched off in the Rules window
             if (String(rule.kind || '') !== kind) return false;
             if (price && (mode === 'extra') !== (rule.mode === 'extra')) return false;
             return wpRuleFits(rule, ctx, price);
