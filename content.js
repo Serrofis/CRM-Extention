@@ -24447,36 +24447,48 @@ async function wpTransferAssistantExtensionEnabled() {
         const style = document.createElement('style');
         style.id = 'wp-rules-window-style';
         style.textContent = [
-            '#wp-rules-window{position:fixed;right:18px;top:60px;bottom:60px;z-index:2147483645;width:min(520px,calc(100vw - 24px));display:flex;flex-direction:column;box-sizing:border-box;background:rgba(17,20,22,0.97);color:#dfe4e6;border:1px solid rgba(143,255,213,0.35);border-radius:14px;box-shadow:0 14px 40px rgba(0,0,0,.5);font:13px/1.45 Consolas,"Cascadia Mono","Courier New",monospace}',
-            '#wp-rules-window .wpr-head{display:flex;align-items:center;gap:12px;padding:10px 12px 8px;color:#8fffd5;font-weight:700;border-bottom:1px solid rgba(143,255,213,0.2)}',
+            // 1.7.379: the look of the suggestion card (Segoe UI, dark card, clear names, pill switches)
+            '#wp-rules-window{position:fixed;right:18px;top:50px;bottom:50px;z-index:2147483645;width:min(560px,calc(100vw - 24px));display:flex;flex-direction:column;box-sizing:border-box;background:#1f2529;color:#e8ecee;border:1px solid rgba(255,255,255,.09);border-radius:18px;box-shadow:0 18px 48px rgba(0,0,0,.6);font:14px/1.4 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;animation:wpRwIn .2s ease-out}',
+            '@keyframes wpRwIn{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:none}}',
+            '#wp-rules-window *{box-sizing:border-box;font-family:inherit}',
+            '#wp-rules-window .wpr-head{display:flex;align-items:center;gap:12px;padding:14px 16px 10px;font-size:18px;font-weight:650;color:#e8ecee;border-bottom:1px solid rgba(255,255,255,.07)}',
             '#wp-rules-window .wpr-title{flex:1 1 auto}',
-            '#wp-rules-window .wpr-x{color:#8b979e;font-size:17px;line-height:1;cursor:pointer}',
-            '#wp-rules-window .wpr-x:hover{color:#ff8a80}',
-            '#wp-rules-window .wpr-body{flex:1 1 auto;overflow-y:auto;padding:2px 12px 12px;scrollbar-width:thin}',
-            '#wp-rules-window .wpr-group{color:#8b979e;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:12px 0 3px}',
-            '#wp-rules-window .wpr-row{padding:7px 0 7px 10px;border-left:3px solid rgba(143,255,213,0.35);margin:4px 0;background:rgba(255,255,255,0.03);border-radius:0 9px 9px 0}',
-            '#wp-rules-window .wpr-row.is-top{border-left-color:#ff8a80}',
-            '#wp-rules-window .wpr-row.is-mine{border-left-color:#c9a3ff}',
-            '#wp-rules-window .wpr-name{display:flex;align-items:baseline;gap:8px;font-weight:700;color:#fff;padding-right:10px}',
+            '#wp-rules-window .wpr-x{color:#7d8a90;font-size:20px;line-height:1;cursor:pointer;padding:0 2px}',
+            '#wp-rules-window .wpr-x:hover{color:#e8ecee}',
+            '#wp-rules-window .wpr-body{flex:1 1 auto;overflow-y:auto;padding:4px 16px 16px;scrollbar-width:thin;scrollbar-color:#4c5358 transparent}',
+            '#wp-rules-window .wpr-group{color:#8b979e;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:16px 2px 6px}',
+            '#wp-rules-window .wpr-row{padding:10px 12px;margin:0 0 6px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);border-radius:12px}',
+            '#wp-rules-window .wpr-row:hover{background:rgba(255,255,255,.06)}',
+            '#wp-rules-window .wpr-row.is-top{box-shadow:inset 3px 0 0 #ff8a80}',
+            '#wp-rules-window .wpr-row.is-mine{box-shadow:inset 3px 0 0 #c9a3ff}',
+            '#wp-rules-window .wpr-name{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;font-size:15px;font-weight:650;color:#e8ecee}',
             '#wp-rules-window .wpr-name > span:first-child{flex:1 1 auto;min-width:0}',
-            '#wp-rules-window .wpr-what{color:#aab3ba;margin-top:2px;padding-right:10px}',
-            '#wp-rules-window .wpr-state{flex:0 0 auto;font-size:11px;font-weight:700;padding:0 7px;border-radius:8px;background:rgba(255,255,255,0.08);color:#cfd6da}',
-            '#wp-rules-window .wpr-state.is-on{background:rgba(111,209,111,0.16);color:#6fd16f}',
-            '#wp-rules-window .wpr-state.is-off{background:rgba(255,138,128,0.14);color:#ff8a80}',
-            '#wp-rules-window .wpr-link{flex:0 0 auto;color:#8fffd5;font-weight:700;cursor:pointer;font-size:12px}',
-            '#wp-rules-window .wpr-link:hover{text-decoration:underline}',
-            '#wp-rules-window .wpr-forget{flex:0 0 auto;color:#8b979e;cursor:pointer;font-size:15px;line-height:1}',
+            '#wp-rules-window .wpr-what{color:#9aa6ad;font-size:12.5px;margin-top:4px;line-height:1.4}',
+            '#wp-rules-window .wpr-state{flex:0 0 auto;font-size:12px;font-weight:700;padding:3px 12px;border-radius:999px;background:#3a4247;color:#cfd6da;letter-spacing:.03em;user-select:none}',
+            '#wp-rules-window .wpr-state.is-on{background:#8fffd5;color:#04261a}',
+            '#wp-rules-window .wpr-state.is-off{background:#3a4247;color:#9aa6ad}',
+            '#wp-rules-window .wpr-link{flex:0 0 auto;padding:2px 10px;border-radius:999px;background:rgba(255,255,255,.07);color:#cfd6da;font-weight:600;cursor:pointer;font-size:12px;white-space:nowrap;user-select:none}',
+            '#wp-rules-window .wpr-link:hover{background:rgba(143,255,213,.16);color:#8fffd5}',
+            '#wp-rules-window .wpr-hours,#wp-rules-window .wpr-pick{height:26px;border-radius:999px !important;padding:0 10px !important;border:1px solid rgba(255,255,255,.14) !important;background:rgba(255,255,255,.07) !important;color:#e8ecee !important;font:600 12.5px "Segoe UI",system-ui,sans-serif !important}',
+            '#wp-rules-window .wpr-hours{width:62px !important;text-align:right}',
+            '#wp-rules-window .wpr-forget{flex:0 0 auto;color:#7d8a90;cursor:pointer;font-size:17px;line-height:1}',
             '#wp-rules-window .wpr-forget:hover{color:#ff8a80}',
-            '#wp-rules-window .wpr-exc{margin:7px 10px 2px 0;padding:8px 10px;border-radius:9px;background:rgba(201,163,255,0.08);border:1px solid rgba(201,163,255,0.25)}',
+            // the ON / OFF switch always on the right, the × after it
+            '#wp-rules-window .wpr-name > .wpr-link{order:5}',
+            '#wp-rules-window .wpr-name > .wpr-hours,#wp-rules-window .wpr-name > .wpr-pick{order:6}',
+            '#wp-rules-window .wpr-name > .wpr-hours-h{order:7;color:#9aa6ad;font-size:12.5px;font-weight:600}',
+            '#wp-rules-window .wpr-name > .wpr-state{order:10}',
+            '#wp-rules-window .wpr-name > .wpr-forget{order:11}',
+            '#wp-rules-window .wpr-exc{margin:9px 0 2px;padding:9px 11px;border-radius:10px;background:rgba(201,163,255,.08);border:1px solid rgba(201,163,255,.22);font-size:13px}',
             '#wp-rules-window .wpr-exc-line{display:flex;align-items:baseline;gap:8px;padding:2px 0;color:#e7dcff}',
             '#wp-rules-window .wpr-exc-line > span:first-child{flex:1 1 auto}',
-            '#wp-rules-window .wpr-exc-none{color:#8b979e}',
-            '#wp-rules-window .wpr-exc-add{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}',
-            '#wp-rules-window .wpr-exc-add input,#wp-rules-window .wpr-exc-add select{height:28px;box-sizing:border-box;background:rgba(255,255,255,0.08);color:#dfe4e6;border:1px solid rgba(143,255,213,0.32);border-radius:9px;padding:0 8px;font:inherit;font-size:12px}',
+            '#wp-rules-window .wpr-exc-none{color:#9aa6ad}',
+            '#wp-rules-window .wpr-exc-add{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}',
+            '#wp-rules-window .wpr-exc-add input,#wp-rules-window .wpr-exc-add select{height:30px;background:rgba(255,255,255,.07);color:#e8ecee;border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:0 12px;font:inherit;font-size:12.5px}',
             '#wp-rules-window .wpr-exc-add input{flex:1 1 130px;min-width:0}',
-            '#wp-rules-window .wpr-exc-add button{height:28px;padding:0 12px;border-radius:9px;border:1px solid rgba(143,255,213,0.45);background:rgba(143,255,213,0.12);color:#8fffd5;font:inherit;font-size:12px;font-weight:700;cursor:pointer}',
-            '#wp-rules-window .wpr-exc-msg{color:#ff8a80;font-size:12px;margin-top:4px}',
-            '#wp-rules-window .wpr-hint{color:#8b979e;margin-top:6px}'
+            '#wp-rules-window .wpr-exc-add button{height:30px;padding:0 14px;border-radius:999px;border:0;background:#8fffd5;color:#04261a;font:inherit;font-size:12.5px;font-weight:700;cursor:pointer}',
+            '#wp-rules-window .wpr-exc-msg{color:#ff9d94;font-size:12px;margin-top:4px}',
+            '#wp-rules-window .wpr-hint{color:#9aa6ad;font-size:12.5px;margin-top:8px}'
         ].join('\n');
         (document.head || document.documentElement).appendChild(style);
     }
@@ -24672,7 +24684,7 @@ async function wpTransferAssistantExtensionEnabled() {
             Object.assign(box.style, { width: '46px', padding: '1px 4px', borderRadius: '6px', border: '1px solid rgba(143,255,213,.35)', background: 'rgba(0,0,0,.35)', color: '#8fffd5', font: '12px Consolas, monospace', textAlign: 'right' });
             box.addEventListener('keydown', function(event) { if (event.key === 'Enter') box.blur(); });
             box.addEventListener('change', function() { box.value = wpAutoSuggestedHoursSet(box.value, 'settings') || ''; });
-            add('span', null, 'h', top);
+            add('span', 'wpr-hours-h', 'h', top);
         } });
         row(WP_RULE_EXCEPT_OF.heroes.name, 'Still unassigned at ' + hm(240) + ' (Booking.com) / 2 hours before its Final BC time (the city\'s other open transfers go in the same message) → sent to the city\'s heroes whose car type fits the booked car (no car type written = sent too), note "sent to heroes". Once per transfer.', { state: heroesOn, stateKey: 'wp_auto_heroes_v1', exceptOf: 'heroes' });
         row('Final BC time', 'Booking.com from ' + hm(180) + ' · others from ' + hm(NORMAL_FLASH_END + 10) + ' · drop-offs to an airport / port / station from ' + hm(NORMAL_FLASH_END + 10 + SPECIAL_NORMAL_SHIFT) + ' (your "Final BC at …" rules can change it, not later than 3:00 for Booking.com).', { exceptOf: 'finaltime' });
