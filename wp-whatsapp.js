@@ -515,9 +515,13 @@
     // chat to open. A dialog offering to open the chat is accepted; one
     // that only offers to JOIN is not (never joins a group by itself).
     // Returns the chat title, '' (did not open) or null (would need joining).
-    async function openedFromLink() {
-        const startedAt = Date.now();
+    // 1.7.371: allowJoin (group links only) — a dialog that only offers "Join"
+    // is joined by itself (once) and the chat is waited for, so the message
+    // still goes. "Request to join" (admin approval) is not pressed.
+    async function openedFromLink(allowJoin) {
+        let startedAt = Date.now();
         const clicked = new Set();
+        let joined = false;
         while (Date.now() - startedAt < 25000) {
             if (composer() && headerTitle()) return headerTitle().trim();
             const dialog = document.querySelector('[role="dialog"], [data-animate-modal-popup="true"]');
@@ -530,7 +534,13 @@
                     clicked.add(open);
                     clickEl(open);
                 } else if (buttons.some(function(button) { return /join/i.test(button.textContent || ''); }) || /join (this )?(group|chat)/i.test(dialog.textContent || '')) {
-                    return null;
+                    const join = allowJoin && !joined ? findClickable(dialog, /^join(?: (?:this )?(?:group|chat|community))?$/i) : null;
+                    if (!join) { if (!joined) return null; }
+                    else {
+                        joined = true;
+                        clickEl(join);
+                        startedAt = Date.now(); // joining takes a moment: the 25 s start again
+                    }
                 } else if (/invalid|expired|reset|revoked|couldn.t|can.t/i.test(dialog.textContent || '')) {
                     return '';
                 }
@@ -846,9 +856,9 @@
         const groups = (await getStore(GROUPS_KEY)) || {};
         let title = '';
         if (viaLink) {
-            const opened = await openedFromLink();
+            const opened = await openedFromLink(true);
             if (opened === null) {
-                report(job, false, 'the ' + job.city + ' link asks to JOIN the group — you are not in it, so nothing was sent');
+                report(job, false, 'the ' + job.city + ' link asks to JOIN the group and has no plain Join button (approval needed?) — nothing was sent');
                 return;
             }
             // The chat shown first can be another one (restored / clicked):
