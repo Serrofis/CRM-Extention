@@ -1434,6 +1434,21 @@ async function wpTransferAssistantExtensionEnabled() {
             max-width: 72px !important;
         }
 
+        /* 1.7.373: Price column = the CRM's TC and DC, one line */
+        th.wp-tcdc-cell,
+        td.wp-tcdc-cell {
+            text-align: center !important;
+            vertical-align: middle !important;
+            white-space: nowrap !important;
+            font-variant-numeric: tabular-nums;
+            padding-left: 4px !important;
+            padding-right: 4px !important;
+        }
+        td.wp-tcdc-cell .wp-tcdc-label {
+            opacity: 0.55;
+            font-size: 0.85em;
+        }
+
         /* Price column: real CRM price tags (+N%, dc = tc, -N TC). Two fit
          * side by side; a third wraps instead of spilling over. */
         th.wp-price-cell,
@@ -7388,6 +7403,7 @@ async function wpTransferAssistantExtensionEnabled() {
             cell.classList.contains('wp-pudo-cell') ||
             cell.classList.contains('wp-loc-cell') ||
             cell.classList.contains('wp-price-cell') ||
+            cell.classList.contains('wp-tcdc-cell') || // 1.7.373
             // 1.7.328: tick box + worked-on columns (Em Hailing)
             cell.classList.contains('wp-sel-cell') ||
             cell.classList.contains('wp-worked-cell')
@@ -10323,6 +10339,8 @@ async function wpTransferAssistantExtensionEnabled() {
             .replace(/(^|[\s(/])-\s*\d+\s*TC\b/gi, '$1 ')
             .replace(/\braised(?:\s+a\s+bit\s+more\s+to\s+save)?\b/gi, ' ');
         const tag = wpDetectTransferTag(withoutPrices);
+        // 1.7.373: no BC / HIGH VOL tags any more (such a note shows no tag)
+        if (tag && (tag.type === 'bc' || tag.type === 'high-vol')) return null;
         return tag && WP_PRICE_TAG_TYPES.indexOf(tag.type) < 0 ? tag : null;
     }
 
@@ -13532,7 +13550,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const tagCell = row.querySelector(':scope > td.wp-price-cell') || row.querySelector(':scope > td.wp-transfer-tags');
         // Performance (1.7.182): repainted for every row every 4 s; skipped
         // when the same tags are already there (in the same cell).
-        const signature = JSON.stringify([entry && entry.tags || [], entry ? String(entry.car || '') : '']);
+        const signature = JSON.stringify([entry && entry.tags || [], entry ? String(entry.car || '') : '', entry ? [entry.tc, entry.dc] : []]);
         const wanted = entry && entry.tags ? entry.tags.length : 0;
         const carNow = row.querySelector(':scope > td.wp-car-cell');
         // 1.7.296: minivan transfers that are not Booking.com / Airbnb are highlighted
@@ -13571,6 +13589,24 @@ async function wpTransferAssistantExtensionEnabled() {
                 tagCell.appendChild(badge);
             });
         }
+        // 1.7.373: "Price" column with the CRM's TC and DC
+        const tcdcCell = row.querySelector(':scope > td.wp-tcdc-cell');
+        if (tcdcCell) {
+            const num = function(value) { const n = Number(value); return value === null || value === undefined || value === '' || !Number.isFinite(n) ? '' : String(Math.round(n * 10) / 10); };
+            const tc = entry ? num(entry.tc) : '', dc = entry ? num(entry.dc) : '';
+            tcdcCell.replaceChildren();
+            if (tc || dc) {
+                [['TC', tc], ['DC', dc]].forEach(function(pair, i) {
+                    if (!pair[1]) return;
+                    const label = document.createElement('span');
+                    label.className = 'wp-tcdc-label';
+                    label.textContent = (i && tc ? ' ' : '') + pair[0] + ' ';
+                    tcdcCell.appendChild(label);
+                    tcdcCell.appendChild(document.createTextNode(pair[1]));
+                });
+                tcdcCell.title = 'TC ' + (tc || '?') + '€ · DC ' + (dc || '?') + '€ (CRM)';
+            } else tcdcCell.title = '';
+        }
         const carCell = row.querySelector(':scope > td.wp-car-cell');
         if (carCell) {
             const car = entry ? String(entry.car || '') : '';
@@ -13588,16 +13624,31 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!header) return;
             const tagsTh = header.querySelector(':scope > th.wp-transfer-tags');
             if (!tagsTh) return;
+            // 1.7.373: Tags | Price (TC / DC) | Raise (the old "Price" tags)
+            let tcTh = header.querySelector(':scope > th.wp-tcdc-cell');
+            if (!tcTh) {
+                tcTh = document.createElement('th');
+                tcTh.className = 'wp-tcdc-cell';
+                tcTh.textContent = 'Price';
+            }
+            if (tagsTh.nextElementSibling !== tcTh) tagsTh.insertAdjacentElement('afterend', tcTh);
             let th = header.querySelector(':scope > th.wp-price-cell');
             if (!th) {
                 th = document.createElement('th');
                 th.className = 'wp-price-cell';
-                th.textContent = 'Price';
             }
-            if (tagsTh.nextElementSibling !== th) tagsTh.insertAdjacentElement('afterend', th);
+            if (th.textContent !== 'Raise') th.textContent = 'Raise';
+            if (tcTh.nextElementSibling !== th) tcTh.insertAdjacentElement('afterend', th);
+            const tcIndex = Array.from(header.children).indexOf(tcTh);
             const index = Array.from(header.children).indexOf(th);
             rows.forEach(function(row) {
                 if (row === header || row.classList.contains('wp-rx-detail') || !row.querySelector(':scope > td')) return;
+                let tcTd = row.querySelector(':scope > td.wp-tcdc-cell');
+                if (!tcTd) {
+                    tcTd = document.createElement('td');
+                    tcTd.className = 'wp-tcdc-cell';
+                    delete row.dataset.wpCrmSig; // painted on the next pass
+                }
                 let td = row.querySelector(':scope > td.wp-price-cell');
                 if (!td) {
                     td = document.createElement('td');
@@ -13605,10 +13656,12 @@ async function wpTransferAssistantExtensionEnabled() {
                 }
                 const tagsTd = row.querySelector(':scope > td.wp-transfer-tags');
                 if (tagsTd) {
-                    if (tagsTd.nextElementSibling !== td) tagsTd.insertAdjacentElement('afterend', td);
-                } else if (row.children[index] !== td) {
-                    row.insertBefore(td, row.children[index] || null);
+                    if (tagsTd.nextElementSibling !== tcTd) tagsTd.insertAdjacentElement('afterend', tcTd);
+                } else if (row.children[tcIndex] !== tcTd) {
+                    row.insertBefore(tcTd, row.children[tcIndex] || null);
                 }
+                if (tcTd.nextElementSibling !== td) tcTd.insertAdjacentElement('afterend', td);
+                void index;
             });
         });
     }
@@ -13666,7 +13719,7 @@ async function wpTransferAssistantExtensionEnabled() {
             wpRowCrmBusy++;
             wpFetchTransferCrmDetails(path, true).then(function(data) {
                 const store = wpRowCrmLoad();
-                store[path] = { at: Date.now(), tags: wpCrmPriceTags(data), car: data && data.carType || '', seats: wpChildSeatCount(data && data.booking), seatsV: WP_SEATS_VERSION };
+                store[path] = { at: Date.now(), tags: wpCrmPriceTags(data), tc: data && data.prices ? data.prices.tc : null, dc: data && data.prices ? data.prices.dc : null, car: data && data.carType || '', seats: wpChildSeatCount(data && data.booking), seatsV: WP_SEATS_VERSION };
                 try { localStorage.setItem(WP_ROW_CRM_KEY, JSON.stringify(store)); } catch (_) {}
                 document.querySelectorAll('table.transfers > tbody > tr').forEach(function(row) {
                     if (row.dataset.wpCrmPath === path) wpRowCrmPaint(row);
@@ -26353,6 +26406,31 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         return wait;
     }
+    // 1.7.373: when each driver was last sent to suggested (by phone, kept 3 h)
+    var WP_SUG_ROT_KEY = 'wp_sug_rot_v1';
+    var WP_SUG_ROT_MS = 3 * 3600000;
+    function wpSugRotLoad() {
+        let map = {};
+        try { map = JSON.parse(localStorage.getItem(WP_SUG_ROT_KEY) || '{}') || {}; } catch (_) {}
+        const now = Date.now();
+        Object.keys(map).forEach(function(phone) { if (!(now - Number(map[phone]) < WP_SUG_ROT_MS)) delete map[phone]; });
+        return map;
+    }
+    function wpSugRotate(list) {
+        const map = wpSugRotLoad();
+        const key = function(person) { return String(person.phone || '').replace(/\D/g, ''); };
+        const fresh = list.filter(function(person) { return !map[key(person)]; });
+        const used = list.filter(function(person) { return map[key(person)]; })
+            .sort(function(a, b) { return Number(map[key(a)]) - Number(map[key(b)]); });
+        return fresh.concat(used);
+    }
+    function wpSugRotateMark(phones) {
+        const map = wpSugRotLoad();
+        const now = Date.now();
+        (phones || []).forEach(function(phone) { const k = String(phone || '').replace(/\D/g, ''); if (k) map[k] = now; });
+        try { localStorage.setItem(WP_SUG_ROT_KEY, JSON.stringify(map)); } catch (_) {}
+    }
+
     async function wpAutoSuggestedSweep(state, entries) {
         if (!wpAutoSuggestedOn() || wpHeroRunActive) return;
         const now = Date.now();
@@ -26395,7 +26473,10 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!wpHeroDetailsText(data, city)) continue;
             let list = [];
             try { list = await wpFetchSuggestedDrivers(item.path, true) || []; } catch (_) { continue; }
-            const fit = list.filter(function(person) { return person && person.phone; }).slice(0, 5);
+            // 1.7.373: rotation — drivers ghas sent to suggested in the last 3 h
+            // go to the back (longest ago first), so a city's other suggested
+            // drivers get the next ones instead of always the top 5.
+            const fit = wpSugRotate(list.filter(function(person) { return person && person.phone; })).slice(0, 5);
             if (!fit.length) {
                 // suggestions can come later: tried again in 15 minutes, said once
                 if (!state.sugNone[item.id]) wpDashLog('ghas: ' + item.label + ' (' + city + ') — no suggested drivers with WhatsApp yet, not sent to suggested (tries again)');
@@ -26439,6 +26520,7 @@ async function wpTransferAssistantExtensionEnabled() {
             return { name: entry.person.name, phone: entry.person.phone, car: entry.person.car, text: wpHeroGroupText(entry.list, city) };
         });
         const labels = going.map(function(one) { return one.item.label; }).join(' + ');
+        wpSugRotateMark(people.map(function(person) { return person.phone; }));
         wpSendToPeople(people, city, people[0].text, 'Suggested ' + city + ' ' + labels, 'Driver').catch(function() {});
     }
 
@@ -36506,7 +36588,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // loader, so the same transfer is not fetched again within 5 min.
         try {
             const rowStore = wpRowCrmLoad();
-            rowStore[key] = { at: Date.now(), tags: wpCrmPriceTags(data), car: data.carType || '', seats: wpChildSeatCount(data.booking), seatsV: WP_SEATS_VERSION };
+            rowStore[key] = { at: Date.now(), tags: wpCrmPriceTags(data), tc: data.prices ? data.prices.tc : null, dc: data.prices ? data.prices.dc : null, car: data.carType || '', seats: wpChildSeatCount(data.booking), seatsV: WP_SEATS_VERSION };
             localStorage.setItem(WP_ROW_CRM_KEY, JSON.stringify(rowStore));
         } catch (_) {}
         return data;
@@ -43523,7 +43605,7 @@ async function wpTransferAssistantExtensionEnabled() {
             });
             if (taskIndex < 0) return;
             const addedAfter = headers.filter(function(cell, index) {
-                return index > taskIndex && (cell.classList.contains('wp-transfer-tags') || cell.classList.contains('wp-price-cell'));
+                return index > taskIndex && (cell.classList.contains('wp-transfer-tags') || cell.classList.contains('wp-price-cell') || cell.classList.contains('wp-tcdc-cell'));
             }).length;
             const rows = allRows.filter(function(row) {
                 return row !== header && !row.classList.contains('wp-rx-detail') &&
