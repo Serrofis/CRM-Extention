@@ -18857,7 +18857,8 @@ async function wpTransferAssistantExtensionEnabled() {
             } else {
                 const countdown = document.getElementById('wp-refresh-countdown');
                 const match = countdown && String(countdown.textContent || '').match(/(\d+)/);
-                if (match) refreshText = match[1] + 's';
+                if (countdown && /after ghas/.test(countdown.textContent || '')) refreshText = 'after ghas check'; // 1.7.372
+                else if (match) refreshText = match[1] + 's';
                 else if (countdown) refreshText = 'now';
                 else if (wpOrderQuickActionOpen || wpAutoRefreshPausedByTransferOverview) refreshText = 'paused';
             }
@@ -21070,7 +21071,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const isDashboard = !wpIsTransferDetailPage();
             chrome.runtime.sendMessage({
                 type: 'WP_AUTO_REFRESH_SET',
-                enabled: Boolean(enabled) && isDashboard && !wpAutoRefreshPausedByTransferOverview && !wpOrderQuickActionOpen && !(wpDashBusyCount > 0),
+                enabled: Boolean(enabled) && isDashboard && !wpAutoRefreshPausedByTransferOverview && !wpOrderQuickActionOpen && !(wpDashBusyCount > 0) && !wpAutoTicking, // 1.7.372: never mid-round
                 intervalSeconds: wpGetAutoRefreshIntervalSeconds()
             });
         } catch (_) {}
@@ -21232,8 +21233,20 @@ async function wpTransferAssistantExtensionEnabled() {
                         countdown.textContent =
                             '↻ Refreshing…';
 
-                        wpAutoRefreshInterval =
-                            setTimeout(
+                        // 1.7.372: a ghas round no longer stops the countdown;
+                        // the reload waits here for the round to end (at most 5 min).
+                        const wpWaitForRound = function() {
+                            const roundAge = Date.now() - wpAutoTickStartedAt;
+                            if (wpAutoTicking && roundAge < 5 * 60000) {
+                                countdown.textContent = '↻ Refresh after ghas check (' + Math.round(roundAge / 1000) + 's)';
+                                wpAutoRefreshInterval = setTimeout(wpWaitForRound, 1000);
+                                return;
+                            }
+                            if (wpAutoTicking) { try { wpDashLog('ghas: the check round took over 5 min — refreshing anyway', 'warn'); } catch (_) {} }
+                            countdown.textContent = '↻ Refreshing…';
+                            wpAutoRefreshInterval = setTimeout(wpReloadNow, 100);
+                        };
+                        const wpReloadNow =
                                 function() {
 
                                     // Never reload a /transfers/<id>/null address (1.7.171).
@@ -21241,9 +21254,9 @@ async function wpTransferAssistantExtensionEnabled() {
                                     if (bad) window.location.replace(bad[1] + '/details_v3' + location.search);
                                     else window.location.reload();
 
-                                },
-                                100
-                            );
+                                };
+                        wpAutoRefreshInterval =
+                            setTimeout(wpWaitForRound, 100);
 
                         return;
 
@@ -28221,6 +28234,7 @@ async function wpTransferAssistantExtensionEnabled() {
     })();
     var wpAutoTicking = false;
     var wpAutoTickAgain = false;
+    var wpAutoTickStartedAt = 0; // 1.7.372
     var wpAutoStarted = false;
 
     function wpAutoMode() {
@@ -29019,7 +29033,12 @@ async function wpTransferAssistantExtensionEnabled() {
             wpAutoClaimLock();
         }
         wpAutoTicking = true;
-        wpDashSetBusy(true);
+        // 1.7.372: the round used to hold the auto-refresh (countdown gone,
+        // "held") for as long as it read; now the countdown keeps going and
+        // only the reload itself waits for the round. The background alarm
+        // is paused for the round so it can't reload in the middle.
+        wpAutoTickStartedAt = Date.now();
+        try { chrome.runtime.sendMessage({ type: 'WP_AUTO_REFRESH_SET', enabled: false }); } catch (_) {}
         try { wpDirectorCardStyles(); } catch (_) {}
         try {
             const state = wpAutoLoad();
@@ -29199,7 +29218,8 @@ async function wpTransferAssistantExtensionEnabled() {
             wpDashLog('🤖 ghas: tick error — ' + (error && error.message || error), 'error');
         } finally {
             wpAutoTicking = false;
-            wpDashSetBusy(false);
+            try { if (wpIsAutoRefreshEnabled() && (wpAutoRefreshCountdownInterval !== null || wpAutoRefreshInterval !== null)) wpSyncBackgroundAutoRefresh(true); } catch (_) {}
+            wpDashRefreshStatus();
             wpAutoRenderQueue();
             wpAutoAlert();
             if (wpAutoTickAgain) { wpAutoTickAgain = false; window.setTimeout(function() { wpAutoTick('again'); }, 200); }
