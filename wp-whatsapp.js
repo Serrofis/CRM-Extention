@@ -344,26 +344,87 @@
     // 1.7.296: "@all" at the start (Barcelona): typed by itself so WhatsApp
     // offers its "mention everyone" choice, which is clicked; when WhatsApp
     // offers none it stays as plain text "@all". Never presses Enter here.
+    // 1.7.377: "@" first, then "all", so WhatsApp's mention list opens and
+    // filters; the "everyone" entry is clicked, then Tab is tried (picks the
+    // highlighted entry; never Enter, which would send). A typed "@all" that
+    // is still plain text afterwards (not an admin) is selected and deleted.
+    function atAllPlainNode(box) {
+        const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            const holder = node.parentElement;
+            // a real mention is not ordinary editable text
+            if (holder && (holder.closest('[contenteditable="false"]') || /mention/i.test(String(holder.className || '') + ' ' + String((holder.parentElement || {}).className || '')))) continue;
+            const at = String(node.nodeValue || '').indexOf('@all');
+            if (at >= 0) return { node: node, at: at };
+        }
+        return null;
+    }
+    function atAllOption(box) {
+        const root = box.closest('footer') || document;
+        const scope = Array.from(document.querySelectorAll('[role="listbox"], [role="list"], [role="menu"], [data-animate-dropdown-item], ul'))
+            .filter(function(el) { return !el.closest('#side') && !el.closest('#main header') && el !== root && (el.offsetParent !== null || el.getClientRects().length); });
+        const pool = scope.length ? scope : [document];
+        let best = null;
+        pool.forEach(function(container) {
+            Array.from(container.querySelectorAll('[role="option"], [role="listitem"], [role="button"], [role="menuitem"], li, div[tabindex]'))
+                .filter(function(el) { return !el.closest('#side') && !el.closest('#main header') && !el.isContentEditable && (el.offsetParent !== null || el.getClientRects().length); })
+                .forEach(function(el) {
+                    const value = String(el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+                    if (!value || value.length > 60) return;
+                    if (!(/^@?(all|everyone)\b/i.test(value) || /(notify|mention) (everyone|all)/i.test(value) || /\beveryone\b/i.test(value))) return;
+                    if (!best || best.contains(el)) best = el; // the innermost match
+                });
+        });
+        return best;
+    }
     async function typeAtAll(box) {
         box.focus();
-        document.execCommand('insertText', false, '@all');
-        const option = await waitFor(function() {
-            return Array.from(document.querySelectorAll('[role="option"], [role="listitem"], [role="button"], li, div[tabindex]'))
-                .filter(function(el) { return !el.closest('#side') && !el.closest('#main header') && (el.offsetParent !== null || el.getClientRects().length); })
-                .find(function(el) {
-                    const value = String(el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-                    return value && value.length < 60 && (/^@?(all|everyone)\b/i.test(value) || /(notify|mention) (everyone|all)/i.test(value));
-                }) || null;
-        }, 2000);
+        document.execCommand('insertText', false, '@');
+        await sleep(250);
+        document.execCommand('insertText', false, 'all');
+        const option = await waitFor(function() { return atAllOption(box); }, 2500);
+        const typedNode = (atAllPlainNode(box) || {}).node || null;
+        // turned into a mention = the typed "@all" text is gone or replaced
+        const converted = function() {
+            const now = atAllPlainNode(box);
+            return !now || (typedNode && now.node !== typedNode && !box.contains(typedNode));
+        };
+        let done = false;
         if (option) {
             clickEl(option);
-            await sleep(300);
+            await sleep(400);
+            done = converted();
+            if (!done) {
+                box.focus();
+                ['keydown', 'keyup'].forEach(function(type) {
+                    box.dispatchEvent(new KeyboardEvent(type, { key: 'Tab', code: 'Tab', keyCode: 9, which: 9, bubbles: true, cancelable: true }));
+                });
+                await sleep(400);
+                done = converted();
+            }
+        }
+        const plain = done ? null : atAllPlainNode(box);
+        if (!plain) {
+            box.focus();
             // WhatsApp adds a space after a mention; one is added when it did not
             if (!/\s$/.test(String(box.textContent || '').replace(/\u00a0/g, ' '))) document.execCommand('insertText', false, ' ');
             return true;
         }
-        // 1.7.376: no "mention everyone" here (not an admin): the "@all" is taken out again
-        for (let i = 0; i < 4; i++) document.execCommand('delete');
+        // not turned into a mention (not an admin): the "@all" is taken out
+        try {
+            const range = document.createRange();
+            range.setStart(plain.node, plain.at);
+            range.setEnd(plain.node, Math.min(plain.node.nodeValue.length, plain.at + 4));
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            await sleep(150);
+            document.execCommand('delete');
+        } catch (_) {}
+        await sleep(150);
+        if (atAllPlainNode(box)) { box.focus(); document.execCommand('selectAll'); document.execCommand('delete'); }
+        box.focus();
         return false;
     }
     async function pasteAndSend(text) {
