@@ -1441,6 +1441,7 @@ async function wpTransferAssistantExtensionEnabled() {
             vertical-align: middle !important;
             white-space: nowrap !important;
             font-variant-numeric: tabular-nums;
+            min-width: 104px !important; /* 1.7.375: room for decimals */
             padding-left: 4px !important;
             padding-right: 4px !important;
         }
@@ -13597,7 +13598,14 @@ async function wpTransferAssistantExtensionEnabled() {
             tcdcCell.replaceChildren();
             if (tc || dc) {
                 // 1.7.374: "TC • DC" (e.g. 57 • 50), no labels
-                tcdcCell.textContent = (tc || '?') + ' \u2022 ' + (dc || '?');
+                tcdcCell.textContent = (tc || '?') + ' \u2022 ';
+                // 1.7.375: DC in the colour of the row's raise tag
+                const raiseTag = (entry && entry.tags || []).find(function(tag) { return tag && tag.type !== 'tc-minus'; });
+                const dcColour = raiseTag ? ({ 'dc-tc': '#74b8f4', '10': '#e0b92e', '20': '#ffb347', 'raised': '#f2d45f' })[raiseTag.type] : '';
+                const dcSpan = document.createElement('span');
+                dcSpan.textContent = dc || '?';
+                if (dcColour) { dcSpan.style.color = dcColour; dcSpan.style.fontWeight = '700'; }
+                tcdcCell.appendChild(dcSpan);
                 tcdcCell.title = 'TC ' + (tc || '?') + '€ · DC ' + (dc || '?') + '€ (CRM)';
             } else tcdcCell.title = '';
         }
@@ -13625,14 +13633,15 @@ async function wpTransferAssistantExtensionEnabled() {
                 tcTh.className = 'wp-tcdc-cell';
                 tcTh.textContent = 'Price';
             }
-            if (tagsTh.nextElementSibling !== tcTh) tagsTh.insertAdjacentElement('afterend', tcTh);
+            // 1.7.375: Price before Tags
+            if (tagsTh.previousElementSibling !== tcTh) tagsTh.insertAdjacentElement('beforebegin', tcTh);
             let th = header.querySelector(':scope > th.wp-price-cell');
             if (!th) {
                 th = document.createElement('th');
                 th.className = 'wp-price-cell';
             }
             if (th.textContent !== 'Raise') th.textContent = 'Raise';
-            if (tcTh.nextElementSibling !== th) tcTh.insertAdjacentElement('afterend', th);
+            if (tagsTh.nextElementSibling !== th) tagsTh.insertAdjacentElement('afterend', th);
             const tcIndex = Array.from(header.children).indexOf(tcTh);
             const index = Array.from(header.children).indexOf(th);
             rows.forEach(function(row) {
@@ -13650,11 +13659,12 @@ async function wpTransferAssistantExtensionEnabled() {
                 }
                 const tagsTd = row.querySelector(':scope > td.wp-transfer-tags');
                 if (tagsTd) {
-                    if (tagsTd.nextElementSibling !== tcTd) tagsTd.insertAdjacentElement('afterend', tcTd);
-                } else if (row.children[tcIndex] !== tcTd) {
-                    row.insertBefore(tcTd, row.children[tcIndex] || null);
+                    if (tagsTd.previousElementSibling !== tcTd) tagsTd.insertAdjacentElement('beforebegin', tcTd);
+                    if (tagsTd.nextElementSibling !== td) tagsTd.insertAdjacentElement('afterend', td);
+                } else {
+                    if (row.children[tcIndex] !== tcTd) row.insertBefore(tcTd, row.children[tcIndex] || null);
+                    if (row.children[index] !== td) row.insertBefore(td, row.children[index] || null);
                 }
-                if (tcTd.nextElementSibling !== td) tcTd.insertAdjacentElement('afterend', td);
                 void index;
             });
         });
