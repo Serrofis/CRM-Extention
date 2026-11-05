@@ -18343,7 +18343,9 @@ async function wpTransferAssistantExtensionEnabled() {
         try { wpDashSwitch('bkcancel', wpBookingCancelOn(), wpBookingCancelOn() ? 'Booking 2:02 · DO 1:10 · PU 0:40' : 'off — only warns'); } catch (_) {}
         try { wpDashSwitch('tickbox', wpTickBoxesOn(), wpTickBoxesOn() ? 'from the notes' : 'off'); } catch (_) {}
         try { wpDashSwitch('heroes', wpAutoHeroesOn(), wpAutoHeroesOn() ? '1 hour before Final BC, fitting car' : 'off'); } catch (_) {}
-        try { wpDashSwitch('suggested', wpAutoSuggestedOn(), wpAutoSuggestedOn() ? 'grouped per city' : 'off'); } catch (_) {}
+        try { wpDashSwitch('suggested', wpAutoSuggestedOn(), wpAutoSuggestedOn() ? 'grouped per city' + (wpAutoSuggestedHours() ? ' · up to ' + wpAutoSuggestedHours() + ' h ahead' : '') : 'off'); } catch (_) {}
+        // 1.7.369: the hours box shows the saved value (unless you are typing in it)
+        try { const box = document.querySelector('#wp-dash-controls .wpdt-hours'); if (box && document.activeElement !== box) box.value = wpAutoSuggestedHours() || ''; } catch (_) {}
         try { wpAutoSetButton(); } catch (_) {}
         try { wpAiSetButton(); } catch (_) {}
         try { wpRemoteSetButton(); } catch (_) {}
@@ -18403,6 +18405,27 @@ async function wpTransferAssistantExtensionEnabled() {
         if (runState) runState.textContent = 'every transfer again, Final BC first';
         document.body.appendChild(controls);
         ['mousedown', 'keydown', 'keyup'].forEach(function(type) { controls.addEventListener(type, function(event) { event.stopPropagation(); }); });
+        // 1.7.369: hours box next to Send to suggested — only transfers within that many hours of pickup (empty = no limit)
+        try {
+            const sugRow = controls.querySelector('.wpdt-row[data-sw="suggested"]');
+            const sugSwitch = sugRow && sugRow.querySelector('.wpdt-sw');
+            if (sugRow && sugSwitch && !sugRow.querySelector('.wpdt-hours')) {
+                const wrap = document.createElement('span');
+                wrap.title = 'Send to suggested only up to this many hours before pickup (empty = no limit)';
+                Object.assign(wrap.style, { display: 'inline-flex', alignItems: 'center', gap: '3px', color: '#8b979e', fontSize: '11.5px', flex: '0 0 auto' });
+                const box = document.createElement('input');
+                box.className = 'wpdt-hours';
+                box.type = 'number'; box.min = '0'; box.max = '72'; box.step = '0.5';
+                box.placeholder = '∞';
+                box.value = wpAutoSuggestedHours() || '';
+                Object.assign(box.style, { width: '46px', padding: '2px 4px', borderRadius: '6px', border: '1px solid rgba(143,255,213,.35)', background: 'rgba(0,0,0,.35)', color: '#8fffd5', font: '12px Consolas, monospace', textAlign: 'right' });
+                ['click', 'mousedown', 'keydown', 'keyup', 'keypress'].forEach(function(type) { box.addEventListener(type, function(event) { event.stopPropagation(); if (type === 'keydown' && event.key === 'Enter') box.blur(); }); });
+                box.addEventListener('change', function() { box.value = wpAutoSuggestedHoursSet(box.value) || ''; });
+                wrap.appendChild(box);
+                wrap.appendChild(document.createTextNode('h'));
+                sugRow.insertBefore(wrap, sugSwitch);
+            }
+        } catch (_) {}
         // A click anywhere else, or Escape, closes it.
         if (!window.__wpDashControlsWired) {
             window.__wpDashControlsWired = true;
@@ -20989,6 +21012,56 @@ async function wpTransferAssistantExtensionEnabled() {
 
         return value;
     }
+
+    // 1.7.369: auto-refresh watchdog (every 30 s). The refresh is held while a
+    // quickbar, the City Manager window, a ghas card, an expanded row or a
+    // WhatsApp hand-off is open. A hold whose thing is gone (a quickbar or the
+    // City Manager window removed without closing) is let go; a countdown that
+    // stopped with nothing holding it is started again; a hold of 20 min with
+    // nothing visibly busy is cleared. Each time the Terminal says so.
+    var wpRefreshHeldSince = 0;
+    var wpRefreshHeldSaid = false;
+    function wpAutoRefreshWatchdog() {
+        try {
+            if (window.top !== window || wpIsTransferDetailPage() || !wpIsAutoRefreshEnabled() || /[?&]wpAutoRefresh=off/.test(location.search)) { wpRefreshHeldSince = 0; return; }
+            if (wpOrderQuickActionOpen) {
+                const shown = Array.from(document.querySelectorAll('.wp-order-quick-popout, .wp-order-quick-actions')).some(function(bar) {
+                    return bar.isConnected && bar.style.display !== 'none' && bar.getClientRects().length > 0;
+                });
+                if (!shown) { wpDashLog('Auto-refresh: held by a quickbar that is no longer on screen — started again', 'warn'); wpSetOrderQuickActionOpen(false); }
+            }
+            if (wpAutoRefreshPausedByTransferOverview) {
+                const box = document.getElementById('wp-today-city-window');
+                if (!box || box.classList.contains('is-closed')) { wpDashLog('Auto-refresh: held by a City Manager window that is gone — started again', 'warn'); wpResumeAutoRefreshAfterTransferOverview(); }
+            }
+            const held = wpOrderQuickActionOpen || wpAutoRefreshPausedByTransferOverview || wpDashBusyCount > 0;
+            if (!held) {
+                wpRefreshHeldSince = 0;
+                wpRefreshHeldSaid = false;
+                if (wpAutoRefreshInterval === null && wpAutoRefreshCountdownInterval === null) {
+                    wpDashLog('Auto-refresh had stopped with nothing holding it — started again', 'warn');
+                    wpStartAutoRefresh();
+                }
+                return;
+            }
+            const now = Date.now();
+            if (!wpRefreshHeldSince) wpRefreshHeldSince = now;
+            const minutes = (now - wpRefreshHeldSince) / 60000;
+            const why = wpOrderQuickActionOpen ? 'a quickbar is open' : wpAutoRefreshPausedByTransferOverview ? 'the City Manager window is open' :
+                wpAutoPopupOpen ? 'a ghas card is waiting for your answer' : wpRxHoldingRefresh ? 'an expanded row is open' : 'busy (' + wpDashBusyCount + ')';
+            if (minutes >= 10 && !wpRefreshHeldSaid) { wpRefreshHeldSaid = true; wpDashLog('Auto-refresh paused for 10 min: ' + why, 'warn'); }
+            // nothing visibly busy for 20 min: a hold that was never released
+            const visiblyBusy = wpOrderQuickActionOpen || wpAutoRefreshPausedByTransferOverview || wpAutoPopupOpen || wpRxHoldingRefresh || wpCmdBusy || wpAutoTicking || wpCmAutoRunning || wpCmImagePending > 0;
+            if (minutes >= 20 && wpDashBusyCount > 0 && !visiblyBusy) {
+                wpDashLog('Auto-refresh: a hold was never let go (' + wpDashBusyCount + ') — cleared, refresh started again', 'warn');
+                wpRefreshHeldSince = 0;
+                wpRefreshHeldSaid = false;
+                wpDashBusyCount = 1;
+                wpDashSetBusy(false);
+            }
+        } catch (_) {}
+    }
+    try { window.setInterval(wpAutoRefreshWatchdog, 30000); } catch (_) {}
 
     function wpSyncBackgroundAutoRefresh(enabled) {
         try {
@@ -26198,6 +26271,21 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpAutoSuggestedOn() {
         try { return localStorage.getItem('wp_auto_suggested_v1') !== '0'; } catch (_) { return true; }
     }
+    // 1.7.369: only transfers within this many hours of pickup are sent to suggested (0 / empty = no limit).
+    const WP_SUG_HOURS_KEY = 'wp_auto_suggested_hours_v1';
+    function wpAutoSuggestedHours() {
+        let value = 0;
+        try { value = Number(localStorage.getItem(WP_SUG_HOURS_KEY) || 0); } catch (_) {}
+        return Number.isFinite(value) && value > 0 ? Math.min(72, value) : 0;
+    }
+    function wpAutoSuggestedHoursSet(value, by) {
+        const hours = Math.max(0, Math.min(72, Math.round((Number(value) || 0) * 2) / 2));
+        try { if (hours > 0) localStorage.setItem(WP_SUG_HOURS_KEY, String(hours)); else localStorage.removeItem(WP_SUG_HOURS_KEY); } catch (_) {}
+        wpDashLog('Send to suggested: ' + (hours > 0 ? 'only transfers up to ' + hours + ' h before pickup' : 'no hours limit') + (by ? ' (' + by + ')' : ''));
+        try { wpDashPaintSwitches(); } catch (_) {}
+        try { wpRemoteLastSig = ''; } catch (_) {}
+        return hours;
+    }
     function wpAutoSuggestedSent() {
         try {
             const map = JSON.parse(localStorage.getItem(WP_AUTO_SUGGESTED_SENT_KEY) || '{}') || {};
@@ -26257,6 +26345,7 @@ async function wpTransferAssistantExtensionEnabled() {
         state.sugTry = state.sugTry || {};
         state.sugNone = state.sugNone || {};
         Object.keys(state.sugTry).forEach(function(id) { if (now - Number(state.sugTry[id]) > 6 * 3600000) { delete state.sugTry[id]; delete state.sugNone[id]; } });
+        const maxHours = wpAutoSuggestedHours();
         const open = function(entry) {
             const item = entry.item, timing = entry.timing;
             if (!item || sent[item.id] || ['closed', 'inflight', 'approved', 'queued', 'gone', 'yours'].indexOf(item.status) >= 0) return false;
@@ -26264,6 +26353,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!item.city || !wpLooksLikeCityName(item.city)) return false;
             // 1.7.338: at Final BC time too — suggested comes first, then heroes, then Final BC
             if (!timing || !Number.isFinite(timing.tbo) || timing.tbo <= 0) return false;
+            if (maxHours > 0 && timing.tbo > maxHours * 60) return false; // 1.7.369
             const touched = wpUserTouchedAt(item.id);
             return !(touched && now - touched < 10 * 60000);
         };
@@ -31080,6 +31170,13 @@ async function wpTransferAssistantExtensionEnabled() {
                         wpDashLog('📱 Phone: WhatsApp auto-send ' + (on ? 'ON' : 'OFF'));
                     } else if (answer.item === 'full') {
                         if (on !== wpAutoFullOn()) wpAutoFullSet(on, 'from the phone');
+                    } else if (answer.item === 'sug') {
+                        // 1.7.369: Send to suggested on / off, and its hours limit, from the phone
+                        localStorage.setItem('wp_auto_suggested_v1', on ? '1' : '0');
+                        wpDashPaintSwitches();
+                        wpDashLog('📱 Phone: Send to suggested ' + (on ? 'ON' : 'OFF'));
+                    } else if (answer.item === 'sughours') {
+                        wpAutoSuggestedHoursSet(Number(answer.hours), 'from the phone');
                     } else if (answer.item === 'ai') {
                         const cfg = wpAiConfig();
                         if (on && !cfg.model) wpDashLog('📱 Phone: the local AI has no model chosen yet — set it up once on the PC (🧠 AI)', 'warn');
@@ -31136,6 +31233,7 @@ async function wpTransferAssistantExtensionEnabled() {
             wa: wpWhatsAppAutoSendOn(),
             ai: wpAiConfig().on,
             full: wpAutoFullOn(),
+            sug: wpAutoSuggestedOn(), sugHours: wpAutoSuggestedHours(), // 1.7.369
             // 1.7.245: which Em Hailing page this tab shows (the phone can change it)
             page: (function() { try { return new URLSearchParams(window.location.search).get('em_hailing_period') || 'today_tomorrow'; } catch (_) { return 'today_tomorrow'; } })(),
             // 1.7.352: City Manager auto: where it is, and the last word on a start / stop from the phone
