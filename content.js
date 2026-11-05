@@ -16635,7 +16635,7 @@ async function wpTransferAssistantExtensionEnabled() {
     async function wpWhatsAppQueue(target, text, name, image) {
         wpWhatsAppListen();
         const city = target.name;
-        text = wpWithAtAll(city, text);
+        // 1.7.378: "@all" is added where the message is built (wpBuildBroadcastWhatsAppText)
         const code = target.code || '';
         try {
             const response = await chrome.runtime.sendMessage({ type: 'WP_WA_SEND', city: city, text: text, label: name, code: code, image: image || '', expect: target.expect || [city] });
@@ -18401,7 +18401,7 @@ async function wpTransferAssistantExtensionEnabled() {
         try { wpDashSwitch('pnotify', wpPhoneNotifyOn(), wpPhoneNotifyOn() ? '' : 'off'); } catch (_) {}
         try { wpDashSwitch('bkcancel', wpBookingCancelOn(), wpBookingCancelOn() ? 'Booking 2:02 · DO 1:10 · PU 0:40' : 'off — only warns'); } catch (_) {}
         try { wpDashSwitch('tickbox', wpTickBoxesOn(), wpTickBoxesOn() ? 'from the notes' : 'off'); } catch (_) {}
-        try { wpDashSwitch('heroes', wpAutoHeroesOn(), wpAutoHeroesOn() ? '1 hour before Final BC, fitting car' : 'off'); } catch (_) {}
+        try { wpDashSwitch('heroes', wpAutoHeroesOn(), wpAutoHeroesOn() ? '2 hours before Final BC, fitting car' : 'off'); } catch (_) {}
         try { wpDashSwitch('suggested', wpAutoSuggestedOn(), wpAutoSuggestedOn() ? 'grouped per city' + (wpAutoSuggestedHours() ? ' · up to ' + wpAutoSuggestedHours() + ' h ahead' : '') : 'off'); } catch (_) {}
         // 1.7.369: the hours box shows the saved value (unless you are typing in it)
         try { const box = document.querySelector('#wp-dash-controls .wpdt-hours'); if (box && document.activeElement !== box) box.value = wpAutoSuggestedHours() || ''; } catch (_) {}
@@ -18423,7 +18423,7 @@ async function wpTransferAssistantExtensionEnabled() {
             '<div class="wpdt-head">' +
                 '<span class="wpdt-dot"></span>' +
                 '<span class="wpdt-title">Terminal</span>' +
-                '<span class="wpdt-ctl wpdt-tools-btn" data-act="tools" title="Open the controls: ghas, Full auto, WhatsApp auto-send, Local AI, Phone app, start again" style="margin-left:auto;font-size:11px">☰ Controls</span>' +
+                '<span class="wpdt-ctl wpdt-tools-btn" data-act="tools" title="ghas settings: switches, steps, rules, WhatsApp, phone — all in one window" style="margin-left:auto;font-size:11px">☰ Settings</span>' +
                 '<span class="wpdt-ctl" data-act="min" title="Minimise to the Terminal button" style="margin-left:10px">×</span>' +
             '</div>' +
             '<div class="wpdt-log"></div>' +
@@ -18518,7 +18518,8 @@ async function wpTransferAssistantExtensionEnabled() {
             event.preventDefault();
             event.stopPropagation();
             if (act === 'min') { wpDashToolsShow(panel, false); wpDashSetCollapsed(true); }
-            if (act === 'tools') wpDashToolsShow(panel, !wpDashToolsOpen());
+            // 1.7.378: Settings = the one settings window (switches, steps, rules, WhatsApp, phone)
+            if (act === 'tools') { wpDashToolsShow(panel, false); wpRulesWindow(false); }
             if (act === 'tools-close') wpDashToolsShow(panel, false);
             if (act === 'autopilot') wpAutoCycle();
             if (act === 'autopilot-restart') wpAutoRestart();
@@ -18574,7 +18575,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 const on = !wpAutoHeroesOn();
                 try { localStorage.setItem('wp_auto_heroes_v1', on ? '1' : '0'); } catch (_) {}
                 wpDashPaintSwitches();
-                wpDashLog('Send to heroes ' + (on ? 'ON — 1 hour before Final BC, a transfer still unassigned goes to the heroes with a fitting car, note "sent to heroes"' : 'OFF'));
+                wpDashLog('Send to heroes ' + (on ? 'ON — 2 hours before Final BC, a transfer still unassigned goes to the heroes with a fitting car, note "sent to heroes"' : 'OFF'));
             }
             if (act === 'suggested') {
                 const on = !wpAutoSuggestedOn();
@@ -19050,6 +19051,21 @@ async function wpTransferAssistantExtensionEnabled() {
     // 1.7.296: messages to the Barcelona group start with "@all" (everyone
     // in the group is notified). The message itself is left as it is.
     const WP_AT_ALL_CITIES = ['barcelona'];
+    // 1.7.378: when "@all" goes in front (setting in ghas Settings → WhatsApp):
+    // 'smart' (default) = more than one transfer or a Final BC message,
+    // 'always', 'off'.
+    var WP_AT_ALL_MODE_KEY = 'wp_at_all_mode_v1';
+    function wpAtAllMode() {
+        let value = '';
+        try { value = localStorage.getItem(WP_AT_ALL_MODE_KEY) || ''; } catch (_) {}
+        return ['smart', 'always', 'off'].indexOf(value) >= 0 ? value : 'smart';
+    }
+    function wpAtAllWanted(count, mode) {
+        const setting = wpAtAllMode();
+        if (setting === 'off') return false;
+        if (setting === 'always') return true;
+        return Number(count) > 1 || mode === 'final';
+    }
     function wpWithAtAll(city, text) {
         const value = String(text || '');
         // 1.7.376: every city group (WhatsApp keeps the mention only where you are an admin)
@@ -19060,6 +19076,7 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpBuildBroadcastWhatsAppText(mode, entries, introText, keepIntro) {
         const text = wpBuildBroadcastWhatsAppTextOnly(mode, entries, introText, keepIntro);
         const first = (entries || []).find(function(entry) { return entry && entry.city; });
+        if (!wpAtAllWanted((entries || []).length, mode)) return text; // 1.7.378
         return first ? wpWithAtAll(first.city, text) : text;
     }
     // keepIntro (1.7.356): a day of a split batch — its greeting even for one transfer
@@ -24394,7 +24411,7 @@ async function wpTransferAssistantExtensionEnabled() {
         acoff: { name: 'A/C off', off: 'A/C is never turned off here', modes: ['off'] },
         acon: { name: 'A/C back on', off: 'A/C is never turned back on here', modes: ['off'] },
         tickbox: { name: 'Wheelchair / bulky luggage', off: 'the boxes are never ticked here', modes: ['off'] },
-        heroes: { name: 'Send to heroes 1 hour before Final BC', off: 'never sent to the heroes by itself here', modes: ['off'] },
+        heroes: { name: 'Send to heroes 2 hours before Final BC', off: 'never sent to the heroes by itself here', modes: ['off'] },
         fullauto: { name: 'Full auto', off: 'Full auto leaves this city\'s cards for you', modes: ['off'] }
     };    function wpRuleExceptions(of) {
         return wpRulesLoad().filter(function(rule) { return rule && rule.kind === 'except' && rule.of === of; });
@@ -24475,6 +24492,10 @@ async function wpTransferAssistantExtensionEnabled() {
             ['mousedown', 'click', 'keydown'].forEach(function(type) { box.addEventListener(type, function(event) { event.stopPropagation(); }); });
             (document.body || document.documentElement).appendChild(box);
         }
+        // 1.7.378: one settings window — keeps its scroll place when it redraws
+        let keepScroll = 0;
+        try { keepScroll = (box.querySelector('.wpr-body') || {}).scrollTop || 0; } catch (_) {}
+        try { wpDashPaintSwitches(); } catch (_) {}
         box.textContent = '';
         const add = function(tag, cls, text, parent) {
             const node = document.createElement(tag);
@@ -24484,8 +24505,19 @@ async function wpTransferAssistantExtensionEnabled() {
             return node;
         };
         const hm = function(minutes) { const value = Math.max(0, Math.round(Number(minutes) || 0)); return Math.floor(value / 60) + ':' + String(value % 60).padStart(2, '0'); };
+        // 1.7.378: the Controls switches, shown and switched here (the same actions as before)
+        const control = function(act) {
+            const row = document.querySelector('#wp-dash-controls .wpdt-row[data-act="' + act + '"]');
+            const knob = row && row.querySelector('.wpdt-sw');
+            return { on: Boolean(knob && (knob.classList.contains('is-on') || knob.classList.contains('is-warn'))), text: row ? String((row.querySelector('.wpdt-state') || {}).textContent || '') : '' };
+        };
+        const runAct = function(act) {
+            const node = document.querySelector('#wp-dash-controls [data-act="' + act + '"]');
+            if (node) node.click();
+            window.setTimeout(function() { try { wpDashPaintSwitches(); } catch (_) {} if (document.getElementById('wp-rules-window')) wpRulesWindow(true); }, 250);
+        };
         const head = add('div', 'wpr-head');
-        add('span', 'wpr-title', 'Rules ghas runs', head);
+        add('span', 'wpr-title', 'ghas settings', head);
         const close = add('span', 'wpr-x', '×', head);
         close.addEventListener('click', function() { box.remove(); });
         const body = add('div', 'wpr-body');
@@ -24515,6 +24547,20 @@ async function wpTransferAssistantExtensionEnabled() {
                 const link = add('span', 'wpr-link', 'Exceptions' + (count ? ' (' + count + ')' : ''), top);
                 link.addEventListener('click', function() { wpRulesWindowOpenExc[opts.exceptOf] = !wpRulesWindowOpenExc[opts.exceptOf]; wpRulesWindow(true); });
             }
+            // 1.7.378: a Controls switch (opts.toggle = its data-act)
+            if (opts.toggle) {
+                const now = control(opts.toggle);
+                const sw = add('span', 'wpr-state ' + (now.on ? 'is-on' : 'is-off'), now.on ? 'ON' : 'OFF', top);
+                sw.style.cursor = 'pointer';
+                sw.title = now.on ? 'Switch off' : 'Switch on';
+                sw.addEventListener('click', function() { runAct(opts.toggle); });
+                if (now.text && !what) what = now.text;
+            }
+            if (opts.extra) { try { opts.extra(top); } catch (_) {} }
+            (opts.buttons || []).forEach(function(pair) {
+                const link = add('span', 'wpr-link', pair[0], top);
+                link.addEventListener('click', function() { if (typeof pair[1] === 'function') pair[1](); else runAct(pair[1]); });
+            });
             // 1.7.368: the rule itself on / off
             if (opts.onoff) {
                 const isOn = Boolean(opts.onoff.on);
@@ -24612,9 +24658,29 @@ async function wpTransferAssistantExtensionEnabled() {
         try { heroesOn = wpAutoHeroesOn(); } catch (_) {}
         try { full = wpAutoFullOn(); } catch (_) {}
 
-        group('Above every other rule');
+        // 1.7.378: everything in one place, in the order ghas works
+        group('ghas');
+        row('ghas', 'Watches Em Hailing - Today; its suggestions pop up.', { toggle: 'autopilot', buttons: [['Start again', 'autopilot-restart'], ['Queue', 'queue'], ['History', 'history'], ['Comments', 'comments']] });
+        row('Full auto', 'Answers its own suggestions, silently (no card, no sound, nothing to the phone); written in the Terminal and the history.', { state: full, stateKey: 'full', exceptOf: 'fullauto' });
+
+        group('Steps, in order');
+        row('Send to suggested', 'Top 5 suggested drivers (rotating), grouped per city; note "sent to suggested". Box: only up to that many hours before pickup (empty = no limit).', { toggle: 'suggested', extra: function(top) {
+            const box = add('input', 'wpr-hours', null, top);
+            box.type = 'number'; box.min = '0'; box.max = '72'; box.step = '0.5'; box.placeholder = '∞';
+            box.title = 'Only up to this many hours before pickup (empty = no limit)';
+            box.value = wpAutoSuggestedHours() || '';
+            Object.assign(box.style, { width: '46px', padding: '1px 4px', borderRadius: '6px', border: '1px solid rgba(143,255,213,.35)', background: 'rgba(0,0,0,.35)', color: '#8fffd5', font: '12px Consolas, monospace', textAlign: 'right' });
+            box.addEventListener('keydown', function(event) { if (event.key === 'Enter') box.blur(); });
+            box.addEventListener('change', function() { box.value = wpAutoSuggestedHoursSet(box.value, 'settings') || ''; });
+            add('span', null, 'h', top);
+        } });
+        row(WP_RULE_EXCEPT_OF.heroes.name, 'Still unassigned at ' + hm(240) + ' (Booking.com) / 2 hours before its Final BC time (the city\'s other open transfers go in the same message) → sent to the city\'s heroes whose car type fits the booked car (no car type written = sent too), note "sent to heroes". Once per transfer.', { state: heroesOn, stateKey: 'wp_auto_heroes_v1', exceptOf: 'heroes' });
+        row('Final BC time', 'Booking.com from ' + hm(180) + ' · others from ' + hm(NORMAL_FLASH_END + 10) + ' · drop-offs to an airport / port / station from ' + hm(NORMAL_FLASH_END + 10 + SPECIAL_NORMAL_SHIFT) + ' (your "Final BC at …" rules can change it, not later than 3:00 for Booking.com).', { exceptOf: 'finaltime' });
         row('Booking.com is never left unassigned under 2:00 to pickup', 'Final BC from ' + hm(180) + ' at the latest, whatever another rule says.', { top: true, exceptOf: 'toprule', onoff: { on: wpRuleBuiltInOn('toprule'), set: function(on) { wpRuleBuiltInSet('toprule', on); } } });
         row('Auto-cancel "No Available driver"', 'Still unassigned at its limit → EM tag if missing, note "cancelled as NAD", Auto Cancel. Booking.com at 2:02 · drop-offs (to an airport / port / station) at 1:10 · pickups at 0:40. One that appears already under its limit (grey) keeps the existing late-arrival exception: cancelled at 1:00 if it appeared at 1:01–1:59, at 0:30 if it appeared under 1:00. Off: ghas only warns.', { top: true, state: autoCancel, stateKey: 'wp_booking_autocancel_v1', exceptOf: 'autocancel' });
+        row('A/C off', 'AutoCancel under 60 min, not at Final BC time, TBO not orange / red → AutoCancel off, on the A/C Off list. Ticked back on by someone → off the list, asked again.', { exceptOf: 'acoff', onoff: { on: wpRuleBuiltInOn('acoff'), set: function(on) { wpRuleBuiltInSet('acoff', on); } } });
+        row('A/C back on', '2 minutes after its timer on the A/C Off list ends, unless the TBO is orange / red.', { exceptOf: 'acon', onoff: { on: wpRuleBuiltInOn('acon'), set: function(on) { wpRuleBuiltInSet('acon', on); } } });
+        row('Wheelchair / bulky luggage', 'Named in the notes → the box is ticked and saved.', { state: tick, stateKey: 'wp_tick_boxes_v1', exceptOf: 'tickbox' });
 
         group('Raises');
         row('Booking.com +20%', 'Instead of the city\'s EM Project %; it wins over a city NO (a city where EM Project says never to raise stays a no). Every other transfer: the city\'s EM Project %.', { exceptOf: 'booking', onoff: { on: wpRuleBuiltInOn('booking'), set: function(on) { wpRuleBuiltInSet('booking', on); } }, gradual: { on: wpGradualBuiltIn('booking'), set: function(on) { wpGradualSetBuiltIn('booking', on); } } });
@@ -24626,17 +24692,20 @@ async function wpTransferAssistantExtensionEnabled() {
         row('What is already raised counts', 'The notes ("raised to +10% DC"…) and raises by hand in the price history: only the difference is raised.', { exceptOf: 'noted', onoff: { on: wpRuleBuiltInOn('noted'), set: function(on) { wpRuleBuiltInSet('noted', on); } } });
         row('Your raise after Final BC', 'Writes one note only: "raised a bit more to save" (ghas\'s own raises keep their notes).', { exceptOf: 'afterfinal', onoff: { on: wpRuleBuiltInOn('afterfinal'), set: function(on) { wpRuleBuiltInSet('afterfinal', on); } } });
 
-        group('Timing');
-        row(WP_RULE_EXCEPT_OF.heroes.name, 'Still unassigned at ' + hm(240) + ' (Booking.com) / 1 hour before its Final BC time → sent to the city\'s heroes whose car type fits the booked car (no car type written = sent too), note "sent to heroes". Once per transfer.', { state: heroesOn, stateKey: 'wp_auto_heroes_v1', exceptOf: 'heroes' });
-        row('Final BC time', 'Booking.com from ' + hm(180) + ' · others from ' + hm(NORMAL_FLASH_END + 10) + ' · drop-offs to an airport / port / station from ' + hm(NORMAL_FLASH_END + 10 + SPECIAL_NORMAL_SHIFT) + ' (your "Final BC at …" rules can change it, not later than 3:00 for Booking.com).', { exceptOf: 'finaltime' });
+        group('WhatsApp');
+        row('WhatsApp auto-send', 'BC / Final BC / Custom raise go through WhatsApp Web. OFF: copied, and the group opens.', { toggle: 'wa', buttons: [['Open panel', 'wapanel']] });
+        row('@all in city groups', 'Pings everyone where you are an admin. Smart = only a message with more than one transfer, or a Final BC.', { extra: function(top) {
+            const pick = add('select', 'wpr-pick', null, top);
+            [['smart', 'Smart'], ['always', 'Always'], ['off', 'Off']].forEach(function(pair) { const option = add('option', null, pair[1], pick); option.value = pair[0]; });
+            pick.value = wpAtAllMode();
+            Object.assign(pick.style, { background: 'rgba(0,0,0,.35)', color: '#8fffd5', border: '1px solid rgba(143,255,213,.35)', borderRadius: '6px', font: '12px Consolas, monospace', padding: '1px 4px' });
+            pick.addEventListener('change', function() { try { localStorage.setItem(WP_AT_ALL_MODE_KEY, pick.value); } catch (_) {} wpDashLog('@all in city groups: ' + pick.options[pick.selectedIndex].text); });
+        } });
 
-        group('A/C');
-        row('A/C off', 'AutoCancel under 60 min, not at Final BC time, TBO not orange / red → AutoCancel off, on the A/C Off list. Ticked back on by someone → off the list, asked again.', { exceptOf: 'acoff', onoff: { on: wpRuleBuiltInOn('acoff'), set: function(on) { wpRuleBuiltInSet('acoff', on); } } });
-        row('A/C back on', '2 minutes after its timer on the A/C Off list ends, unless the TBO is orange / red.', { exceptOf: 'acon', onoff: { on: wpRuleBuiltInOn('acon'), set: function(on) { wpRuleBuiltInSet('acon', on); } } });
-
-        group('Other');
-        row('Wheelchair / bulky luggage', 'Named in the notes → the box is ticked and saved.', { state: tick, stateKey: 'wp_tick_boxes_v1', exceptOf: 'tickbox' });
-        row('Full auto', 'Answers its own suggestions, silently (no card, no sound, nothing to the phone); written in the Terminal and the history.', { state: full, stateKey: 'full', exceptOf: 'fullauto' });
+        group('Phone and AI');
+        row('Phone app', 'Suggestions on your phone, answered with a tap.', { toggle: 'phone', buttons: [['Settings', 'phone-settings']] });
+        row('Phone notifications', 'A notification for each new suggestion.', { toggle: 'pnotify' });
+        row('Local AI', 'A model on this PC explains suggestions and reads the notes.', { toggle: 'ai', buttons: [['Settings', 'ai-settings']] });
 
         group('Your rules');
         const mine = wpRulesLoad().filter(function(rule) { return rule && rule.kind !== 'except' && rule.kind !== 'gradual'; });
@@ -24665,6 +24734,7 @@ async function wpTransferAssistantExtensionEnabled() {
             });
         });
         add('div', 'wpr-hint', 'Type a new rule in the Terminal; it shows up here.', body);
+        if (keepScroll) body.scrollTop = keepScroll; // 1.7.378
     }
 
     function wpRuleText(rule) {
@@ -26217,11 +26287,11 @@ async function wpTransferAssistantExtensionEnabled() {
             const item = one.item, data = one.data, extra = one.extra;
             if (!item || !data || !extra) return;
             const tbo = Number(extra.tbo), due = Number(extra.finalDue);
-            if (!Number.isFinite(tbo) || !Number.isFinite(due) || tbo > due + 60) return;
+            if (!Number.isFinite(tbo) || !Number.isFinite(due) || tbo > due + 120) return; // 1.7.378: 2 h
             if (sentMap[item.id]) return;
             if (wpRuleExceptionFor('heroes', item.city)) {
                 wpAutoHeroesMark(item.id, 'exception');
-                wpDashLog('ghas: ' + item.label + ' (' + item.city + ') — 1 hour before Final BC: not sent to heroes (your exception for ' + item.city + ')');
+                wpDashLog('ghas: ' + item.label + ' (' + item.city + ') — 2 hours before Final BC: not sent to heroes (your exception for ' + item.city + ')');
                 return;
             }
             const tasks = Array.isArray(data.tasks) ? data.tasks : [];
@@ -26249,7 +26319,7 @@ async function wpTransferAssistantExtensionEnabled() {
             }).filter(function(person) { return person.phone; });
             if (!fit.length) {
                 wpAutoHeroesMark(item.id, 'no hero');
-                wpDashLog('ghas: ' + item.label + ' (' + item.city + ') — 1 hour before Final BC: ' + (all.length ? 'no hero with a ' + (carType || 'matching car') + ' (' + all.length + ' hero' + (all.length === 1 ? '' : 'es') + ' in ' + item.city + ')' : 'no heroes in ' + item.city) + ' — not sent');
+                wpDashLog('ghas: ' + item.label + ' (' + item.city + ') — 2 hours before Final BC: ' + (all.length ? 'no hero with a ' + (carType || 'matching car') + ' (' + all.length + ' hero' + (all.length === 1 ? '' : 'es') + ' in ' + item.city + ')' : 'no heroes in ' + item.city) + ' — not sent');
                 return;
             }
             fit.forEach(function(person) {
@@ -26282,8 +26352,8 @@ async function wpTransferAssistantExtensionEnabled() {
                 }
             } catch (_) {}
             try { wpOutcomeTrack(item.path, { city: item.city, action: 'heroes' }); } catch (_) {}
-            wpDashLog('ghas: ' + item.label + ' (' + item.city + ') — ' + hm(one.extra.tbo) + ' to pickup, 1 hour before Final BC (' + hm(one.extra.finalDue) + ') → sent to ' + fit.length + ' hero' + (fit.length === 1 ? '' : 'es') + (carType ? ' for a ' + carType : '') + ': ' + fit.map(function(person) { return person.name; }).join(', ') + ' · note "sent to heroes"' + (going.length > 1 ? ' (together with ' + (going.length - 1) + ' more of ' + item.city + ')' : ''));
-            try { wpSuggestAdd({ id: item.id, label: item.label, city: item.city, partner: '', what: 'sent to ' + fit.length + ' hero' + (fit.length === 1 ? '' : 'es') + ' (1 hour before Final BC)', answer: 'Yes', by: 'ghas', final: false, result: 'done' }); } catch (_) {}
+            wpDashLog('ghas: ' + item.label + ' (' + item.city + ') — ' + hm(one.extra.tbo) + ' to pickup, 2 hours before Final BC (' + hm(one.extra.finalDue) + ') → sent to ' + fit.length + ' hero' + (fit.length === 1 ? '' : 'es') + (carType ? ' for a ' + carType : '') + ': ' + fit.map(function(person) { return person.name; }).join(', ') + ' · note "sent to heroes"' + (going.length > 1 ? ' (together with ' + (going.length - 1) + ' more of ' + item.city + ')' : ''));
+            try { wpSuggestAdd({ id: item.id, label: item.label, city: item.city, partner: '', what: 'sent to ' + fit.length + ' hero' + (fit.length === 1 ? '' : 'es') + ' (2 hours before Final BC)', answer: 'Yes', by: 'ghas', final: false, result: 'done' }); } catch (_) {}
         });
         const people = Object.keys(byPhone).map(function(phone) {
             const entry = byPhone[phone];
@@ -26312,15 +26382,17 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!item.city || !wpLooksLikeCityName(item.city)) return false;
             // 1.7.338: at Final BC time too, once it was sent to suggested
             if (!wpAutoSuggestedDone(state, item.id, '')) return false;
-            return Number.isFinite(timing.tbo) && Number.isFinite(timing.finalDue) && timing.tbo <= timing.finalDue + 60 + extraMinutes;
+            // 1.7.378: 2 hours before Final BC (was 1 hour)
+            return Number.isFinite(timing.tbo) && Number.isFinite(timing.finalDue) && timing.tbo <= timing.finalDue + 120 + extraMinutes;
         };
         const due = entries.filter(function(entry) { return dueWithin(entry, 0); }).sort(function(a, b) { return a.timing.tbo - b.timing.tbo; });
         const first = due[0];
         if (!first) return;
         const cityKey = wpNormalizeCityKey(first.item.city);
         const group = [first].concat(entries.filter(function(entry) {
-            return entry !== first && entry.item && wpNormalizeCityKey(entry.item.city) === cityKey && dueWithin(entry, 10);
-        }).sort(function(a, b) { return a.timing.tbo - b.timing.tbo; })).slice(0, 5);
+            // 1.7.378: all of the city's open transfers go in the same message (not only the next 10 min), so heroes get one message, not many
+            return entry !== first && entry.item && wpNormalizeCityKey(entry.item.city) === cityKey && dueWithin(entry, 24 * 60);
+        }).sort(function(a, b) { return a.timing.tbo - b.timing.tbo; })).slice(0, 8);
         const list = [];
         for (const entry of group) {
             state.heroTry[entry.item.id] = now;
@@ -26331,7 +26403,7 @@ async function wpTransferAssistantExtensionEnabled() {
             list.push({ row: entry.row, item: entry.item, data: data, extra: { tbo: entry.timing.tbo, finalDue: entry.timing.finalDue, finalMode: Boolean(entry.timing.finalMode) } });
         }
         // the ones read early (due within 10 min) count as due now
-        list.forEach(function(one) { if (one.extra.tbo > one.extra.finalDue + 60) one.extra.tbo = one.extra.finalDue + 60; });
+        list.forEach(function(one) { if (one.extra.tbo > one.extra.finalDue + 120) one.extra.tbo = one.extra.finalDue + 120; });
         if (list.length) wpAutoHeroesSendGroup(state, list);
     }
 
