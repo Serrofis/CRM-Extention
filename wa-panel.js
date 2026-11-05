@@ -15,7 +15,7 @@
     };
     // ---- tabs ----
     const tabs = {
-        wa: { frame: frame, view: document.getElementById('view-wa'), zoomKey: 'wp_wa_panel_zoom_v1', zoom: 0.8 }
+        wa: { frame: frame, view: document.getElementById('view-wa'), zoomKey: 'wp_wa_panel_zoom_v2', zoom: 0.6 } // 1.7.376: starts at 60% (new key, old 80% choice dropped)
     };
     Object.keys(tabs).forEach(function(name) {
         try { const saved = Number(localStorage.getItem(tabs[name].zoomKey)); if (saved >= 0.5 && saved <= 1) tabs[name].zoom = saved; } catch (_) {}

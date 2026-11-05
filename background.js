@@ -237,7 +237,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         sendResponse({ ok: true, jobId: job.id, opened: false });
                         return;
                     }
-                    chrome.tabs.create({ url: 'https://web.whatsapp.com/', active: false }, () => {
+                    chrome.tabs.create({ url: 'https://web.whatsapp.com/', active: false }, (tab) => {
+                        // 1.7.376: a WhatsApp tab ghas opens starts at 60% zoom
+                        try { if (tab && Number.isInteger(tab.id)) chrome.tabs.setZoomSettings(tab.id, { scope: 'per-tab' }, () => { void chrome.runtime.lastError; chrome.tabs.setZoom(tab.id, 0.6, () => void chrome.runtime.lastError); }); } catch (_) {}
                         sendResponse({ ok: !chrome.runtime.lastError, jobId: job.id, opened: true });
                     });
                 });

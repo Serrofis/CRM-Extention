@@ -362,7 +362,8 @@
             if (!/\s$/.test(String(box.textContent || '').replace(/\u00a0/g, ' '))) document.execCommand('insertText', false, ' ');
             return true;
         }
-        document.execCommand('insertText', false, ' ');
+        // 1.7.376: no "mention everyone" here (not an admin): the "@all" is taken out again
+        for (let i = 0; i < 4; i++) document.execCommand('delete');
         return false;
     }
     async function pasteAndSend(text) {
@@ -443,6 +444,12 @@
         const box = await waitFor(mediaCaptionBox, 5000);
         if (!box) return 'no caption box';
         box.focus();
+        // 1.7.376: "@all" in the caption too (mention picked, or taken out)
+        const atAll = String(text).match(/^@all[ \t]+/i);
+        if (atAll) {
+            await typeAtAll(box);
+            text = String(text).slice(atAll[0].length);
+        }
         const firstLine = norm(String(text).split('\n')[0]).slice(0, 24);
         const typed = function() { return norm((mediaCaptionBox() || {}).textContent || '').indexOf(firstLine) >= 0; };
         const data = new DataTransfer();
@@ -931,7 +938,8 @@
         title = openTitle;
         // 1.7.319: with an image, the text is its caption (one message).
         // "@all" groups keep text first (the mention needs the chat box).
-        if (job.image && !/^@all\b/i.test(String(job.text))) {
+        // 1.7.376: "@all" now goes in the caption as well
+        if (job.image) {
             progress(job, 'sending the image with the text');
             const result = {};
             const imageProblem = await sendImage(job.image, job.text, result);

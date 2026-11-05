@@ -10377,6 +10377,8 @@ async function wpTransferAssistantExtensionEnabled() {
             }
         } catch (_) {}
         const kept = wpLastNoteTagAll()[path];
+        // 1.7.376: BC / HIGH VOL remembered before 1.7.373 are not shown
+        if (kept && (kept.type === 'bc' || kept.type === 'high-vol')) return null;
         return kept && kept.type ? { type: String(kept.type), text: String(kept.text || kept.type) } : null;
     }
     function wpUpdateTransferTag(row, taskText) {
@@ -19050,7 +19052,9 @@ async function wpTransferAssistantExtensionEnabled() {
     const WP_AT_ALL_CITIES = ['barcelona'];
     function wpWithAtAll(city, text) {
         const value = String(text || '');
-        if (!value || WP_AT_ALL_CITIES.indexOf(wpNormalizeCityKey(city)) < 0 || /^@all\b/i.test(value)) return value;
+        // 1.7.376: every city group (WhatsApp keeps the mention only where you are an admin)
+        if (!value || !city || /^@all\b/i.test(value)) return value;
+        void WP_AT_ALL_CITIES;
         return '@all ' + value;
     }
     function wpBuildBroadcastWhatsAppText(mode, entries, introText, keepIntro) {
