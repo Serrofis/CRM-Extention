@@ -40,6 +40,9 @@
     const JOB_MAX_AGE = 55 * 1000;
     const DUPLICATE_WINDOW = 10 * 60 * 1000;
     const OPENING_KEY = 'wp_wa_opening_v1';
+    // 1.7.366: the person's job while their contact is saved: saving can close the
+    // chat or reload the page, and the job is already off the queue by then.
+    const RESUME_KEY = 'wp_wa_person_resume_v1';
     // Invite code -> the group's exact name, learned the first time the
     // group is opened from its link. Afterwards the group is opened by
     // name (no reload) and only used when the open chat's name matches
@@ -181,8 +184,33 @@
     }
     function composer() {
         return document.querySelector(
-            '#main footer div[contenteditable="true"][role="textbox"], #main footer div[contenteditable="true"]'
+            '#main footer div[contenteditable="true"][role="textbox"], #main footer div[contenteditable="true"], #main div[contenteditable="true"][role="textbox"], #main [data-lexical-editor="true"]'
         );
+    }
+    // 1.7.365: the chat box can be missing for a moment after the contact panel
+    // was used (the chat redraws, or the panel is still over it): waited for, and
+    // the panel closed. composerHint says what was on screen when it never came.
+    async function waitComposer() {
+        let box = await waitFor(composer, 4000);
+        if (box) return box;
+        closeSidePanel();
+        box = await waitFor(composer, 3000);
+        if (box) return box;
+        try {
+            const close = findClickable(document, /^(close|wds-ic-close.*)$/i);
+            if (close && !close.closest('#main footer') && !close.closest('#side')) clickEl(close);
+            [document.activeElement, document].forEach(function(target) {
+                if (target) target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+            });
+        } catch (_) {}
+        return waitFor(composer, 3000);
+    }
+    function composerHint() {
+        const main = document.querySelector('#main');
+        const footer = main && main.querySelector('footer');
+        const said = footer ? String(footer.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60) : '';
+        return ' (chat ' + (main ? 'open' : 'not open') + ', footer ' + (footer ? 'yes' : 'no') +
+            ', typing boxes ' + document.querySelectorAll('[contenteditable="true"]').length + (said ? ', footer says "' + said + '"' : '') + ')';
     }
     function sendButton() {
         const icon = document.querySelector(
@@ -338,8 +366,8 @@
         return false;
     }
     async function pasteAndSend(text) {
-        const box = composer();
-        if (!box) return 'no message box';
+        const box = await waitComposer();
+        if (!box) return 'no message box' + composerHint();
         box.focus();
         const atAll = String(text).match(/^@all[ \t]+/i);
         if (atAll) {
@@ -441,8 +469,8 @@
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         const file = new File([bytes], 'transfers.' + (match[1] === 'image/jpeg' ? 'jpg' : 'png'), { type: match[1] });
-        const box = composer();
-        if (!box) return 'no message box';
+        const box = await waitComposer();
+        if (!box) return 'no message box' + composerHint();
         box.focus();
         const data = new DataTransfer();
         data.items.add(file);
@@ -748,7 +776,11 @@
             let contactNote = '';
             if (/^[+\d\s().-]+$/.test(contactTitle)) {
                 // Not a saved contact: add them first, then send.
-                const addProblem = wantedName ? await addContact(first || wantedName, first ? last : '') : 'no name to save';
+                let addProblem = job.contactTried ? 'tried already' : 'no name to save';
+                if (wantedName && !job.contactTried) {
+                    try { await setStore(RESUME_KEY, { job: Object.assign({}, job, { contactTried: true }), at: Date.now() }); } catch (_) {}
+                    addProblem = await addContact(first || wantedName, first ? last : '');
+                }
                 if (addProblem) {
                     // 1.7.281: not waiting for you — the chat is this number, so the message still goes
                     if (job.contactOnly) { report(job, false, '+' + job.phone + ': could not save as "' + wantedName + '" (' + addProblem + ')'); return; }
@@ -758,7 +790,7 @@
                     contactTitle = headerTitle().trim();
                     progress(job, 'added "' + contactTitle + '" to your contacts');
                 }
-            } else if (first && norm(contactTitle) !== norm(wantedName)) {
+            } else if (first && !job.contactKeep && norm(contactTitle) !== norm(wantedName)) {
                 // Saved under another name: the same format for everyone
                 const failed = (await getStore(RENAME_FAILED_KEY)) || {};
                 const tail = String(job.phone).slice(-9);
@@ -778,11 +810,33 @@
                 }
             }
             if (job.contactOnly) { report(job, true, 'saved as "' + contactTitle + '"'); return; }
-            progress(job, 'chat with "' + contactTitle + '" open — typing and sending');
-            const personProblem = await pasteAndSend(job.text);
-            if (personProblem) {
-                report(job, false, personProblem + ' (chat "' + contactTitle + '")');
+            if (!(await waitComposer())) {
+                if (!job.reopened) {
+                    const again = Object.assign({}, job, { reopened: true, contactTried: true, createdAt: Date.now() });
+                    await setStore(JOBS_KEY, [again].concat((await getStore(JOBS_KEY)) || []));
+                    try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {}
+                    try { sessionStorage.setItem(OPENING_KEY, again.id); } catch (_) {}
+                    progress(job, 'no message box in "' + contactTitle + '" — opening the chat again');
+                    navigating = true;
+                    wpWaGo('https://web.whatsapp.com/send?phone=' + encodeURIComponent(job.phone));
+                    return;
+                }
+                report(job, false, 'no message box' + composerHint() + ' (chat "' + contactTitle + '", opened twice)');
                 return;
+            }
+            progress(job, 'chat with "' + contactTitle + '" open — typing and sending');
+            // 1.7.365: with a picture, the text is its caption (one message)
+            const personResult = {};
+            const personProblem = job.image ? await sendImage(job.image, job.text, personResult) : await pasteAndSend(job.text);
+            if (personProblem) {
+                report(job, false, (personResult.pressed ? 'send pressed but ' : '') + personProblem + ' (chat "' + contactTitle + '")');
+                return;
+            }
+            try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {}
+            // the picture is out but its caption did not take: the text goes after it
+            if (job.image && job.text && !personResult.captioned) {
+                const afterProblem = await pasteAndSend(job.text);
+                if (afterProblem) contactNote += ' (the picture went, the text did not: ' + afterProblem + ')';
             }
             sent[dupKey] = Date.now();
             await setStore(SENT_KEY, sent);
@@ -953,6 +1007,13 @@
                 return;
             }
             await sleep(800);
+            const resume = await getStore(RESUME_KEY);
+            if (resume) {
+                try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {}
+                if (resume.job && Date.now() - Number(resume.at) < 180000) {
+                    await setStore(JOBS_KEY, [Object.assign({}, resume.job, { createdAt: Date.now() })].concat((await getStore(JOBS_KEY)) || []));
+                }
+            }
             for (;;) {
                 if (navigating) return;
                 if (await panelTakesJobs()) return;
@@ -1018,6 +1079,7 @@
                 } catch (error) {
                     report(job, false, 'error: ' + (error && error.message || error));
                 }
+                if (!navigating) { try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {} }
                 // 5 s between messages.
                 await sleep(5000);
             }
@@ -1133,13 +1195,14 @@
         const setMute = function(on) {
             try { if (on) document.documentElement.setAttribute('data-wp-mute', '1'); else document.documentElement.removeAttribute('data-wp-mute'); } catch (_) {}
         };
+        setMute(true); // 1.7.355: silent from the start, until the stored choice is read
         getStore(MUTE_KEY).then(function(on) { setMute(Boolean(on)); }, function() {});
         chrome.storage.onChanged.addListener(function(changes, area) {
             if (area === 'local' && changes[MUTE_KEY]) setMute(Boolean(changes[MUTE_KEY].newValue));
         });
         const beat = function(ready) {
             try { chrome.storage.local.set({ [BOX_KEY]: { at: Date.now(), ready: Boolean(ready) } }); } catch (_) {}
-            say(ready ? 'logged in — mod sends from here' : 'not logged in — scan the QR code once (mod uses a WhatsApp tab meanwhile)');
+            say(ready ? 'logged in — ghas sends from here' : 'not logged in — scan the QR code once (ghas uses a WhatsApp tab meanwhile)');
         };
         (async function() {
             // a page that is still loading keeps the last "logged in" (a send's reload)

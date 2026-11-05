@@ -729,7 +729,7 @@
         if (!c.slack.length) return '<div class="note">Nothing on Slack about this city in the last 7 days.</div>';
         const hit = ghasCache[c.id];
         if (hit && hit.sig === ghasSig(c) && hit.text) return '<div>' + esc(hit.text).replace(/\n/g, '<br>') + '</div><div class="note">Local AI' + (hit.model ? ' (' + esc(hit.model) + ')' : '') + '.</div>';
-        return '<div>' + esc(ghasPlain(c)) + '</div>' + (hit && hit.busy ? '<div class="note">Asking the local AI...</div>' : '<div class="note">Plain summary. Turn on the local AI in mod on the CRM for a written one.</div>');
+        return '<div>' + esc(ghasPlain(c)) + '</div>' + (hit && hit.busy ? '<div class="note">Asking the local AI...</div>' : '<div class="note">Plain summary. Turn on the local AI in ghas on the CRM for a written one.</div>');
     }
     async function ghasAsk(c) {
         if (!c || !c.slack.length) return;
@@ -782,7 +782,7 @@
         });
         h += '<p class="note"><span style="color:var(--red)">Red rows</span>: fewer drivers (adjusted for acceptance) than unassigned jobs.</p></div>';
         h += '<div class="card"><h3>What to do</h3>';
-        if (!c.actions.length) h += '<div class="note">Nothing needed from what mod can see.</div>';
+        if (!c.actions.length) h += '<div class="note">Nothing needed from what ghas can see.</div>';
         c.actions.forEach((a) => {
             h += '<label class="act' + (done[a.key] ? ' done' : '') + '"><input type="checkbox" data-key="' + esc(a.key) + '"' + (done[a.key] ? ' checked' : '') + '><span><b>' + esc(a.text) + '</b><div class="w">' + esc(a.why) + '</div></span></label>';
         });
@@ -855,7 +855,7 @@
             h += '<tr class="city" data-city="' + esc(id) + '"><td><b>' + esc(names[id] || id) + '</b></td>' + months.map((mo) => { const x = g[id + '|' + mo]; return '<td>' + (x ? (x.un / x.n).toFixed(1) + ' &middot; ' + (x.gap / x.n).toFixed(1) + ' &middot; ' + x.short + ' &middot; ' + x.ev : '<span style="color:var(--faint)">&middot;</span>') + '</td>'; }).join('') + '</tr>';
         });
         h += '</tbody></table></div>';
-        if (!history.length) h = '<div class="card"><h2>Month</h2><p class="note">No history yet. mod saves one record per city and day from now on (the nightly read covers every city), so next month you can compare month against month.</p></div>';
+        if (!history.length) h = '<div class="card"><h2>Month</h2><p class="note">No history yet. ghas saves one record per city and day from now on (the nightly read covers every city), so next month you can compare month against month.</p></div>';
         $('main').innerHTML = h;
     }
 

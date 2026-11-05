@@ -86,7 +86,9 @@
         muteButton.textContent = on ? 'Muted' : 'Mute';
         muteButton.title = on ? 'WhatsApp is muted here — click for its sounds again' : 'Mute WhatsApp\'s sounds (this panel only)';
     };
-    chrome.storage.local.get(MUTE_KEY, function(stored) { paintMute(Boolean(stored && stored[MUTE_KEY])); });
+    // 1.7.355: the panel always starts muted (click Muted for the sounds)
+    chrome.storage.local.set({ [MUTE_KEY]: true });
+    paintMute(true);
     muteButton.addEventListener('click', function() {
         const on = !muteButton.classList.contains('on');
         chrome.storage.local.set({ [MUTE_KEY]: on });

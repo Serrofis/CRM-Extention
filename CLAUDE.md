@@ -1,16 +1,16 @@
-# mod — Welcome Pickups CRM extension (Chrome MV3)
+# ghas (was "mod") — Welcome Pickups CRM extension (Chrome MV3)
 
 ## Token budget (most important)
 The user has a tight budget. Keep replies short, read only the code you need (grep first, never whole files), and avoid re-reading. Tests: "quick" (default for small changes) = syntax check + one targeted stand-in; "full" only when asked or for auto-cancel / anything that sends messages.
 
 ## Basics
-- CRM: https://crm.welcomepickups.com. The assistant is called "mod" (lower case) in everything the user sees; code identifiers keep old names (wpDirector…, wp_director_*).
+- CRM: https://crm.welcomepickups.com. The assistant is called "ghas" (lower case; was "mod" until 1.7.327) in everything the user sees; code identifiers keep old names (wpDirector…, wp_director_*).
 - Files: content.js (~43k lines: main IIFE + a "transfer tab" IIFE driven by URL params; runs on /admin/transfers/* only), background.js, manifest.json, popup.html/js, wp-whatsapp.js (WhatsApp Web, also inside the side panel frame), wp-whatsapp-main.js (page world: leave-page guard + Mute), wa-panel.html/js (side panel: WhatsApp + Slack button), wp-hub.js, offscreen.js, wp-tours.js (tour pages + Confluence S-rides sync; was a Tampermonkey script). phone_relay/ (Cloudflare worker) only if the relay changes.
 - Keep the Tailscale support (ts.net in manifest, content.js, background.js).
 - Comments mark changes with the version ("// 1.7.296: …").
 
 ## Every build
-1. Bump "version" in manifest.json (name stays "mod").
+1. Bump "version" in manifest.json (name stays "ghas").
 2. Syntax-check every .js file on its own (new Function in a headless browser) with a negative control (apostrophes in template strings broke a build before).
 3. Zip the folder Welcome_Pickups_Transfer_Assistant_1_7_NNN, check the zip opens cleanly.
 4. On the user's PC: copy the zip to C:\Users\serr\Desktop\crm tool\ and extract it there. Before building, check "crm tool" for a newer version made elsewhere, diff against the previous one and merge. Headless Edge there must use --user-data-dir="%TEMP%\wpe1".
@@ -26,7 +26,7 @@ The user has a tight budget. Keep replies short, read only the code you need (gr
 ## Hard rules
 - CRM through a browser is read-only: never press Save, broadcast, cancel, "Perform Auto Cancellation", Hub confirm buttons or City Manager "Reset". Mask passenger data, close your tabs. Reading localStorage on a plain CRM page (e.g. /admin/dashboard) is fine.
 - WhatsApp: opening it in your own tab takes over the user's session ("Use here") — only if the user says so, and send nothing. The user's WhatsApp is WhatsApp Business.
-- Never send passenger or driver note text to the relay.
+- Never send passenger or driver note text to the relay — except the Comments cards (1.7.357, wpCommentPhone): the user chose on 2026-11-01 to have them, note text and translation included, on the phone.
 - WhatsApp messages containing 🆘 or 🚨 must not be altered.
 
 ## Current behaviour worth knowing
@@ -35,4 +35,6 @@ The user has a tight budget. Keep replies short, read only the code you need (gr
 - WhatsApp contacts: First name = hero name, Last name = "<City> <car type>". WhatsApp Business quirks: button text contains icon names (use innerText / aria-label); save = div role=button aria-label "Save contact" (never touch "Delete contact"); name boxes are Lexical (select text, wait ~250 ms, insertText); numbers in the contact panel are split across elements (read innerText).
 - A/C Off: never for a transfer with a Final BC note; before turning it off, all notes are re-read fresh.
 - Barcelona group messages start with "@all".
+- Send to all drivers (wp-tours.js, /admin/drivers lists): the live list has no phone column and /admin/drivers/<id> redirects to the dashboard; name, phone and city come from /admin/drivers/<id>/edit (read only). Plain fetch without the HTML Accept header gets "not authorized": use fetchDoc. Company drivers share phones.
+- 1.7.367: phone "Message all drivers of a city" (worker command type 'drivers' → content.js wpRemoteDrivers → background tab /admin/drivers?wp_send_all=<job>, wp-tours.js runPhoneDriversJob; max 300). Gradual switch per raise in the Rules window (wpGradualPct: full % − 5% per half hour left to Final BC). Group messages held up to 20 s per city (wpGroupHold, max 60 s): 2-4 one text, more than 4 the image.
 - Known, not fixed: on long lists (~135) re-checks for raises/BC can be hours late (6 read per round, nearest first).

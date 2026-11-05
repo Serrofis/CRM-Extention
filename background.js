@@ -164,7 +164,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'WP_TRANSFER_ASSISTANT_CLOSE_SELF') {
         const tab = sender && sender.tab;
         const url = String((tab && tab.url) || '');
-        if (!tab || !Number.isInteger(tab.id) || !url.startsWith('https://crm.welcomepickups.com/admin/transfers/')) {
+        // 1.7.367: also the drivers list tab of a phone "message all drivers" job
+        const driversJob = url.startsWith('https://crm.welcomepickups.com/admin/drivers?') && /[?&]wp_send_all=/.test(url);
+        if (!tab || !Number.isInteger(tab.id) || !(url.startsWith('https://crm.welcomepickups.com/admin/transfers/') || driversJob)) {
             sendResponse({ ok: false });
             return;
         }
@@ -194,7 +196,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const city = String(message.city || '');
         // 1.7.281: a hero's contact saved / renamed, no message
         const contactOnly = Boolean(message.contactOnly && /^\d{7,15}$/.test(String(message.phone || '')));
-        if ((!text && !contactOnly) || !city) {
+        // 1.7.365: a picture alone is a message too
+        if ((!text && !contactOnly && !/^data:image\/(png|jpeg);base64,/.test(String(message.image || ''))) || !city) {
             sendResponse({ ok: false, error: 'Missing city or text.' });
             return;
         }
@@ -210,6 +213,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             contactFirst: String(message.contactFirst || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80),
             contactLast: String(message.contactLast || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80),
             contactOnly: contactOnly,
+            contactKeep: Boolean(message.contactKeep), // 1.7.365: a saved contact keeps its name
             expect: Array.isArray(message.expect) ? message.expect.map(String).filter(Boolean).slice(0, 6).map((word) => word.slice(0, 40)) : [],
             fromTabId: sender && sender.tab ? sender.tab.id : null,
             createdAt: Date.now()
@@ -390,12 +394,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // question to the phone and the tapped answer back. Only a Cloudflare
     // Worker address (https://….workers.dev) or, since 1.7.268, a relay you host
     // yourself behind Tailscale Funnel (https://….ts.net, with an optional port),
+    // 1.7.344: also Evan's own domain (https://….eserris.com, e.g. wlcm.eserris.com).
     // and only these calls.
     if (message.type === 'WP_REMOTE') {
         const base = String(message.url || '').replace(/\/+$/, '');
         const path = String(message.path || '');
         const key = String(message.key || '');
-        if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net)(:\d{2,5})?$/.test(base) || ['/api/claim', '/api/pair-code', '/api/unpair', '/api/sync', '/api/settings'].indexOf(path) < 0 || !/^[A-Za-z0-9_-]{32,200}$/.test(key)) {
+        if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/.test(base) || ['/api/claim', '/api/pair-code', '/api/unpair', '/api/sync', '/api/settings'].indexOf(path) < 0 || !/^[A-Za-z0-9_-]{32,200}$/.test(key)) {
             sendResponse({ ok: false, error: 'the relay address or key is not valid' });
             return;
         }
@@ -565,9 +570,10 @@ async function wpHubSelect(rawIds, rawAction, options, senderTabId) {
     // One of the Hub bar's buttons, or '' for "select only".
     const action = ['ask', 'share', 'tag', 'note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change'].indexOf(String(rawAction || '')) >= 0 ? String(rawAction) : '';
     // auto (phone app): the Hub's dialog is filled in and confirmed there.
-    // Only for the actions with a plain dialog; never Ask / Share.
+    // Only for the actions with a plain dialog; never Share. 1.7.351: and Ask
+    // (only the City Manager chain asks for it: its last step before Enable Auto-C).
     let auto = null;
-    if (options.auto && ['note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change'].indexOf(action) >= 0) {
+    if (options.auto && ['note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change', 'ask'].indexOf(action) >= 0) {
         const price = options.auto.price && typeof options.auto.price === 'object' ? options.auto.price : null;
         auto = {
             note: String(options.auto.note || '').replace(/\s+/g, ' ').trim().slice(0, 280),
@@ -688,7 +694,7 @@ async function wpPlaySound(kind) {
             await chrome.offscreen.createDocument({
                 url: 'offscreen.html',
                 reasons: ['AUDIO_PLAYBACK'],
-                justification: 'mod / Autopilot alert sound'
+                justification: 'ghas / Autopilot alert sound'
             });
         }
     } catch (_) {}
