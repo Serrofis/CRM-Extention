@@ -13596,14 +13596,8 @@ async function wpTransferAssistantExtensionEnabled() {
             const tc = entry ? num(entry.tc) : '', dc = entry ? num(entry.dc) : '';
             tcdcCell.replaceChildren();
             if (tc || dc) {
-                [['TC', tc], ['DC', dc]].forEach(function(pair, i) {
-                    if (!pair[1]) return;
-                    const label = document.createElement('span');
-                    label.className = 'wp-tcdc-label';
-                    label.textContent = (i && tc ? ' ' : '') + pair[0] + ' ';
-                    tcdcCell.appendChild(label);
-                    tcdcCell.appendChild(document.createTextNode(pair[1]));
-                });
+                // 1.7.374: "TC • DC" (e.g. 57 • 50), no labels
+                tcdcCell.textContent = (tc || '?') + ' \u2022 ' + (dc || '?');
                 tcdcCell.title = 'TC ' + (tc || '?') + '€ · DC ' + (dc || '?') + '€ (CRM)';
             } else tcdcCell.title = '';
         }
