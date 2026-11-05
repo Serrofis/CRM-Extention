@@ -18412,7 +18412,8 @@ async function wpTransferAssistantExtensionEnabled() {
             if (sugRow && sugSwitch && !sugRow.querySelector('.wpdt-hours')) {
                 const wrap = document.createElement('span');
                 wrap.title = 'Send to suggested only up to this many hours before pickup (empty = no limit)';
-                Object.assign(wrap.style, { display: 'inline-flex', alignItems: 'center', gap: '3px', color: '#8b979e', fontSize: '11.5px', flex: '0 0 auto' });
+                // 1.7.370: the row's children ignore clicks (the whole row is the switch); this one must not
+                Object.assign(wrap.style, { pointerEvents: 'auto', cursor: 'text', display: 'inline-flex', alignItems: 'center', gap: '3px', color: '#8b979e', fontSize: '11.5px', flex: '0 0 auto' });
                 const box = document.createElement('input');
                 box.className = 'wpdt-hours';
                 box.type = 'number'; box.min = '0'; box.max = '72'; box.step = '0.5';
@@ -18420,6 +18421,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 box.value = wpAutoSuggestedHours() || '';
                 Object.assign(box.style, { width: '46px', padding: '2px 4px', borderRadius: '6px', border: '1px solid rgba(143,255,213,.35)', background: 'rgba(0,0,0,.35)', color: '#8fffd5', font: '12px Consolas, monospace', textAlign: 'right' });
                 ['click', 'mousedown', 'keydown', 'keyup', 'keypress'].forEach(function(type) { box.addEventListener(type, function(event) { event.stopPropagation(); if (type === 'keydown' && event.key === 'Enter') box.blur(); }); });
+                wrap.addEventListener('click', function(event) { event.stopPropagation(); box.focus(); });
                 box.addEventListener('change', function() { box.value = wpAutoSuggestedHoursSet(box.value) || ''; });
                 wrap.appendChild(box);
                 wrap.appendChild(document.createTextNode('h'));
