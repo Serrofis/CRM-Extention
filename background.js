@@ -409,6 +409,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
+    // 1.7.423: Open on a mention / direct-message card: the side panel, then that chat.
+    if (message.type === 'WP_WA_ALERT_OPEN') {
+        const title = String(message.title || '').slice(0, 80);
+        const windowId = sender && sender.tab && Number.isInteger(sender.tab.windowId) ? sender.tab.windowId : NaN;
+        const deliver = () => { if (title) wpWaDeliverToPanel({ type: 'WP_WA_OPEN_TITLE', title: title }); };
+        if (!chrome.sidePanel || !Number.isInteger(windowId)) { deliver(); sendResponse({ ok: false }); return; }
+        chrome.sidePanel.open({ windowId: windowId }).then(() => { deliver(); sendResponse({ ok: true }); }, () => { deliver(); sendResponse({ ok: false }); });
+        return true;
+    }
     // 1.7.282: open WhatsApp in Chrome's side panel (a click in the CRM / the popup).
     if (message.type === 'WP_WA_PANEL_OPEN') {
         const windowId = sender && sender.tab && Number.isInteger(sender.tab.windowId) ? sender.tab.windowId : Number(message.windowId);

@@ -1382,6 +1382,75 @@
         chrome.storage.onChanged.addListener(function(changes, area) {
             if (area === 'local' && changes[MUTE_KEY]) setMute(Boolean(changes[MUTE_KEY].newValue));
         });
+        // 1.7.423: what gets through the Mute: an @mention of you or a reply to
+        // you in a group (the "@" WhatsApp shows next to the unread count) and
+        // every direct chat. Read from the chat list only (nothing is opened, so
+        // nothing is marked read); a new one goes to wp_wa_alerts_v1, where the
+        // CRM shows a card (Open / ×) and the phone app shows it too. The chime
+        // plays only while the panel is muted (unmuted, WhatsApp plays its own).
+        // Only the chat's name and the kind are kept, never the message text.
+        const ALERTS_KEY = 'wp_wa_alerts_v1';
+        const alertSeen = new Map(); // chat → unread count last seen
+        let alertBase = 0;           // the first rounds only learn what is already unread
+        let alertMuted = true;
+        getStore(MUTE_KEY).then(function(on) { alertMuted = Boolean(on); }, function() {});
+        chrome.storage.onChanged.addListener(function(changes, area) {
+            if (area === 'local' && changes[MUTE_KEY]) alertMuted = Boolean(changes[MUTE_KEY].newValue);
+        });
+        const rowUnread = function(row) {
+            let count = 0;
+            row.querySelectorAll('[aria-label]').forEach(function(el) {
+                const m = String(el.getAttribute('aria-label') || '').match(/(\d+)\s+unread/i);
+                if (m) count = Math.max(count, Number(m[1]));
+            });
+            return count;
+        };
+        const rowMention = function(row) {
+            if (row.querySelector('[data-icon*="mention" i], [data-icon*="reply" i], [data-icon*="tagged" i]')) return true;
+            if (Array.from(row.querySelectorAll('[aria-label]')).some(function(el) { return /mention|tagged you|repl(y|ied) to you/i.test(el.getAttribute('aria-label') || ''); })) return true;
+            // the "@" pill: a leaf whose whole text is "@"
+            return Array.from(row.querySelectorAll('span, div')).some(function(el) { return !el.children.length && String(el.textContent || '').trim() === '@'; });
+        };
+        const rowGroup = function(row, title) {
+            if (row.querySelector('[data-icon*="group" i], [data-icon*="community" i]')) return true;
+            // a group's last-message line starts with the sender: "Maria: …" / "~ Maria: …"
+            const lines = Array.from(row.querySelectorAll('span[title], span[dir="auto"], span[dir="ltr"]'))
+                .map(function(el) { return String(el.getAttribute('title') || el.textContent || '').trim(); })
+                .filter(function(text) { return text && text !== title; });
+            return lines.some(function(text, i) {
+                const next = lines[i + 1] || '';
+                return /^~?\s?[^:]{1,40}:\s/.test(text) || (/^~?\s?[^:]{1,40}$/.test(text) && /^:\s?/.test(next));
+            }) || Boolean(Array.from(row.querySelectorAll('span')).some(function(el) { return !el.children.length && String(el.textContent || '') === ': '; }));
+        };
+        const alertScan = function() {
+            const pane = paneSide();
+            if (!pane) return;
+            const fresh = [];
+            chatRows().forEach(function(entry) {
+                if (!pane.contains(entry.row)) return;
+                const unread = rowUnread(entry.row);
+                const before = alertSeen.has(entry.title) ? alertSeen.get(entry.title) : 0;
+                alertSeen.set(entry.title, unread);
+                if (!unread || unread <= before || alertBase < 2) return;
+                const mention = rowMention(entry.row);
+                const direct = !mention && !rowGroup(entry.row, entry.title);
+                if (mention || direct) fresh.push({ title: entry.title.slice(0, 80), kind: mention ? 'mention' : 'direct', count: unread });
+            });
+            alertBase += 1;
+            if (!fresh.length) return;
+            getStore(ALERTS_KEY).then(function(list) {
+                const now = Date.now();
+                const keep = (Array.isArray(list) ? list : []).filter(function(a) { return a && now - Number(a.at) < 1800000; });
+                fresh.forEach(function(item) {
+                    const old = keep.find(function(a) { return a.title === item.title; });
+                    if (old) { old.count = item.count; old.at = now; if (item.kind === 'mention') old.kind = 'mention'; }
+                    else keep.unshift({ id: 'w' + now.toString(36) + Math.random().toString(36).slice(2, 6), title: item.title, kind: item.kind, count: item.count, at: now });
+                });
+                chrome.storage.local.set({ [ALERTS_KEY]: keep.slice(0, 8) });
+                if (alertMuted) { try { chrome.runtime.sendMessage({ type: 'WP_PLAY_SOUND', kind: 'found' }, function() { void chrome.runtime.lastError; }); } catch (_) {} }
+            }, function() {});
+        };
+        setInterval(alertScan, 2000);
         const beat = function(ready) {
             try { chrome.storage.local.set({ [BOX_KEY]: { at: Date.now(), ready: Boolean(ready) } }); } catch (_) {}
             say(ready ? 'logged in — wlcm sends from here' : 'not logged in — scan the QR code once (wlcm uses a WhatsApp tab meanwhile)');
@@ -1403,6 +1472,8 @@
             if (!msg) return;
             if (msg.type === 'WP_WA_RUN') runJobs();
             if (msg.type === 'WP_WA_SHOW' && /^[A-Za-z0-9]{10,40}$/.test(String(msg.code || ''))) showGroup(String(msg.code));
+            // 1.7.423: Open on a mention / direct-message card in the CRM
+            if (msg.type === 'WP_WA_OPEN_TITLE' && msg.title) { if (!running) { running = true; openChat(String(msg.title).slice(0, 80)).catch(function() {}).then(function() { running = false; runJobs(); }); } }
         });
     }
     runJobs();

@@ -30668,6 +30668,8 @@ async function wpTransferAssistantExtensionEnabled() {
                 else wpCommentMark(id, answer.op === 'done', 'phone');
                 return;
             }
+            // 1.7.423: a WhatsApp card closed (×) on the phone
+            if (answer.type === 'wa') { if (answer.op === 'close' && /^w[a-z0-9]{4,30}$/.test(String(answer.item || ''))) wpWaAlertsDrop(String(answer.item)); return; }
             // 1.7.367: "Message all drivers of a city" from the phone (or Stop)
             if (answer.type === 'drivers') { wpRemoteDrivers(answer).catch(function() {}); return; }
             if (answer.type === 'say') { wpDashLog('📱 Phone: instruction typed on the phone'); try { wpCmdRun(String(answer.text || '')); } catch (_) {} return; }
@@ -30804,13 +30806,16 @@ async function wpTransferAssistantExtensionEnabled() {
         const commentsOut = wpCommentPhone();
         const commentsSig = JSON.stringify(commentsOut);
         const sendComments = (commentsSig !== wpCommentPhoneSig && now - wpCommentPhonePut > 5000) || now - wpCommentPhonePut > 300000;
+        // 1.7.423: WhatsApp mention / direct-message cards for the phone app
+        const waSig = JSON.stringify(wpWaAlertsPhone || []);
+        const sendWa = waSig !== wpWaAlertsPhoneSig;
         // How often the relay is asked for taps (1.7.217): every loop while
         // the phone app is open (the relay says so), every 6 s otherwise —
         // it used to be every 15 s when no suggestion was waiting, so a tap
         // on a city or a transfer could sit there that long.
         const phoneActive = now < wpRemotePhoneUntil;
         const poll = now - wpRemoteLastCall >= 6000;
-        if (!question && !queue.length && !changed && !beat && !sendList && !detail && !cm && !sendComments && !phoneActive && !poll) return;
+        if (!question && !queue.length && !changed && !beat && !sendList && !detail && !cm && !sendComments && !sendWa && !phoneActive && !poll) return;
         wpRemoteLastCall = now;
         wpRemoteBusy = true;
         try {
@@ -30819,7 +30824,8 @@ async function wpTransferAssistantExtensionEnabled() {
                 sendList ? { list: { rows: rows, cities: wpRemoteCmCities() } } : {},
                 detail ? { detail: detail } : {},
                 cm ? { cm: cm } : {},
-                sendComments ? { comments: commentsOut } : {}));
+                sendComments ? { comments: commentsOut } : {},
+                sendWa ? { wa: { alerts: wpWaAlertsPhone || [] } } : {}));
             if (result && result.ok && result.standby) {
                 // Your other PC got there first: it has the phone. Nothing of
                 // this PC is shown there, and no tap is taken from it.
@@ -30841,6 +30847,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 wpRemotePhoneUntil = Number.isFinite(result.phoneAge) && result.phoneAge !== null && result.phoneAge < 45000 ? Date.now() + 45000 - result.phoneAge : 0;
                 if (sendList) { wpRemoteListSig = listSig; wpRemoteListPut = now; }
                 if (sendComments) { wpCommentPhoneSig = commentsSig; wpCommentPhonePut = now; }
+                if (sendWa) wpWaAlertsPhoneSig = waSig;
                 if (detail && wpRemoteDetailOut === detail) wpRemoteDetailOut = null;
                 if (cm && wpRemoteCmOut === cm) wpRemoteCmOut = null;
                 wpRemoteFails = 0;
@@ -42655,6 +42662,80 @@ async function wpTransferAssistantExtensionEnabled() {
         document.body.appendChild(pill);
     };
     try { chrome.runtime.onMessage.addListener(function(message) { if (message && message.type === 'WP_WA_NEED_PANEL') wpWaPanelPrompt(); }); } catch (_) {}
+
+    // 1.7.423: a mention of you / reply to you in a group, or a direct message,
+    // seen in the muted WhatsApp panel (wp-whatsapp.js keeps wp_wa_alerts_v1):
+    // one card each, top right. Open = the side panel shows that chat; × = gone
+    // (on every CRM tab and the phone). Cards go by themselves after 30 min.
+    const WP_WA_ALERTS_KEY = 'wp_wa_alerts_v1';
+    var wpWaAlertsPhone = [];
+    var wpWaAlertsPhoneSig = ''; // 1.7.423: what the phone app last got
+    const wpWaAlertsDrop = function(id) {
+        try {
+            chrome.storage.local.get(WP_WA_ALERTS_KEY, function(stored) {
+                const list = Array.isArray(stored[WP_WA_ALERTS_KEY]) ? stored[WP_WA_ALERTS_KEY] : [];
+                chrome.storage.local.set({ [WP_WA_ALERTS_KEY]: list.filter(function(a) { return a && a.id !== id; }) });
+            });
+        } catch (_) {}
+    };
+    const wpWaAlertsPaint = function(list) {
+        const now = Date.now();
+        const alerts = (Array.isArray(list) ? list : []).filter(function(a) { return a && a.id && now - Number(a.at) < 1800000; }).slice(0, 5);
+        // for the phone app: name and kind only, never message text
+        wpWaAlertsPhone = alerts.map(function(a) { return { id: String(a.id), title: String(a.title || '').slice(0, 80), kind: a.kind === 'mention' ? 'mention' : 'direct', count: Number(a.count) || 0, at: Number(a.at) || 0 }; });
+        let box = document.getElementById('wp-wa-alerts');
+        if (!alerts.length) { if (box) box.remove(); return; }
+        if (!box) {
+            box = document.createElement('div');
+            box.id = 'wp-wa-alerts';
+            Object.assign(box.style, { position: 'fixed', right: '16px', top: '60px', zIndex: '2147483600', display: 'flex', flexDirection: 'column', gap: '8px', width: '300px' });
+            document.body.appendChild(box);
+        }
+        box.textContent = '';
+        alerts.forEach(function(a) {
+            const card = document.createElement('div');
+            Object.assign(card.style, { display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 10px 10px 14px', borderRadius: '14px', background: '#14181b', border: '1px solid ' + (a.kind === 'mention' ? '#8fffd5' : '#2fbf71'), color: '#e8f0ec', font: '13px "Segoe UI",system-ui,sans-serif', boxShadow: '0 12px 32px rgba(0,0,0,.55)' });
+            const text = document.createElement('div');
+            Object.assign(text.style, { flex: '1 1 auto', minWidth: '0' });
+            const head = document.createElement('div');
+            head.textContent = a.kind === 'mention' ? 'Mentioned or replied to' : 'Direct message';
+            Object.assign(head.style, { fontSize: '11px', color: a.kind === 'mention' ? '#8fffd5' : '#2fbf71', fontWeight: '600' });
+            const name = document.createElement('div');
+            name.textContent = String(a.title || '') + (Number(a.count) > 1 ? ' (' + Number(a.count) + ')' : '');
+            Object.assign(name.style, { fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
+            text.append(head, name);
+            const open = document.createElement('button');
+            open.type = 'button';
+            open.textContent = 'Open';
+            Object.assign(open.style, { border: '0', borderRadius: '999px', padding: '6px 14px', background: '#2fbf71', color: '#06210f', font: '600 13px "Segoe UI",system-ui,sans-serif', cursor: 'pointer' });
+            const close = document.createElement('button');
+            close.type = 'button';
+            close.textContent = '×';
+            close.title = 'Close';
+            Object.assign(close.style, { border: '0', borderRadius: '999px', padding: '2px 9px', background: '#2a3034', color: '#c9d3ce', font: '600 16px "Segoe UI",system-ui,sans-serif', cursor: 'pointer' });
+            open.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                try { chrome.runtime.sendMessage({ type: 'WP_WA_ALERT_OPEN', title: String(a.title || '') }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+                wpWaAlertsDrop(a.id);
+            });
+            close.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                wpWaAlertsDrop(a.id);
+            });
+            card.append(text, open, close);
+            box.appendChild(card);
+        });
+    };
+    try {
+        chrome.storage.local.get(WP_WA_ALERTS_KEY, function(stored) { wpWaAlertsPaint(stored[WP_WA_ALERTS_KEY]); });
+        chrome.storage.onChanged.addListener(function(changes, area) {
+            if (area === 'local' && changes[WP_WA_ALERTS_KEY]) wpWaAlertsPaint(changes[WP_WA_ALERTS_KEY].newValue);
+        });
+        // the 30-minute limit, also when nothing changes
+        setInterval(function() { chrome.storage.local.get(WP_WA_ALERTS_KEY, function(stored) { wpWaAlertsPaint(stored[WP_WA_ALERTS_KEY]); }); }, 60000);
+    } catch (_) {}
 
     // 1.7.387: of the column restyle (1.7.386) only these stay: the PICKUP / DROP-OFF pills and the Minivan cell.
     // 1.7.388: the pills are quieter: grey fill, dimmed colour, medium weight.
