@@ -1407,12 +1407,15 @@
         };
         const rowMention = function(row) {
             if (row.querySelector('[data-icon*="mention" i], [data-icon*="reply" i], [data-icon*="tagged" i]')) return true;
+            // 1.7.424 (seen on the live WhatsApp Web): icons are <svg><title>wds-ic-…</title>, no data-icon
+            if (Array.from(row.querySelectorAll('svg title')).some(function(t) { return /mention|at-?sign|(^|-)at$|reply|tagged/i.test(String(t.textContent || '')); })) return true;
             if (Array.from(row.querySelectorAll('[aria-label]')).some(function(el) { return /mention|tagged you|repl(y|ied) to you/i.test(el.getAttribute('aria-label') || ''); })) return true;
             // the "@" pill: a leaf whose whole text is "@"
             return Array.from(row.querySelectorAll('span, div')).some(function(el) { return !el.children.length && String(el.textContent || '').trim() === '@'; });
         };
         const rowGroup = function(row, title) {
             if (row.querySelector('[data-icon*="group" i], [data-icon*="community" i]')) return true;
+            if (Array.from(row.querySelectorAll('svg title')).some(function(t) { return /group|communit/i.test(String(t.textContent || '')); })) return true; // 1.7.424
             // a group's last-message line starts with the sender: "Maria: …" / "~ Maria: …"
             const lines = Array.from(row.querySelectorAll('span[title], span[dir="auto"], span[dir="ltr"]'))
                 .map(function(el) { return String(el.getAttribute('title') || el.textContent || '').trim(); })
@@ -1420,7 +1423,7 @@
             return lines.some(function(text, i) {
                 const next = lines[i + 1] || '';
                 return /^~?\s?[^:]{1,40}:\s/.test(text) || (/^~?\s?[^:]{1,40}$/.test(text) && /^:\s?/.test(next));
-            }) || Boolean(Array.from(row.querySelectorAll('span')).some(function(el) { return !el.children.length && String(el.textContent || '') === ': '; }));
+            }) || Boolean(Array.from(row.querySelectorAll('span')).some(function(el) { return !el.children.length && /^:\s*$/.test(String(el.textContent || '')); })); // 1.7.424: live: sender / ":" + spaces / text
         };
         const alertScan = function() {
             const pane = paneSide();
