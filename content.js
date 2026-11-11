@@ -25974,8 +25974,12 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpBookingBoxes(data) {
         const booking = data && data.booking;
         if (!booking) return [];
-        const text = wpBookingNotes(data).map(function(note) { return note.text; }).join(' \n ');
-        if (!text) return [];
+        // 1.7.426: partners now put empty form labels in the passenger note
+        // ("Bulky luggage:", "Baby stoller: Bulky luggage:"). The label itself
+        // is not bulky luggage: it is taken out and only what the passenger
+        // wrote after it counts.
+        const text = wpBookingNotes(data).map(function(note) { return note.text; }).join(' \n ').replace(/bulky\s+luggage\s*:/gi, ' ').replace(/wheel\s?-?chair\s*:/gi, ' ');
+        if (!text.trim()) return [];
         const found = [];
         ['wheelchair', 'bulky'].forEach(function(box) {
             if (booking[box] !== false) return;
@@ -44353,6 +44357,20 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (!entry.box.checked) { tickFail('the box "' + tickBoxNames[entry.name] + '" did not tick'); return; }
                 wpStep(tickBoxNames[entry.name] + ' ticked');
             }
+            // 1.7.426: an A/C Off done on this transfer while this tab sat in
+            // the background must not be undone by this Save: the AutoCancel
+            // box is set to what the CRM has now.
+            try {
+                const freshResponse = await fetch(location.pathname, { credentials: 'same-origin', cache: 'no-store' });
+                const freshDoc = freshResponse.ok ? new DOMParser().parseFromString(await freshResponse.text(), 'text/html') : null;
+                const freshAc = freshDoc && freshDoc.getElementById('transfer_autocancel_enabled');
+                const pageAc = document.getElementById('transfer_autocancel_enabled');
+                if (freshAc && pageAc && !pageAc.disabled && pageAc.checked !== freshAc.hasAttribute('checked')) {
+                    if (!freshAc.hasAttribute('checked')) { try { sessionStorage.setItem('wp_ac_off_intent_v1:' + location.pathname, '1'); } catch (_) {} }
+                    pageAc.click();
+                    wpStep('AutoCancel set to ' + (pageAc.checked ? 'ON' : 'OFF') + ' as the CRM has it now (kept as it is)');
+                }
+            } catch (_) {}
             await new Promise(function(resolve) { setTimeout(resolve, 200); });
             const saveButton = await waitFor(function() {
                 const button = findNativeSaveAndAutocheck();
