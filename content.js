@@ -42685,12 +42685,17 @@ async function wpTransferAssistantExtensionEnabled() {
         wpWaAlertsPhone = alerts.map(function(a) { return { id: String(a.id), title: String(a.title || '').slice(0, 80), kind: a.kind === 'mention' ? 'mention' : 'direct', count: Number(a.count) || 0, at: Number(a.at) || 0 }; });
         let box = document.getElementById('wp-wa-alerts');
         if (!alerts.length) { if (box) box.remove(); return; }
+        // 1.7.425: content.js starts before the page has a body (document_start): wait for it
+        if (!document.body) { document.addEventListener('DOMContentLoaded', function() { wpWaAlertsPaint(list); }, { once: true }); return; }
         if (!box) {
             box = document.createElement('div');
             box.id = 'wp-wa-alerts';
             Object.assign(box.style, { position: 'fixed', right: '16px', top: '60px', zIndex: '2147483600', display: 'flex', flexDirection: 'column', gap: '8px', width: '300px' });
             document.body.appendChild(box);
         }
+        const sig = JSON.stringify(alerts); // 1.7.425: unchanged → left as it is
+        if (box.getAttribute('data-sig') === sig) return;
+        box.setAttribute('data-sig', sig);
         box.textContent = '';
         alerts.forEach(function(a) {
             const card = document.createElement('div');
@@ -42733,8 +42738,9 @@ async function wpTransferAssistantExtensionEnabled() {
         chrome.storage.onChanged.addListener(function(changes, area) {
             if (area === 'local' && changes[WP_WA_ALERTS_KEY]) wpWaAlertsPaint(changes[WP_WA_ALERTS_KEY].newValue);
         });
-        // the 30-minute limit, also when nothing changes
-        setInterval(function() { chrome.storage.local.get(WP_WA_ALERTS_KEY, function(stored) { wpWaAlertsPaint(stored[WP_WA_ALERTS_KEY]); }); }, 60000);
+        // the 30-minute limit, also when nothing changes; 1.7.425: every 3 s, so cards
+        // the page removed (or never had a body for) come back within seconds
+        setInterval(function() { chrome.storage.local.get(WP_WA_ALERTS_KEY, function(stored) { wpWaAlertsPaint(stored[WP_WA_ALERTS_KEY]); }); }, 3000);
     } catch (_) {}
 
     // 1.7.387: of the column restyle (1.7.386) only these stay: the PICKUP / DROP-OFF pills and the Minivan cell.
