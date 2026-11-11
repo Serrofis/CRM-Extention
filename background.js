@@ -41,6 +41,44 @@ chrome.windows.onBoundsChanged.addListener((win) => {
 });function wpWaBoxReady(box) {
     return Boolean(box && box.ready && Date.now() - Number(box.at) < 60000);
 }
+// 1.7.386: WhatsApp opens in the side panel, never in a new tab. Chrome opens a panel
+// only right after a click, so it is asked at once (before anything async); when it
+// says no: a WhatsApp tab that is already open, else the tab that asked shows a
+// one-click "Open WhatsApp panel" (the job waits in the queue).
+function wpWaTryPanel(message, sender) {
+    try {
+        const windowId = sender && sender.tab && Number.isInteger(sender.tab.windowId) ? sender.tab.windowId : Number(message.windowId);
+        if (!chrome.sidePanel || !Number.isInteger(windowId)) return Promise.resolve(false);
+        return chrome.sidePanel.open({ windowId: windowId }).then(() => true, () => false);
+    } catch (_) { return Promise.resolve(false); }
+}
+function wpWaAskForPanel(sender) {
+    const tabId = sender && sender.tab && sender.tab.id;
+    if (Number.isInteger(tabId)) chrome.tabs.sendMessage(tabId, { type: 'WP_WA_NEED_PANEL' }, () => void chrome.runtime.lastError);
+}
+// A message for the panel once it is up (it needs a moment to load and log in).
+function wpWaDeliverToPanel(msg) {
+    const startedAt = Date.now();
+    const look = () => {
+        chrome.storage.local.get(WP_WA_BOX_KEY, (box) => {
+            if (wpWaBoxReady(box[WP_WA_BOX_KEY])) {
+                chrome.runtime.sendMessage({ type: 'WP_WA_PANEL', msg: msg }, () => void chrome.runtime.lastError);
+            } else if (Date.now() - startedAt < 45000) {
+                setTimeout(look, 1000);
+            }
+        });
+    };
+    look();
+}
+// Any WhatsApp link → the address WhatsApp Web uses.
+function wpWaWebUrl(url) {
+    const text = String(url || '');
+    const code = (text.match(/chat\.whatsapp\.com\/(?:invite\/)?([A-Za-z0-9]+)/) || [])[1];
+    if (code) return 'https://web.whatsapp.com/accept?code=' + code;
+    const phone = (text.match(/[?&]phone=\+?(\d+)/) || text.match(/wa\.me\/\+?(\d+)/) || [])[1];
+    if (/whatsapp\.com|wa\.me/.test(text) && phone) return 'https://web.whatsapp.com/send?phone=' + phone;
+    return /^https:\/\/web\.whatsapp\.com\//.test(text) ? text : '';
+}
 function wpWaPanelRules() {
     const action = {
         type: 'modifyHeaders',
@@ -77,11 +115,17 @@ function wpRefreshAlarmName(tabId) {
     return WP_REFRESH_ALARM_PREFIX + String(tabId);
 }
 
+// 1.7.419: the newest on/off of a tab wins. An "on" still being handled when an
+// "off" came in (a wlcm round ending just as you switched the refresh off) used to
+// set the timer again after the off, and the page kept reloading every minute.
+const wpRefreshSetVersion = {};
 async function wpSetBackgroundAutoRefresh(tabId, enabled, intervalSeconds) {
     if (!Number.isInteger(tabId)) return;
+    const version = (wpRefreshSetVersion[tabId] || 0) + 1;
+    wpRefreshSetVersion[tabId] = version;
     const alarmName = wpRefreshAlarmName(tabId);
     await chrome.alarms.clear(alarmName);
-    if (!enabled) return;
+    if (!enabled || wpRefreshSetVersion[tabId] !== version) return;
     const seconds = Number(intervalSeconds) === 60 ? 60 : 30;
     chrome.alarms.create(alarmName, { delayInMinutes: seconds / 60, periodInMinutes: seconds / 60 });
 }
@@ -97,6 +141,15 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
             await chrome.alarms.clear(alarm.name);
             return;
         }
+        // 1.7.419: the page decides: its refresh switched off (or held) = no reload, timer gone
+        const answer = await new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(null), 2500);
+            try {
+                chrome.tabs.sendMessage(tabId, { type: 'WP_AUTO_REFRESH_ASK' }, (reply) => { clearTimeout(timer); void chrome.runtime.lastError; resolve(reply || null); });
+            } catch (_) { clearTimeout(timer); resolve(null); }
+        });
+        if (answer && answer.enabled === false) { await chrome.alarms.clear(alarm.name); return; }
+        if (answer && answer.held) return;
         await chrome.tabs.reload(tabId);
     } catch (_) {
         await chrome.alarms.clear(alarm.name);
@@ -110,6 +163,41 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // Welcome Pickups Transfer Assistant - extension background service worker
 'use strict';
 
+// 1.7.386: open a chat or a group: the side panel; a WhatsApp tab only if one is already open.
+function wpWaOpenChat(target, sender, sendResponse) {
+    const panelTry = wpWaTryPanel({}, sender);
+    const url = target.url;
+    const code = (url.match(/[?&]code=([A-Za-z0-9]{10,40})/) || [])[1] || '';
+    const msg = code ? { type: 'WP_WA_SHOW', code: code, city: String(target.city || '').slice(0, 60) } : { type: 'WP_WA_GO', url: url };
+    chrome.storage.local.get(WP_WA_BOX_KEY, (box) => {
+        if (wpWaBoxReady(box[WP_WA_BOX_KEY])) {
+            chrome.runtime.sendMessage({ type: 'WP_WA_PANEL', msg: msg }, () => void chrome.runtime.lastError);
+            sendResponse({ ok: true, panel: true });
+            return;
+        }
+        panelTry.then((opened) => {
+            if (opened) {
+                wpWaDeliverToPanel(msg);
+                sendResponse({ ok: true, panel: true });
+                return;
+            }
+            chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (tabs) => {
+                const tab = tabs && tabs[0];
+                if (tab) {
+                    wpWaSendToTab(tab.id, msg, url);
+                    chrome.tabs.update(tab.id, { active: true }, () => void chrome.runtime.lastError);
+                    if (Number.isInteger(tab.windowId)) chrome.windows.update(tab.windowId, { focused: true }, () => void chrome.runtime.lastError);
+                    sendResponse({ ok: true });
+                    return;
+                }
+                // no tab is made: this waits for the click on "Open WhatsApp panel"
+                chrome.storage.local.set({ wp_wa_open_pending_v1: { msg: msg, at: Date.now() } }, () => void chrome.runtime.lastError);
+                wpWaAskForPanel(sender);
+                sendResponse({ ok: true, needPanel: true });
+            });
+        });
+    });
+}
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) return;
 
@@ -135,6 +223,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === 'WP_TRANSFER_ASSISTANT_OPEN_TAB') {
+        // 1.7.386: a WhatsApp address goes to the side panel, not a new tab
+        if (/^https?:\/\/(?:[a-z]+\.)?(?:whatsapp\.com|wa\.me)\//i.test(String(message.url || ''))) {
+            wpWaOpenChat({ url: wpWaWebUrl(message.url) || 'https://web.whatsapp.com/', city: '' }, sender, sendResponse);
+            return true;
+        }
         const createProperties = {
             url: message.url,
             active: message.options?.active === true
@@ -164,7 +257,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'WP_TRANSFER_ASSISTANT_CLOSE_SELF') {
         const tab = sender && sender.tab;
         const url = String((tab && tab.url) || '');
-        if (!tab || !Number.isInteger(tab.id) || !url.startsWith('https://crm.welcomepickups.com/admin/transfers/')) {
+        // 1.7.367: also the drivers list tab of a phone "message all drivers" job
+        const driversJob = url.startsWith('https://crm.welcomepickups.com/admin/drivers?') && /[?&]wp_send_all=/.test(url);
+        if (!tab || !Number.isInteger(tab.id) || !(url.startsWith('https://crm.welcomepickups.com/admin/transfers/') || driversJob)) {
             sendResponse({ ok: false });
             return;
         }
@@ -190,11 +285,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // WhatsApp Web auto-send: queue the job, make sure a WhatsApp Web tab
     // exists (opened in the background if needed) and nudge it.
     if (message.type === 'WP_WA_SEND') {
+        const panelTry = wpWaTryPanel(message, sender); // 1.7.386: at once, while the click still counts
         const text = String(message.text || '');
         const city = String(message.city || '');
         // 1.7.281: a hero's contact saved / renamed, no message
         const contactOnly = Boolean(message.contactOnly && /^\d{7,15}$/.test(String(message.phone || '')));
-        if ((!text && !contactOnly) || !city) {
+        // 1.7.365: a picture alone is a message too
+        if ((!text && !contactOnly && !/^data:image\/(png|jpeg);base64,/.test(String(message.image || ''))) || !city) {
             sendResponse({ ok: false, error: 'Missing city or text.' });
             return;
         }
@@ -210,6 +307,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             contactFirst: String(message.contactFirst || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80),
             contactLast: String(message.contactLast || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80),
             contactOnly: contactOnly,
+            contactKeep: Boolean(message.contactKeep), // 1.7.365: a saved contact keeps its name
             expect: Array.isArray(message.expect) ? message.expect.map(String).filter(Boolean).slice(0, 6).map((word) => word.slice(0, 40)) : [],
             fromTabId: sender && sender.tab ? sender.tab.id : null,
             createdAt: Date.now()
@@ -224,17 +322,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     sendResponse({ ok: true, jobId: job.id, opened: false, panel: true });
                     return;
                 }
-                chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (tabs) => {
-                    if (tabs && tabs.length) {
-                        const tabId = tabs[0].id;
-                        // A WhatsApp tab opened before the extension was
-                        // installed/reloaded gets both scripts added first.
-                        wpWaSendToTab(tabId, { type: 'WP_WA_RUN' }, '');
-                        sendResponse({ ok: true, jobId: job.id, opened: false });
-                        return;
-                    }
-                    chrome.tabs.create({ url: 'https://web.whatsapp.com/', active: false }, () => {
-                        sendResponse({ ok: !chrome.runtime.lastError, jobId: job.id, opened: true });
+                panelTry.then((opened) => {
+                    // the panel takes the waiting jobs as soon as it has loaded
+                    if (opened) { sendResponse({ ok: true, jobId: job.id, opened: false, panel: true }); return; }
+                    chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (tabs) => {
+                        if (tabs && tabs.length) {
+                            // A WhatsApp tab opened before the extension was
+                            // installed/reloaded gets both scripts added first.
+                            wpWaSendToTab(tabs[0].id, { type: 'WP_WA_RUN' }, '');
+                            sendResponse({ ok: true, jobId: job.id, opened: false });
+                            return;
+                        }
+                        wpWaAskForPanel(sender);
+                        sendResponse({ ok: true, jobId: job.id, opened: false, needPanel: true });
                     });
                 });
             });
@@ -254,37 +354,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Open a group in WhatsApp Web (existing tab if there is one) instead of
     // the chat.whatsapp.com invite link, which launches the desktop app.
     if (message.type === 'WP_WA_OPEN') {
-        const url = String(message.url || '');
-        if (!url.startsWith('https://web.whatsapp.com/')) {
+        const url = wpWaWebUrl(message.url);
+        if (!url) {
             sendResponse({ ok: false });
             return;
         }
-        const code = (url.match(/[?&]code=([A-Za-z0-9]{10,40})/) || [])[1] || '';
-        chrome.storage.local.get(WP_WA_BOX_KEY, (box) => {
-        // 1.7.282: open in the side panel's WhatsApp when it is there
-        if (wpWaBoxReady(box[WP_WA_BOX_KEY])) {
-            chrome.runtime.sendMessage({ type: 'WP_WA_PANEL', msg: code ? { type: 'WP_WA_SHOW', code: code, city: String(message.city || '').slice(0, 60) } : { type: 'WP_WA_GO', url: url } }, () => void chrome.runtime.lastError);
-            sendResponse({ ok: true, panel: true });
-            return;
-        }
-        chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (tabs) => {
-            const tab = tabs && tabs[0];
-            if (tab && code) {
-                // Group: the WhatsApp tab opens it by name (no reload) when it can.
-                wpWaSendToTab(tab.id, { type: 'WP_WA_SHOW', code: code, city: String(message.city || '').slice(0, 60) }, url);
-                chrome.tabs.update(tab.id, { active: true }, () => void chrome.runtime.lastError);
-                if (Number.isInteger(tab.windowId)) chrome.windows.update(tab.windowId, { focused: true }, () => void chrome.runtime.lastError);
-            } else if (tab) {
-                // The WhatsApp tab changes its own page (skips "Leave site?").
-                wpWaSendToTab(tab.id, { type: 'WP_WA_GO', url: url }, url);
-                chrome.tabs.update(tab.id, { active: true }, () => void chrome.runtime.lastError);
-                if (Number.isInteger(tab.windowId)) chrome.windows.update(tab.windowId, { focused: true }, () => void chrome.runtime.lastError);
-            } else {
-                chrome.tabs.create({ url: url, active: true }, () => void chrome.runtime.lastError);
-            }
-            sendResponse({ ok: true });
-        });
-        });
+        wpWaOpenChat({ url: url, city: String(message.city || '') }, sender, sendResponse);
         return true;
     }
 
@@ -338,64 +413,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'WP_WA_PANEL_OPEN') {
         const windowId = sender && sender.tab && Number.isInteger(sender.tab.windowId) ? sender.tab.windowId : Number(message.windowId);
         if (!chrome.sidePanel || !Number.isInteger(windowId)) { sendResponse({ ok: false, error: 'no side panel in this browser' }); return; }
-        chrome.sidePanel.open({ windowId: windowId }).then(() => sendResponse({ ok: true }), (error) => sendResponse({ ok: false, error: String(error && error.message || error) }));
+        chrome.sidePanel.open({ windowId: windowId }).then(() => {
+            sendResponse({ ok: true });
+            // 1.7.386: a chat that was waiting for the panel opens now
+            chrome.storage.local.get('wp_wa_open_pending_v1', (stored) => {
+                const pending = stored.wp_wa_open_pending_v1;
+                if (!pending) return;
+                chrome.storage.local.remove('wp_wa_open_pending_v1');
+                if (Date.now() - Number(pending.at) < 120000) wpWaDeliverToPanel(pending.msg);
+            });
+        }, (error) => sendResponse({ ok: false, error: String(error && error.message || error) }));
         return true;
     }
 
-    // Local AI reader (1.7.202): the model server on this PC only
-    // (localhost / 127.0.0.1) — never any other address.
-    if (message.type === 'WP_AI_MODELS' || message.type === 'WP_AI_ASK') {
-        const base = String(message.url || '').replace(/\/+$/, '');
-        if (!/^http:\/\/(localhost|127\.0\.0\.1)(:\d{2,5})?$/.test(base)) {
-            sendResponse({ ok: false, error: 'only a server on this PC is allowed (http://localhost:port)' });
-            return;
-        }
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), message.type === 'WP_AI_ASK' ? 45000 : 8000);
-        const startedAt = Date.now();
-        const request = message.type === 'WP_AI_MODELS'
-            ? fetch(base + '/v1/models', { signal: controller.signal })
-                .then((response) => response.ok ? response.json() : Promise.reject(new Error(response.status === 403 ? 'the model server refused the browser extension (HTTP 403) — Ollama needs OLLAMA_ORIGINS to allow chrome-extension://*' : 'HTTP ' + response.status)))
-                .then((json) => ({ ok: true, models: (json && json.data || []).map((item) => String(item.id || '')).filter(Boolean) }))
-            : (() => {
-                // reasoning_effort "none": no hidden thinking (a small model
-                // otherwise spends its whole answer on it and returns nothing).
-                const ask = (withEffort) => fetch(base + '/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    signal: controller.signal,
-                    body: JSON.stringify(Object.assign({
-                        model: String(message.model || ''),
-                        messages: Array.isArray(message.messages) ? message.messages.slice(0, 4) : [],
-                        temperature: 0,
-                        max_tokens: 500,
-                        stream: false
-                    }, withEffort ? { reasoning_effort: 'none' } : {}))
-                });
-                // A server that does not know the option (HTTP 400): once more without it.
-                return ask(true).then((response) => response.status === 400 ? ask(false) : response);
-            })()
-                .then((response) => response.ok ? response.json() : response.text().then((text) => Promise.reject(new Error(response.status === 403 ? 'the model server refused the browser extension (HTTP 403) — Ollama needs OLLAMA_ORIGINS to allow chrome-extension://*' : 'HTTP ' + response.status + ' ' + text.slice(0, 120)))))
-                .then((json) => {
-                    const choice = json && json.choices && json.choices[0];
-                    const text = choice && choice.message ? String(choice.message.content || '') : '';
-                    return text ? { ok: true, text: text, ms: Date.now() - startedAt } : { ok: false, error: 'empty answer' };
-                });
-        request
-            .catch((error) => ({ ok: false, error: error && error.name === 'AbortError' ? 'timed out' : String(error && error.message || error) }))
-            .then((result) => { clearTimeout(timer); sendResponse(result); });
-        return true;
-    }
     // Phone app (1.7.212): the relay that carries mod's open
     // question to the phone and the tapped answer back. Only a Cloudflare
     // Worker address (https://….workers.dev) or, since 1.7.268, a relay you host
     // yourself behind Tailscale Funnel (https://….ts.net, with an optional port),
+    // 1.7.344: also Evan's own domain (https://….eserris.com, e.g. wlcm.eserris.com).
     // and only these calls.
     if (message.type === 'WP_REMOTE') {
         const base = String(message.url || '').replace(/\/+$/, '');
         const path = String(message.path || '');
         const key = String(message.key || '');
-        if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net)(:\d{2,5})?$/.test(base) || ['/api/claim', '/api/pair-code', '/api/unpair', '/api/sync', '/api/settings'].indexOf(path) < 0 || !/^[A-Za-z0-9_-]{32,200}$/.test(key)) {
+        if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/.test(base) || ['/api/claim', '/api/pair-code', '/api/unpair', '/api/sync', '/api/settings'].indexOf(path) < 0 || !/^[A-Za-z0-9_-]{32,200}$/.test(key)) {
             sendResponse({ ok: false, error: 'the relay address or key is not valid' });
             return;
         }
@@ -565,9 +606,10 @@ async function wpHubSelect(rawIds, rawAction, options, senderTabId) {
     // One of the Hub bar's buttons, or '' for "select only".
     const action = ['ask', 'share', 'tag', 'note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change'].indexOf(String(rawAction || '')) >= 0 ? String(rawAction) : '';
     // auto (phone app): the Hub's dialog is filled in and confirmed there.
-    // Only for the actions with a plain dialog; never Ask / Share.
+    // Only for the actions with a plain dialog; never Share. 1.7.351: and Ask
+    // (only the City Manager chain asks for it: its last step before Enable Auto-C).
     let auto = null;
-    if (options.auto && ['note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change'].indexOf(action) >= 0) {
+    if (options.auto && ['note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change', 'ask'].indexOf(action) >= 0) {
         const price = options.auto.price && typeof options.auto.price === 'object' ? options.auto.price : null;
         auto = {
             note: String(options.auto.note || '').replace(/\s+/g, ' ').trim().slice(0, 280),
@@ -688,7 +730,7 @@ async function wpPlaySound(kind) {
             await chrome.offscreen.createDocument({
                 url: 'offscreen.html',
                 reasons: ['AUDIO_PLAYBACK'],
-                justification: 'mod / Autopilot alert sound'
+                justification: 'wlcm / Autopilot alert sound'
             });
         }
     } catch (_) {}
