@@ -40,6 +40,9 @@
     const JOB_MAX_AGE = 55 * 1000;
     const DUPLICATE_WINDOW = 10 * 60 * 1000;
     const OPENING_KEY = 'wp_wa_opening_v1';
+    // 1.7.366: the person's job while their contact is saved: saving can close the
+    // chat or reload the page, and the job is already off the queue by then.
+    const RESUME_KEY = 'wp_wa_person_resume_v1';
     // Invite code -> the group's exact name, learned the first time the
     // group is opened from its link. Afterwards the group is opened by
     // name (no reload) and only used when the open chat's name matches
@@ -126,6 +129,57 @@
     }
     const progress = function(job, info) { report(job, true, info, true); };
 
+    // 1.7.421: you come first. wlcm waits while you type in this WhatsApp, never
+    // adds to text already in a chat's box, and if you start typing while it
+    // types its own message it stops, clears its text and tries again later.
+    var wpUserTypedAt = 0;
+    var wpJobStartedAt = 0;
+    ['keydown', 'compositionstart'].forEach(function(type) {
+        document.addEventListener(type, function(event) { if (event.isTrusted) wpUserTypedAt = Date.now(); }, true);
+    });
+    const USER_QUIET_MS = 6000;
+    const USER_WAIT_MAX = 5 * 60000;
+    function userTypedDuringJob() { return wpJobStartedAt && wpUserTypedAt > wpJobStartedAt; }
+    async function keepJobAlive(job) {
+        try {
+            const jobs = (await getStore(JOBS_KEY)) || [];
+            const mine = jobs.find(function(j) { return j.id === job.id; });
+            if (mine) { mine.createdAt = Date.now(); await setStore(JOBS_KEY, jobs); }
+        } catch (_) {}
+    }
+    // true = you are done typing; false = still typing after 5 minutes
+    async function waitUserIdle(job) {
+        const started = Date.now();
+        let said = 0;
+        while (Date.now() - wpUserTypedAt < USER_QUIET_MS) {
+            if (Date.now() - started > USER_WAIT_MAX) return false;
+            if (Date.now() - said > 15000) {
+                said = Date.now();
+                progress(job, 'waiting — you are typing in WhatsApp; it goes when you stop');
+                await keepJobAlive(job);
+            }
+            await sleep(500);
+        }
+        return true;
+    }
+    // empties the chat's box (WhatsApp's editor needs a Backspace on the whole box)
+    async function clearComposer() {
+        const box = composer();
+        if (!box) return;
+        for (let i = 0; i < 3 && String(box.textContent || '').replace(/[\s\u00a0\u200b]+/g, ''); i++) {
+            box.focus();
+            const range = document.createRange();
+            range.selectNodeContents(box);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            await sleep(80);
+            box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true, cancelable: true }));
+            await sleep(200);
+        }
+    }
+    function userInterrupt() { const error = new Error('WP_USER_TYPED'); error.wpUserTyped = true; return error; }
+
     // ---- WhatsApp Web page parts (several selectors: WA changes its DOM) ----
     function paneSide() { return document.querySelector('#pane-side'); }
     function searchBox() {
@@ -181,8 +235,33 @@
     }
     function composer() {
         return document.querySelector(
-            '#main footer div[contenteditable="true"][role="textbox"], #main footer div[contenteditable="true"]'
+            '#main footer div[contenteditable="true"][role="textbox"], #main footer div[contenteditable="true"], #main div[contenteditable="true"][role="textbox"], #main [data-lexical-editor="true"]'
         );
+    }
+    // 1.7.365: the chat box can be missing for a moment after the contact panel
+    // was used (the chat redraws, or the panel is still over it): waited for, and
+    // the panel closed. composerHint says what was on screen when it never came.
+    async function waitComposer() {
+        let box = await waitFor(composer, 4000);
+        if (box) return box;
+        closeSidePanel();
+        box = await waitFor(composer, 3000);
+        if (box) return box;
+        try {
+            const close = findClickable(document, /^(close|wds-ic-close.*)$/i);
+            if (close && !close.closest('#main footer') && !close.closest('#side')) clickEl(close);
+            [document.activeElement, document].forEach(function(target) {
+                if (target) target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+            });
+        } catch (_) {}
+        return waitFor(composer, 3000);
+    }
+    function composerHint() {
+        const main = document.querySelector('#main');
+        const footer = main && main.querySelector('footer');
+        const said = footer ? String(footer.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60) : '';
+        return ' (chat ' + (main ? 'open' : 'not open') + ', footer ' + (footer ? 'yes' : 'no') +
+            ', typing boxes ' + document.querySelectorAll('[contenteditable="true"]').length + (said ? ', footer says "' + said + '"' : '') + ')';
     }
     function sendButton() {
         const icon = document.querySelector(
@@ -316,30 +395,113 @@
     // 1.7.296: "@all" at the start (Barcelona): typed by itself so WhatsApp
     // offers its "mention everyone" choice, which is clicked; when WhatsApp
     // offers none it stays as plain text "@all". Never presses Enter here.
+    // 1.7.377: "@" first, then "all", so WhatsApp's mention list opens and
+    // filters; the "everyone" entry is clicked, then Tab is tried (picks the
+    // highlighted entry; never Enter, which would send). A typed "@all" that
+    // is still plain text afterwards (not an admin) is selected and deleted.
+    function atAllPlainNode(box) {
+        const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            const holder = node.parentElement;
+            // a real mention is not ordinary editable text
+            if (holder && (holder.closest('[contenteditable="false"]') || /mention/i.test(String(holder.className || '') + ' ' + String((holder.parentElement || {}).className || '')))) continue;
+            const at = String(node.nodeValue || '').indexOf('@all');
+            if (at >= 0) return { node: node, at: at };
+        }
+        return null;
+    }
+    // 1.7.417: WhatsApp's editor now splits a typed "@all" over several pieces, so a
+    // success is only a real mention element in the box, never "the text is not found".
+    // 1.7.418 (checked on the live WhatsApp Web): a mention is a <span data-lexical-text>
+    // "@all" in the link green; typed text is the same kind of span in the text colour.
+    function atAllPieces(box) {
+        const base = window.getComputedStyle(box).color;
+        return Array.from(box.querySelectorAll('span[data-lexical-text], [contenteditable="false"], [data-mention], [class*="mention"], [class*="Mention"]')).map(function(el) {
+            const text = String(el.textContent || '');
+            const chip = el.getAttribute('contenteditable') === 'false' || el.hasAttribute('data-mention') || /mention/i.test(String(el.className || '')) ||
+                (/^@\S/.test(text) && window.getComputedStyle(el).color !== base);
+            return { el: el, text: text, chip: chip };
+        });
+    }
+    function atAllChip(box) {
+        const hit = atAllPieces(box).find(function(piece) { return piece.chip; });
+        return hit ? hit.el : null;
+    }
+    function atAllPlainText(box) {
+        const plain = atAllPieces(box).filter(function(piece) { return !piece.chip && piece.el.matches('span[data-lexical-text]'); }).map(function(piece) { return piece.text; }).join('');
+        const text = plain || (atAllChip(box) ? '' : String(box.textContent || ''));
+        return /@\s*a(?:l(?:l)?)?/i.test(text.replace(/\u00a0/g, ' '));
+    }
+    function atAllOption(box) {
+        const root = box.closest('footer') || document;
+        const scope = Array.from(document.querySelectorAll('[role="listbox"], [role="list"], [role="menu"], [data-animate-dropdown-item], ul'))
+            .filter(function(el) { return !el.closest('#side') && !el.closest('#main header') && el !== root && (el.offsetParent !== null || el.getClientRects().length); });
+        const pool = scope.concat([document]); // 1.7.418: the list is plain buttons now, so the whole page is looked at too
+        let best = null;
+        pool.forEach(function(container) {
+            Array.from(container.querySelectorAll('[role="option"], [role="listitem"], [role="button"], [role="menuitem"], li, div[tabindex], button'))
+                .filter(function(el) { return !el.closest('#side') && !el.closest('#pane-side') && !el.closest('#main header') && !el.isContentEditable && el.getAttribute('role') !== 'tab' && (el.offsetParent !== null || el.getClientRects().length); })
+                .forEach(function(el) {
+                    const value = String(el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+                    if (!value || value.length > 60) return;
+                    if (!(/^@?(all|everyone)\b/i.test(value) || /(notify|mention) (everyone|all)/i.test(value) || /mention all members/i.test(value) || /\beveryone\b/i.test(value))) return;
+                    if (!best || best.contains(el)) best = el; // the innermost match
+                });
+        });
+        return best;
+    }
     async function typeAtAll(box) {
         box.focus();
-        document.execCommand('insertText', false, '@all');
-        const option = await waitFor(function() {
-            return Array.from(document.querySelectorAll('[role="option"], [role="listitem"], [role="button"], li, div[tabindex]'))
-                .filter(function(el) { return !el.closest('#side') && !el.closest('#main header') && (el.offsetParent !== null || el.getClientRects().length); })
-                .find(function(el) {
-                    const value = String(el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-                    return value && value.length < 60 && (/^@?(all|everyone)\b/i.test(value) || /(notify|mention) (everyone|all)/i.test(value));
-                }) || null;
-        }, 2000);
+        document.execCommand('insertText', false, '@');
+        await sleep(250);
+        document.execCommand('insertText', false, 'all');
+        const option = await waitFor(function() { return atAllOption(box); }, 2500);
+        // a mention = no typed "@a…" left as plain text (the chip itself is not plain text: same rule as before)
+        const converted = function() { return Boolean(atAllChip(box)) && !atAllPlainText(box); };
+        let done = false;
         if (option) {
             clickEl(option);
-            await sleep(300);
+            await sleep(400);
+            done = converted();
+            if (!done) {
+                box.focus();
+                ['keydown', 'keyup'].forEach(function(type) {
+                    box.dispatchEvent(new KeyboardEvent(type, { key: 'Tab', code: 'Tab', keyCode: 9, which: 9, bubbles: true, cancelable: true }));
+                });
+                await sleep(400);
+                done = converted();
+            }
+        }
+        if (done) {
+            box.focus();
             // WhatsApp adds a space after a mention; one is added when it did not
-            if (!/\s$/.test(String(box.textContent || '').replace(/\u00a0/g, ' '))) document.execCommand('insertText', false, ' ');
+            if (!/\s$/.test(String(box.textContent || '').replace(/ /g, ' '))) document.execCommand('insertText', false, ' ');
             return true;
         }
-        document.execCommand('insertText', false, ' ');
+        // 1.7.417: no real mention: the mention list is closed and the box emptied, so
+        // nothing like "@al" is left in front of the message (it goes without @all)
+        // (no Escape: in WhatsApp it closes the whole chat; emptying the box closes the list)
+        for (let i = 0; i < 3 && String(box.textContent || '').replace(/[\s\u00a0\u200b]+/g, ''); i++) {
+            box.focus();
+            const range = document.createRange();
+            range.selectNodeContents(box);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            await sleep(80);
+            box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true, cancelable: true }));
+            await sleep(200);
+        }
+        box.focus();
         return false;
     }
     async function pasteAndSend(text) {
-        const box = composer();
-        if (!box) return 'no message box';
+        const box = await waitComposer();
+        if (!box) return 'no message box' + composerHint();
+        // 1.7.421: text already in this chat's box is yours: not touched, not sent
+        if (norm(box.textContent || '')) return 'there is unsent text in this chat\'s message box (yours?) — nothing added, nothing sent; send or clear it and try again';
+        if (userTypedDuringJob()) throw userInterrupt();
         box.focus();
         const atAll = String(text).match(/^@all[ \t]+/i);
         if (atAll) {
@@ -357,6 +519,8 @@
         }
         const button = await waitFor(sendButton, 4000);
         if (!button) return 'no send button';
+        // 1.7.421: you typed while it was typing: its text is taken out, it tries again later
+        if (userTypedDuringJob()) { await clearComposer(); throw userInterrupt(); }
         clickEl(button);
         const emptied = await waitFor(function() {
             return !norm((composer() || {}).textContent || '');
@@ -415,6 +579,12 @@
         const box = await waitFor(mediaCaptionBox, 5000);
         if (!box) return 'no caption box';
         box.focus();
+        // 1.7.376: "@all" in the caption too (mention picked, or taken out)
+        const atAll = String(text).match(/^@all[ \t]+/i);
+        if (atAll) {
+            await typeAtAll(box);
+            text = String(text).slice(atAll[0].length);
+        }
         const firstLine = norm(String(text).split('\n')[0]).slice(0, 24);
         const typed = function() { return norm((mediaCaptionBox() || {}).textContent || '').indexOf(firstLine) >= 0; };
         const data = new DataTransfer();
@@ -441,8 +611,10 @@
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         const file = new File([bytes], 'transfers.' + (match[1] === 'image/jpeg' ? 'jpg' : 'png'), { type: match[1] });
-        const box = composer();
-        if (!box) return 'no message box';
+        const box = await waitComposer();
+        if (!box) return 'no message box' + composerHint();
+        if (norm(box.textContent || '')) return 'there is unsent text in this chat\'s message box (yours?) — the image was not added; send or clear it and try again';
+        if (userTypedDuringJob()) throw userInterrupt();
         box.focus();
         const data = new DataTransfer();
         data.items.add(file);
@@ -455,6 +627,15 @@
             if (captionProblem === 'caption could not be cleared') return captionProblem + ' — check the chat, nothing sent';
             result.captioned = !captionProblem;
             await sleep(300);
+        }
+        if (userTypedDuringJob()) {
+            // the preview is closed again (Escape inside the preview only closes the preview)
+            const previewBox = mediaCaptionBox();
+            [previewBox || document.activeElement || document].forEach(function(target) {
+                target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+            });
+            await sleep(400);
+            throw userInterrupt();
         }
         result.pressed = true;
         clickEl(mediaSendButton() || button);
@@ -487,9 +668,13 @@
     // chat to open. A dialog offering to open the chat is accepted; one
     // that only offers to JOIN is not (never joins a group by itself).
     // Returns the chat title, '' (did not open) or null (would need joining).
-    async function openedFromLink() {
-        const startedAt = Date.now();
+    // 1.7.371: allowJoin (group links only) — a dialog that only offers "Join"
+    // is joined by itself (once) and the chat is waited for, so the message
+    // still goes. "Request to join" (admin approval) is not pressed.
+    async function openedFromLink(allowJoin) {
+        let startedAt = Date.now();
         const clicked = new Set();
+        let joined = false;
         while (Date.now() - startedAt < 25000) {
             if (composer() && headerTitle()) return headerTitle().trim();
             const dialog = document.querySelector('[role="dialog"], [data-animate-modal-popup="true"]');
@@ -502,7 +687,13 @@
                     clicked.add(open);
                     clickEl(open);
                 } else if (buttons.some(function(button) { return /join/i.test(button.textContent || ''); }) || /join (this )?(group|chat)/i.test(dialog.textContent || '')) {
-                    return null;
+                    const join = allowJoin && !joined ? findClickable(dialog, /^join(?: (?:this )?(?:group|chat|community))?$/i) : null;
+                    if (!join) { if (!joined) return null; }
+                    else {
+                        joined = true;
+                        clickEl(join);
+                        startedAt = Date.now(); // joining takes a moment: the 25 s start again
+                    }
                 } else if (/invalid|expired|reset|revoked|couldn.t|can.t/i.test(dialog.textContent || '')) {
                     return '';
                 }
@@ -748,7 +939,11 @@
             let contactNote = '';
             if (/^[+\d\s().-]+$/.test(contactTitle)) {
                 // Not a saved contact: add them first, then send.
-                const addProblem = wantedName ? await addContact(first || wantedName, first ? last : '') : 'no name to save';
+                let addProblem = job.contactTried ? 'tried already' : 'no name to save';
+                if (wantedName && !job.contactTried) {
+                    try { await setStore(RESUME_KEY, { job: Object.assign({}, job, { contactTried: true }), at: Date.now() }); } catch (_) {}
+                    addProblem = await addContact(first || wantedName, first ? last : '');
+                }
                 if (addProblem) {
                     // 1.7.281: not waiting for you — the chat is this number, so the message still goes
                     if (job.contactOnly) { report(job, false, '+' + job.phone + ': could not save as "' + wantedName + '" (' + addProblem + ')'); return; }
@@ -758,7 +953,7 @@
                     contactTitle = headerTitle().trim();
                     progress(job, 'added "' + contactTitle + '" to your contacts');
                 }
-            } else if (first && norm(contactTitle) !== norm(wantedName)) {
+            } else if (first && !job.contactKeep && norm(contactTitle) !== norm(wantedName)) {
                 // Saved under another name: the same format for everyone
                 const failed = (await getStore(RENAME_FAILED_KEY)) || {};
                 const tail = String(job.phone).slice(-9);
@@ -778,11 +973,33 @@
                 }
             }
             if (job.contactOnly) { report(job, true, 'saved as "' + contactTitle + '"'); return; }
-            progress(job, 'chat with "' + contactTitle + '" open — typing and sending');
-            const personProblem = await pasteAndSend(job.text);
-            if (personProblem) {
-                report(job, false, personProblem + ' (chat "' + contactTitle + '")');
+            if (!(await waitComposer())) {
+                if (!job.reopened) {
+                    const again = Object.assign({}, job, { reopened: true, contactTried: true, createdAt: Date.now() });
+                    await setStore(JOBS_KEY, [again].concat((await getStore(JOBS_KEY)) || []));
+                    try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {}
+                    try { sessionStorage.setItem(OPENING_KEY, again.id); } catch (_) {}
+                    progress(job, 'no message box in "' + contactTitle + '" — opening the chat again');
+                    navigating = true;
+                    wpWaGo('https://web.whatsapp.com/send?phone=' + encodeURIComponent(job.phone));
+                    return;
+                }
+                report(job, false, 'no message box' + composerHint() + ' (chat "' + contactTitle + '", opened twice)');
                 return;
+            }
+            progress(job, 'chat with "' + contactTitle + '" open — typing and sending');
+            // 1.7.365: with a picture, the text is its caption (one message)
+            const personResult = {};
+            const personProblem = job.image ? await sendImage(job.image, job.text, personResult) : await pasteAndSend(job.text);
+            if (personProblem) {
+                report(job, false, (personResult.pressed ? 'send pressed but ' : '') + personProblem + ' (chat "' + contactTitle + '")');
+                return;
+            }
+            try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {}
+            // the picture is out but its caption did not take: the text goes after it
+            if (job.image && job.text && !personResult.captioned) {
+                const afterProblem = await pasteAndSend(job.text);
+                if (afterProblem) contactNote += ' (the picture went, the text did not: ' + afterProblem + ')';
             }
             sent[dupKey] = Date.now();
             await setStore(SENT_KEY, sent);
@@ -792,9 +1009,9 @@
         const groups = (await getStore(GROUPS_KEY)) || {};
         let title = '';
         if (viaLink) {
-            const opened = await openedFromLink();
+            const opened = await openedFromLink(true);
             if (opened === null) {
-                report(job, false, 'the ' + job.city + ' link asks to JOIN the group — you are not in it, so nothing was sent');
+                report(job, false, 'the ' + job.city + ' link asks to JOIN the group and has no plain Join button (approval needed?) — nothing was sent');
                 return;
             }
             // The chat shown first can be another one (restored / clicked):
@@ -867,7 +1084,8 @@
         title = openTitle;
         // 1.7.319: with an image, the text is its caption (one message).
         // "@all" groups keep text first (the mention needs the chat box).
-        if (job.image && !/^@all\b/i.test(String(job.text))) {
+        // 1.7.376: "@all" now goes in the caption as well
+        if (job.image) {
             progress(job, 'sending the image with the text');
             const result = {};
             const imageProblem = await sendImage(job.image, job.text, result);
@@ -920,6 +1138,26 @@
         return Boolean(box && box.ready && Date.now() - Number(box.at) < BOX_FRESH);
     }
 
+    // 1.7.421: one send; when you typed in the middle of it, the message goes back to the
+    // front of the queue (at most 3 times) and is sent once you have stopped.
+    async function handleOrRetry(job, viaLink) {
+        wpJobStartedAt = Date.now();
+        try {
+            await handle(job, viaLink);
+        } catch (error) {
+            if (error && error.wpUserTyped) {
+                const tries = Number(job.userRetries || 0) + 1;
+                if (tries > 3) { report(job, false, 'not sent — you kept typing in WhatsApp while wlcm was sending'); return; }
+                progress(job, 'you typed in WhatsApp — wlcm stopped, took its text out, and sends it when you stop');
+                const jobs = (await getStore(JOBS_KEY)) || [];
+                await setStore(JOBS_KEY, [Object.assign({}, job, { createdAt: Date.now(), userRetries: tries })].concat(jobs.filter(function(j) { return j.id !== job.id; })));
+                return;
+            }
+            report(job, false, 'error: ' + (error && error.message || error));
+        } finally {
+            wpJobStartedAt = 0;
+        }
+    }
     async function runJobs() {
         if (running) return;
         running = true;
@@ -953,6 +1191,13 @@
                 return;
             }
             await sleep(800);
+            const resume = await getStore(RESUME_KEY);
+            if (resume) {
+                try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {}
+                if (resume.job && Date.now() - Number(resume.at) < 180000) {
+                    await setStore(JOBS_KEY, [Object.assign({}, resume.job, { createdAt: Date.now() })].concat((await getStore(JOBS_KEY)) || []));
+                }
+            }
             for (;;) {
                 if (navigating) return;
                 if (await panelTakesJobs()) return;
@@ -967,6 +1212,12 @@
                     await dropJobs(expired);
                     try { sessionStorage.removeItem(OPENING_KEY); } catch (_) {}
                     break;
+                }
+                // 1.7.421: you are typing in WhatsApp: wait until you stop (up to 5 min)
+                if (!(await waitUserIdle(job))) {
+                    await dropJobs(function(j) { return j.id === job.id; });
+                    report(job, false, 'not sent — you were typing in WhatsApp for 5 minutes');
+                    continue;
                 }
                 // Group link known: load it (the page reloads; the job stays
                 // queued and is sent by the reloaded page). Duplicates are
@@ -988,11 +1239,7 @@
                             jobs.shift();
                             await dropJobs(function(j) { return j.id === job.id || expired(j); });
                             job.knownTitle = known;
-                            try {
-                                await handle(job, false);
-                            } catch (error) {
-                                report(job, false, 'error: ' + (error && error.message || error));
-                            }
+                            await handleOrRetry(job, false);
                             // 5 s between messages.
                             await sleep(5000);
                             continue;
@@ -1013,11 +1260,8 @@
                 jobs.shift();
                 await dropJobs(function(j) { return j.id === job.id || expired(j); });
                 try { sessionStorage.removeItem(OPENING_KEY); } catch (_) {}
-                try {
-                    await handle(job, opening === job.id);
-                } catch (error) {
-                    report(job, false, 'error: ' + (error && error.message || error));
-                }
+                await handleOrRetry(job, opening === job.id);
+                if (!navigating) { try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {} }
                 // 5 s between messages.
                 await sleep(5000);
             }
@@ -1133,13 +1377,86 @@
         const setMute = function(on) {
             try { if (on) document.documentElement.setAttribute('data-wp-mute', '1'); else document.documentElement.removeAttribute('data-wp-mute'); } catch (_) {}
         };
+        setMute(true); // 1.7.355: silent from the start, until the stored choice is read
         getStore(MUTE_KEY).then(function(on) { setMute(Boolean(on)); }, function() {});
         chrome.storage.onChanged.addListener(function(changes, area) {
             if (area === 'local' && changes[MUTE_KEY]) setMute(Boolean(changes[MUTE_KEY].newValue));
         });
+        // 1.7.423: what gets through the Mute: an @mention of you or a reply to
+        // you in a group (the "@" WhatsApp shows next to the unread count) and
+        // every direct chat. Read from the chat list only (nothing is opened, so
+        // nothing is marked read); a new one goes to wp_wa_alerts_v1, where the
+        // CRM shows a card (Open / ×) and the phone app shows it too. The chime
+        // plays only while the panel is muted (unmuted, WhatsApp plays its own).
+        // Only the chat's name and the kind are kept, never the message text.
+        const ALERTS_KEY = 'wp_wa_alerts_v1';
+        const alertSeen = new Map(); // chat → unread count last seen
+        let alertBase = 0;           // the first rounds only learn what is already unread
+        let alertMuted = true;
+        getStore(MUTE_KEY).then(function(on) { alertMuted = Boolean(on); }, function() {});
+        chrome.storage.onChanged.addListener(function(changes, area) {
+            if (area === 'local' && changes[MUTE_KEY]) alertMuted = Boolean(changes[MUTE_KEY].newValue);
+        });
+        const rowUnread = function(row) {
+            let count = 0;
+            row.querySelectorAll('[aria-label]').forEach(function(el) {
+                const m = String(el.getAttribute('aria-label') || '').match(/(\d+)\s+unread/i);
+                if (m) count = Math.max(count, Number(m[1]));
+            });
+            return count;
+        };
+        const rowMention = function(row) {
+            if (row.querySelector('[data-icon*="mention" i], [data-icon*="reply" i], [data-icon*="tagged" i]')) return true;
+            // 1.7.424 (seen on the live WhatsApp Web): icons are <svg><title>wds-ic-…</title>, no data-icon
+            if (Array.from(row.querySelectorAll('svg title')).some(function(t) { return /mention|at-?sign|(^|-)at$|reply|tagged/i.test(String(t.textContent || '')); })) return true;
+            if (Array.from(row.querySelectorAll('[aria-label]')).some(function(el) { return /mention|tagged you|repl(y|ied) to you/i.test(el.getAttribute('aria-label') || ''); })) return true;
+            // the "@" pill: a leaf whose whole text is "@"
+            return Array.from(row.querySelectorAll('span, div')).some(function(el) { return !el.children.length && String(el.textContent || '').trim() === '@'; });
+        };
+        const rowGroup = function(row, title) {
+            if (row.querySelector('[data-icon*="group" i], [data-icon*="community" i]')) return true;
+            if (Array.from(row.querySelectorAll('svg title')).some(function(t) { return /group|communit/i.test(String(t.textContent || '')); })) return true; // 1.7.424
+            // a group's last-message line starts with the sender: "Maria: …" / "~ Maria: …"
+            const lines = Array.from(row.querySelectorAll('span[title], span[dir="auto"], span[dir="ltr"]'))
+                .map(function(el) { return String(el.getAttribute('title') || el.textContent || '').trim(); })
+                .filter(function(text) { return text && text !== title; });
+            return lines.some(function(text, i) {
+                const next = lines[i + 1] || '';
+                return /^~?\s?[^:]{1,40}:\s/.test(text) || (/^~?\s?[^:]{1,40}$/.test(text) && /^:\s?/.test(next));
+            }) || Boolean(Array.from(row.querySelectorAll('span')).some(function(el) { return !el.children.length && /^:\s*$/.test(String(el.textContent || '')); })); // 1.7.424: live: sender / ":" + spaces / text
+        };
+        const alertScan = function() {
+            const pane = paneSide();
+            if (!pane) return;
+            const fresh = [];
+            chatRows().forEach(function(entry) {
+                if (!pane.contains(entry.row)) return;
+                const unread = rowUnread(entry.row);
+                const before = alertSeen.has(entry.title) ? alertSeen.get(entry.title) : 0;
+                alertSeen.set(entry.title, unread);
+                if (!unread || unread <= before || alertBase < 2) return;
+                const mention = rowMention(entry.row);
+                const direct = !mention && !rowGroup(entry.row, entry.title);
+                if (mention || direct) fresh.push({ title: entry.title.slice(0, 80), kind: mention ? 'mention' : 'direct', count: unread });
+            });
+            alertBase += 1;
+            if (!fresh.length) return;
+            getStore(ALERTS_KEY).then(function(list) {
+                const now = Date.now();
+                const keep = (Array.isArray(list) ? list : []).filter(function(a) { return a && now - Number(a.at) < 1800000; });
+                fresh.forEach(function(item) {
+                    const old = keep.find(function(a) { return a.title === item.title; });
+                    if (old) { old.count = item.count; old.at = now; if (item.kind === 'mention') old.kind = 'mention'; }
+                    else keep.unshift({ id: 'w' + now.toString(36) + Math.random().toString(36).slice(2, 6), title: item.title, kind: item.kind, count: item.count, at: now });
+                });
+                chrome.storage.local.set({ [ALERTS_KEY]: keep.slice(0, 8) });
+                if (alertMuted) { try { chrome.runtime.sendMessage({ type: 'WP_PLAY_SOUND', kind: 'found' }, function() { void chrome.runtime.lastError; }); } catch (_) {} }
+            }, function() {});
+        };
+        setInterval(alertScan, 2000);
         const beat = function(ready) {
             try { chrome.storage.local.set({ [BOX_KEY]: { at: Date.now(), ready: Boolean(ready) } }); } catch (_) {}
-            say(ready ? 'logged in — mod sends from here' : 'not logged in — scan the QR code once (mod uses a WhatsApp tab meanwhile)');
+            say(ready ? 'logged in — wlcm sends from here' : 'not logged in — scan the QR code once (wlcm uses a WhatsApp tab meanwhile)');
         };
         (async function() {
             // a page that is still loading keeps the last "logged in" (a send's reload)
@@ -1158,6 +1475,8 @@
             if (!msg) return;
             if (msg.type === 'WP_WA_RUN') runJobs();
             if (msg.type === 'WP_WA_SHOW' && /^[A-Za-z0-9]{10,40}$/.test(String(msg.code || ''))) showGroup(String(msg.code));
+            // 1.7.423: Open on a mention / direct-message card in the CRM
+            if (msg.type === 'WP_WA_OPEN_TITLE' && msg.title) { if (!running) { running = true; openChat(String(msg.title).slice(0, 80)).catch(function() {}).then(function() { running = false; runJobs(); }); } }
         });
     }
     runJobs();
