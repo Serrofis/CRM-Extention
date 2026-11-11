@@ -683,40 +683,8 @@
         return '<svg class="spark" viewBox="0 0 ' + w + ' ' + (hgt + 2) + '" preserveAspectRatio="none"><polyline fill="none" stroke="' + color + '" stroke-width="2" points="' + pts + '"/></svg>';
     }
 
-    // 1.7.307: ghas summary of a city's Slack posts. Uses the local AI on
-    // this PC (settings copied from the CRM page) when it is on; otherwise a
-    // plain summary. Slack text only goes to localhost, never to the relay.
-    const ghasCache = {};
-    let aiCfg = null, aiModels = null;
-    chrome.storage.local.get('wp_ai_cfg_mirror_v1').then((o) => { aiCfg = o.wp_ai_cfg_mirror_v1 || null; }).catch(() => {});
-    // 1.7.308: model dropdown. The list comes from the model server on this
-    // PC; a pick is saved here and copied back to mod's settings on the CRM.
-    async function ghasModels() {
-        const el = $('ghasModel');
-        if (!el) return;
-        if (!aiCfg) { el.innerHTML = '<option>open the CRM once</option>'; el.disabled = true; return; }
-        if (!aiModels) {
-            let r = null;
-            try { r = await chrome.runtime.sendMessage({ type: 'WP_AI_MODELS', url: aiCfg.url }); } catch (_) {}
-            aiModels = r && r.ok ? r.models : [];
-        }
-        const list = aiModels.slice();
-        if (aiCfg.model && !list.includes(aiCfg.model)) list.unshift(aiCfg.model);
-        const box = $('ghasModel');
-        if (!box) return;
-        box.disabled = !list.length;
-        box.innerHTML = list.length ? (aiCfg.model ? '' : '<option value="">choose a model</option>') + list.map((x) => '<option' + (x === aiCfg.model ? ' selected' : '') + '>' + esc(x) + '</option>').join('') : '<option>no model server found</option>';
-    }
-    async function ghasPickModel(name) {
-        aiCfg = Object.assign({}, aiCfg, { model: name, on: true });
-        try { await chrome.storage.local.set({ wp_ai_cfg_mirror_v1: aiCfg, wp_ai_model_pick_v1: { model: name, at: Date.now() } }); } catch (_) {}
-        Object.keys(ghasCache).forEach((k) => delete ghasCache[k]);
-        const m = model();
-        const c = m.cities.find((x) => x.id === selected);
-        if (c) renderDrawer(c, drawerDates(m));
-    }
+    // wlcm summary of a city's Slack posts: which channels, how recent, the topics.
     const GHAS_WORDS = [['strike', /strike|walkout/i], ['marathon / race', /marathon|race\b|run\b/i], ['closures', /clos(ed|ure)|road ?block|traffic/i], ['raise prices', /raise|surge|price/i], ['blocked slots', /block/i], ['cancellations', /cancel/i], ['weather', /storm|snow|flood|weather|wind/i], ['airport / flights', /airport|flight|terminal/i], ['events', /event|concert|festival|match|conference|congress/i]];
-    function ghasSig(c) { return c.slack.slice(0, 10).map((s) => s.ts).join(','); }
     function ghasPlain(c) {
         const posts = c.slack.slice(0, 10);
         const per = {};
@@ -727,40 +695,15 @@
     }
     function ghasHtml(c) {
         if (!c.slack.length) return '<div class="note">Nothing on Slack about this city in the last 7 days.</div>';
-        const hit = ghasCache[c.id];
-        if (hit && hit.sig === ghasSig(c) && hit.text) return '<div>' + esc(hit.text).replace(/\n/g, '<br>') + '</div><div class="note">Local AI' + (hit.model ? ' (' + esc(hit.model) + ')' : '') + '.</div>';
-        return '<div>' + esc(ghasPlain(c)) + '</div>' + (hit && hit.busy ? '<div class="note">Asking the local AI...</div>' : '<div class="note">Plain summary. Turn on the local AI in mod on the CRM for a written one.</div>');
-    }
-    async function ghasAsk(c) {
-        if (!c || !c.slack.length) return;
-        const sig = ghasSig(c);
-        const hit = ghasCache[c.id];
-        if (hit && hit.sig === sig && (hit.text || hit.busy || hit.failed)) return;
-        let cfg = null;
-        try { cfg = (await chrome.storage.local.get('wp_ai_cfg_mirror_v1')).wp_ai_cfg_mirror_v1; } catch (_) {}
-        aiCfg = cfg || aiCfg;
-        if (!cfg || !cfg.on || !cfg.model) return;
-        ghasCache[c.id] = { sig, busy: true };
-        const paint = () => { const el = $('ghas'); if (el && selected === c.id) el.innerHTML = ghasHtml(c); };
-        paint();
-        const posts = c.slack.slice(0, 10).map((s) => '#' + s.channel + ' ' + new Date(s.ts * 1000).toISOString().slice(0, 16) + ' ' + (s.who || '') + ': ' + s.text.slice(0, 600)).join('\n');
-        let r = null;
-        try {
-            r = await chrome.runtime.sendMessage({ type: 'WP_AI_ASK', url: cfg.url, model: cfg.model, messages: [
-                { role: 'system', content: 'You help an operations manager of an airport transfer company. Summarise the Slack posts about ' + c.name + ' in at most 4 short plain sentences: what is happening, which dates, and what the team is asked to do. No lists, no greetings.' },
-                { role: 'user', content: posts }
-            ] });
-        } catch (_) {}
-        ghasCache[c.id] = r && r.ok && r.text ? { sig, text: String(r.text).trim(), model: cfg.model } : { sig, failed: true };
-        paint();
+        return '<div>' + esc(ghasPlain(c)) + '</div>';
     }
     function renderDrawer(c, dates) {
         if (!c) { closeDrawer(); return; }
         $('backdrop').hidden = false; $('drawer').hidden = false;
         const lvl = cityLevel(c, dates);
         let h = '<div class="dh"><div style="flex:1"><h2>' + esc(c.name) + '</h2><div class="sub">' + esc([c.em && c.em.prio, c.em && c.em.type, c.em && c.em.cm && 'City manager ' + c.em.cm].filter(Boolean).join(' · ')) + '</div></div><span class="pill ' + (lvl || 'green') + '" style="margin-top:8px">' + (lvl === 'red' ? 'needs attention' : lvl === 'amber' ? 'watch' : 'fine') + '</span><button class="close" id="close" title="Close">&times;</button></div>';
-        // 1.7.308: order is ghas summary (purple, like mod's suggestions in the CRM), Slack posts, day by day, what to do.
-        h += '<div class="card ghas"><div class="ghead"><h3>ghas summary</h3><select id="ghasModel" title="Local AI model"><option>' + esc(aiCfg && aiCfg.model || 'model') + '</option></select></div><div id="ghas">' + ghasHtml(c) + '</div></div>';
+        // 1.7.308: order is wlcm summary (purple, like mod's suggestions in the CRM), Slack posts, day by day, what to do.
+        h += '<div class="card wlcm"><div class="ghead"><h3>wlcm summary</h3></div><div id="wlcm">' + ghasHtml(c) + '</div></div>';
         h += '<div class="card"><h3>Slack, last 7 days</h3>';
         if (!c.slack.length) h += '<div class="note">No posts naming this city.</div>';
         c.slack.slice(0, 10).forEach((s) => { h += '<div class="msg"><div class="m">#' + esc(s.channel) + ' &middot; ' + esc(s.who) + ' &middot; ' + ago(s.ts) + '</div>' + esc(s.text.slice(0, 500)) + '</div>'; });
@@ -782,7 +725,7 @@
         });
         h += '<p class="note"><span style="color:var(--red)">Red rows</span>: fewer drivers (adjusted for acceptance) than unassigned jobs.</p></div>';
         h += '<div class="card"><h3>What to do</h3>';
-        if (!c.actions.length) h += '<div class="note">Nothing needed from what mod can see.</div>';
+        if (!c.actions.length) h += '<div class="note">Nothing needed from what wlcm can see.</div>';
         c.actions.forEach((a) => {
             h += '<label class="act' + (done[a.key] ? ' done' : '') + '"><input type="checkbox" data-key="' + esc(a.key) + '"' + (done[a.key] ? ' checked' : '') + '><span><b>' + esc(a.text) + '</b><div class="w">' + esc(a.why) + '</div></span></label>';
         });
@@ -797,8 +740,6 @@
         const mine = history.filter((r) => r.city === c.id).sort((a, b) => a.date < b.date ? -1 : 1).slice(-30);
         h += '<div class="card"><h3>Last 30 days</h3><div class="note">Unassigned</div>' + spark(mine.map((r) => r.un), '#121a3a') + '<div class="note">Hub gap</div>' + spark(mine.map((r) => r.gap), '#5b6ee1') + '</div>';
         $('drawer').innerHTML = h;
-        ghasAsk(c);
-        ghasModels();
     }
     function closeDrawer() { selected = null; $('backdrop').hidden = true; $('drawer').hidden = true; }
 
@@ -855,7 +796,7 @@
             h += '<tr class="city" data-city="' + esc(id) + '"><td><b>' + esc(names[id] || id) + '</b></td>' + months.map((mo) => { const x = g[id + '|' + mo]; return '<td>' + (x ? (x.un / x.n).toFixed(1) + ' &middot; ' + (x.gap / x.n).toFixed(1) + ' &middot; ' + x.short + ' &middot; ' + x.ev : '<span style="color:var(--faint)">&middot;</span>') + '</td>'; }).join('') + '</tr>';
         });
         h += '</tbody></table></div>';
-        if (!history.length) h = '<div class="card"><h2>Month</h2><p class="note">No history yet. mod saves one record per city and day from now on (the nightly read covers every city), so next month you can compare month against month.</p></div>';
+        if (!history.length) h = '<div class="card"><h2>Month</h2><p class="note">No history yet. wlcm saves one record per city and day from now on (the nightly read covers every city), so next month you can compare month against month.</p></div>';
         $('main').innerHTML = h;
     }
 
@@ -960,7 +901,6 @@
         if (c) { c._day = b.getAttribute('data-day'); renderDrawer(c, drawerDates(m)); }
     });
     $('drawer').addEventListener('change', async (e) => {
-        if (e.target.id === 'ghasModel') { if (e.target.value) ghasPickModel(e.target.value); return; }
         const k = e.target.getAttribute && e.target.getAttribute('data-key');
         if (!k) return;
         if (e.target.checked) done[k] = Date.now(); else delete done[k];

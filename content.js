@@ -219,6 +219,10 @@ async function wpTransferAssistantExtensionEnabled() {
     // The original userscript starts here.
 (function () {
     'use strict';
+    // 1.7.408: the manual build (manifest version_name with "manual"): no automations at all —
+    // no wlcm, no Full auto, no auto-cancel, no box ticking, no sending to heroes /
+    // suggested, no City Manager Auto, no phone app. Everything you press still works.
+    const WP_NO_AUTO = (function() { try { return /manual/i.test(String(chrome.runtime.getManifest().version_name || '')); } catch (_) { return false; } })();
 
     // ============================================================
     // CITY PRICE INCREASE INFO
@@ -1434,6 +1438,22 @@ async function wpTransferAssistantExtensionEnabled() {
             max-width: 72px !important;
         }
 
+        /* 1.7.373: Price column = the CRM's TC and DC, one line */
+        th.wp-tcdc-cell,
+        td.wp-tcdc-cell {
+            text-align: center !important;
+            vertical-align: middle !important;
+            white-space: nowrap !important;
+            font-variant-numeric: tabular-nums;
+            min-width: 104px !important; /* 1.7.375: room for decimals */
+            padding-left: 4px !important;
+            padding-right: 4px !important;
+        }
+        td.wp-tcdc-cell .wp-tcdc-label {
+            opacity: 0.55;
+            font-size: 0.85em;
+        }
+
         /* Price column: real CRM price tags (+N%, dc = tc, -N TC). Two fit
          * side by side; a third wraps instead of spilling over. */
         th.wp-price-cell,
@@ -1509,6 +1529,13 @@ async function wpTransferAssistantExtensionEnabled() {
             background: rgba(123, 63, 152, 0.24) !important;
             border-color: rgba(123, 63, 152, 0.72) !important;
             color: #c98ae6 !important;
+        }
+
+        /* 1.7.333: "sent to suggested" → "sugg"; 1.7.335: a lighter purple than hero */
+        td.wp-transfer-tags .wp-transfer-tag-suggested {
+            background: rgba(186, 140, 255, 0.22) !important;
+            border-color: rgba(206, 170, 255, 0.72) !important;
+            color: #dcc2ff !important;
         }
 
         td.wp-transfer-tags .wp-transfer-tag-10 {
@@ -1730,6 +1757,8 @@ async function wpTransferAssistantExtensionEnabled() {
         td.wp-city-link {
             cursor: pointer !important;
             text-decoration: underline dotted !important;
+            /* 1.7.335: the city name stays on one line */
+            white-space: nowrap !important;
         }
 
         td.wp-city-link:hover {
@@ -2144,7 +2173,7 @@ async function wpTransferAssistantExtensionEnabled() {
             opacity: 1 !important;
         }
 
-        /* 1.7.296: a city's transfers (City clicked): nothing in the row is dimmed. */
+        /* 1.7.380: every matching transfer: nothing in the row is dimmed. */
         table.transfers.wp-transfer-focus-active > tbody > tr.wp-transfer-focus-match.wp-transfer-focus-whole > td {
             opacity: 1 !important;
         }
@@ -2154,6 +2183,15 @@ async function wpTransferAssistantExtensionEnabled() {
             pointer-events: auto !important;
         }
 
+        table.transfers td.partner,
+        table.transfers td.wp-from-cell,
+        table.transfers td.wp-to-cell,
+        table.transfers td.from,
+        table.transfers td.to,
+        table.transfers td.date,
+        table.transfers td.wp-car-cell,
+        table.transfers td.wp-pudo-cell,
+        table.transfers td.wp-loc-cell,
         td.wp-booking,
         td.wp-airbnb,
         td.wp-transfer-tags .wp-transfer-tag-no-tag,
@@ -7378,7 +7416,11 @@ async function wpTransferAssistantExtensionEnabled() {
             cell.classList.contains('wp-car-cell') ||
             cell.classList.contains('wp-pudo-cell') ||
             cell.classList.contains('wp-loc-cell') ||
-            cell.classList.contains('wp-price-cell')
+            cell.classList.contains('wp-price-cell') ||
+            cell.classList.contains('wp-tcdc-cell') || // 1.7.373
+            // 1.7.328: tick box + worked-on columns (Em Hailing)
+            cell.classList.contains('wp-sel-cell') ||
+            cell.classList.contains('wp-worked-cell')
         ));
     }
     function wpBaseCells(row) {
@@ -8261,7 +8303,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (old) { old.remove(); return; }
         const box = document.createElement('div');
         box.id = 'wp-emp-menu';
-        Object.assign(box.style, { position: 'fixed', zIndex: '2147483646', width: '360px', maxWidth: 'calc(100vw - 24px)', boxSizing: 'border-box', padding: '12px 14px', borderRadius: '14px', background: 'rgba(14,20,22,0.92)', backdropFilter: 'blur(22px)', border: '1px solid rgba(143,255,213,0.35)', boxShadow: '0 16px 44px rgba(0,0,0,0.45)', color: '#dfe4e6', font: '12px/1.45 Consolas, "Cascadia Mono", monospace' });
+        Object.assign(box.style, { position: 'fixed', zIndex: '2147483646', width: '360px', maxWidth: 'calc(100vw - 24px)', boxSizing: 'border-box', padding: '12px 14px', borderRadius: '14px', background: 'rgba(14,20,22,0.92)', backdropFilter: 'blur(22px)', border: '1px solid rgba(143,255,213,0.35)', boxShadow: '0 16px 44px rgba(0,0,0,0.45)', color: '#dfe4e6', font: '12px/1.45 Segoe UI,system-ui,sans-serif' });
         const add = function(tag, text, style, parent) {
             const node = document.createElement(tag);
             if (text !== undefined && text !== null) node.textContent = text;
@@ -8561,7 +8603,8 @@ async function wpTransferAssistantExtensionEnabled() {
         if (
             !initialInfo &&
             !initialPricing &&
-            !initialSkuComment
+            !initialSkuComment &&
+            !wpTravelerNoteForCell(cityCell)
         ) {
             return;
         }
@@ -8788,6 +8831,24 @@ async function wpTransferAssistantExtensionEnabled() {
 
                 }
 
+                // 1.7.324: the transfer's traveller comment (CRM), own section
+                const travelerNote =
+                    wpTravelerNoteForCell(cityCell);
+
+                if (
+                    travelerNote
+                ) {
+
+                    detailsHtml +=
+                        '<div class="wp-traveler-note">' +
+                        '<div class="wp-traveler-note-title">Traveller comment</div>' +
+                        '<div class="wp-traveler-note-text">' +
+                        escapeTooltipValue(travelerNote) +
+                        '</div>' +
+                        '</div>';
+
+                }
+
                 // 1.7.276: the local time there
                 let clockHtml = '';
                 try { const clockText = wpCityClockText(city); if (clockText) clockHtml = '<div class="wp-city-clock" style="margin:3px 0 4px;color:#8fffd5;font-weight:700;font-size:12px;white-space:nowrap">' + clockText.replace(/[&<>"']/g, '') + '</div>'; } catch (_) {}
@@ -8836,6 +8897,127 @@ async function wpTransferAssistantExtensionEnabled() {
                     'none';
             }
         );
+    }
+
+    // ---- Traveller comment on the city name (1.7.324) ----
+    // Each transfer row's city: the transfer's traveller comment (read from
+    // the transfer's CRM page, one page at a time, kept 6 hours in this
+    // browser only) gets its own section in the city hover, and the city
+    // name turns Welcome green (1.7.326) when there is one. Not sent to the relay,
+    // except in the Comments cards (1.7.357, the user's choice: the phone shows them).
+    const WP_TRAVELER_NOTE_KEY = 'wp_traveler_note_v1';
+    const WP_TRAVELER_NOTE_TTL = 6 * 60 * 60 * 1000;
+    const WP_TRAVELER_NOTE_CELLS = new Map();
+    const WP_TRAVELER_NOTE_QUEUE = [];
+    let wpTravelerNoteStore = null;
+    let wpTravelerNoteBusy = false;
+    function wpTravelerNoteLoad() {
+        if (wpTravelerNoteStore) return wpTravelerNoteStore;
+        try { wpTravelerNoteStore = JSON.parse(localStorage.getItem(WP_TRAVELER_NOTE_KEY) || '{}') || {}; } catch (_) { wpTravelerNoteStore = {}; }
+        return wpTravelerNoteStore;
+    }
+    function wpTravelerNoteSave() {
+        const store = wpTravelerNoteLoad();
+        const now = Date.now();
+        const paths = Object.keys(store).filter(function(path) { return store[path] && now - Number(store[path].at) < 3 * 24 * 60 * 60 * 1000; })
+            .sort(function(a, b) { return Number(store[b].at) - Number(store[a].at); }).slice(0, 800);
+        const kept = {};
+        paths.forEach(function(path) { kept[path] = store[path]; });
+        wpTravelerNoteStore = kept;
+        try { localStorage.setItem(WP_TRAVELER_NOTE_KEY, JSON.stringify(kept)); } catch (_) {}
+    }
+    function wpTravelerNotePath(url) {
+        try {
+            const parsed = new URL(url, location.href);
+            // 1.7.325: the list links to /admin/transfers/<id>/details_v3
+            if (parsed.origin !== location.origin || !/^\/admin\/transfers\/\d+(?:\/details_v3)?\/?$/.test(parsed.pathname)) return '';
+            return parsed.pathname.replace(/\/$/, '');
+        } catch (_) { return ''; }
+    }
+    function wpTravelerNoteRemember(url, text) {
+        const path = wpTravelerNotePath(url);
+        if (!path) return;
+        const store = wpTravelerNoteLoad();
+        store[path] = { t: String(text || '').trim().slice(0, 600), at: Date.now() };
+        wpTravelerNoteSave();
+        wpTravelerNoteApply(path);
+    }
+    function wpTravelerNoteForCell(cell) {
+        if (!cell || !cell.dataset) return '';
+        // The open transfer page: straight from its own box.
+        if (cell.id === 'wp-transfer-city-link') {
+            const box = document.getElementById('transfer_traveler_comment');
+            if (box) return String(box.value || box.textContent || '').trim();
+        }
+        const path = cell.dataset.wpTravelerPath;
+        const entry = path ? wpTravelerNoteLoad()[path] : null;
+        return entry ? String(entry.t || '') : '';
+    }
+    function wpTravelerNoteStyle() {
+        if (document.getElementById('wp-traveler-note-style')) return;
+        const style = document.createElement('style');
+        style.id = 'wp-traveler-note-style';
+        style.textContent =
+            'body .wp-city-has-traveler-note.wp-city-has-traveler-note, body .wp-city-has-traveler-note.wp-city-has-traveler-note a { color: #00cf95 !important; }' +
+            // 1.7.339: too many child seats for the car (wins over the green)
+            'body td.wp-city-seats-pink.wp-city-seats-pink.wp-city-seats-pink, body td.wp-city-seats-pink.wp-city-seats-pink.wp-city-seats-pink a { color: #ff8fd5 !important; }' +
+            '#wp-city-price-tooltip .wp-traveler-note { margin-top: 6px !important; padding-top: 6px !important; border-top: 1px solid rgba(0,207,149,0.4) !important; max-width: 320px !important; white-space: normal !important; }' +
+            '#wp-city-price-tooltip .wp-traveler-note-title { color: #00cf95 !important; font-weight: 700 !important; font-size: 11px !important; margin-bottom: 2px !important; }' +
+            '#wp-city-price-tooltip .wp-traveler-note-text { color: #e6edf3 !important; font-size: 11px !important; line-height: 1.35 !important; white-space: pre-wrap !important; word-break: break-word !important; }';
+        (document.head || document.documentElement).appendChild(style);
+    }
+    function wpTravelerNoteMark(cell) {
+        const has = Boolean(wpTravelerNoteForCell(cell));
+        cell.classList.toggle('wp-city-has-traveler-note', has);
+        if (has && cell.dataset.wpPriceTooltipSetup !== 'true') {
+            try { setupCityPriceTooltip(cell, getTransferCityHoverData); } catch (_) {}
+        }
+    }
+    function wpTravelerNoteApply(path) {
+        const cells = WP_TRAVELER_NOTE_CELLS.get(path);
+        if (!cells) return;
+        cells.forEach(function(cell) {
+            if (!cell.isConnected || cell.dataset.wpTravelerPath !== path) { cells.delete(cell); return; }
+            wpTravelerNoteMark(cell);
+        });
+        if (!cells.size) WP_TRAVELER_NOTE_CELLS.delete(path);
+    }
+    // Transfer list row: remember which transfer the city cell belongs to,
+    // colour it from what is known, and queue a read when it is old.
+    function wpTravelerNoteWatch(cell, url) {
+        const path = wpTravelerNotePath(url);
+        if (!cell || !path) return;
+        wpTravelerNoteStyle();
+        cell.dataset.wpTravelerPath = path;
+        if (!WP_TRAVELER_NOTE_CELLS.has(path)) WP_TRAVELER_NOTE_CELLS.set(path, new Set());
+        WP_TRAVELER_NOTE_CELLS.get(path).add(cell);
+        wpTravelerNoteMark(cell);
+        const entry = wpTravelerNoteLoad()[path];
+        if (entry && Date.now() - Number(entry.at) < WP_TRAVELER_NOTE_TTL) return;
+        if (WP_TRAVELER_NOTE_QUEUE.indexOf(path) < 0) WP_TRAVELER_NOTE_QUEUE.push(path);
+        wpTravelerNotePump();
+    }
+    async function wpTravelerNotePump() {
+        if (wpTravelerNoteBusy) return;
+        wpTravelerNoteBusy = true;
+        try {
+            while (WP_TRAVELER_NOTE_QUEUE.length) {
+                const path = WP_TRAVELER_NOTE_QUEUE.shift();
+                const entry = wpTravelerNoteLoad()[path];
+                if ((entry && Date.now() - Number(entry.at) < WP_TRAVELER_NOTE_TTL) || !WP_TRAVELER_NOTE_CELLS.has(path)) continue;
+                try {
+                    const response = await fetch(path, { credentials: 'same-origin' });
+                    if (response.ok) {
+                        const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+                        const box = doc.getElementById('transfer_traveler_comment');
+                        if (box) wpTravelerNoteRemember(path, box.value || box.textContent || '');
+                    }
+                } catch (_) {}
+                await new Promise(function(resolve) { setTimeout(resolve, 400); });
+            }
+        } finally {
+            wpTravelerNoteBusy = false;
+        }
     }
 
     // ---- The destination's own clock (1.7.276) ----
@@ -9098,7 +9280,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // WhatsApp Web (auto-send on): open the chat in the WhatsApp Web
         // tab — the api.whatsapp.com link no longer reaches WhatsApp.
         const phone = wpHeroPhone(url);
-        if (phone && wpWhatsAppAutoSendOn()) {
+        if (phone) { // 1.7.386: always the panel
             try {
                 chrome.runtime.sendMessage({ type: 'WP_WA_OPEN', url: 'https://web.whatsapp.com/send?phone=' + phone });
                 return;
@@ -9628,6 +9810,12 @@ async function wpTransferAssistantExtensionEnabled() {
             return;
         }
 
+        // 1.7.386: WhatsApp opens in the side panel, no helper tab
+        try {
+            chrome.runtime.sendMessage({ type: 'WP_WA_OPEN', url: String(url) }, function() { void chrome.runtime.lastError; });
+            return;
+        } catch (_) {}
+
         /*
          * Keep the pre-v3.10.80 behavior that was working:
          * open the full WhatsApp invite URL in a background tab so the
@@ -10080,6 +10268,14 @@ async function wpTransferAssistantExtensionEnabled() {
             };
         }
 
+        // 1.7.333: "sent to suggested" → "sugg". Order: BC & group < sugg < hero < final bc.
+        if (/\bsuggested\b/i.test(value)) {
+            return {
+                text: 'sugg',
+                type: 'suggested'
+            };
+        }
+
         if (/(?:\bDC\s*=\s*TC\b|\bDC\s*TC\b|\bDC\s*=\s*\bTC\b)/i.test(value)) {
             return {
                 text: 'dc = tc',
@@ -10111,10 +10307,8 @@ async function wpTransferAssistantExtensionEnabled() {
         // to BC,posted on group", "BC/group", "BC & G").
         if (/\bBC\b[^\n]*?\b(?:group|grp)\b/i.test(value) ||
             /\bBC\s*(?:&|and|,|\/|\+)\s*G\b/i.test(value)) {
-            return {
-                text: 'BC & G',
-                type: 'bc-grp'
-            };
+            // 1.7.341: no BC & G tag any more — such a note shows no tag
+            return null;
         }
 
         // Plain broadcast references -> BC. Keep the more specific BC & G
@@ -10165,9 +10359,47 @@ async function wpTransferAssistantExtensionEnabled() {
             .replace(/(^|[\s(/])-\s*\d+\s*TC\b/gi, '$1 ')
             .replace(/\braised(?:\s+a\s+bit\s+more\s+to\s+save)?\b/gi, ' ');
         const tag = wpDetectTransferTag(withoutPrices);
+        // 1.7.373: no BC / HIGH VOL tags any more (such a note shows no tag)
+        if (tag && (tag.type === 'bc' || tag.type === 'high-vol')) return null;
         return tag && WP_PRICE_TAG_TYPES.indexOf(tag.type) < 0 ? tag : null;
     }
 
+    // 1.7.342: the last tag of a transfer stays when a newer note is not a
+    // tag: taken from its earlier notes (CRM details already read, newest
+    // first), else the tag this PC last saw on it (kept 3 days).
+    const WP_LAST_NOTE_TAG_KEY = 'wp_last_note_tag_v1';
+    function wpLastNoteTagAll() {
+        try { const map = JSON.parse(localStorage.getItem(WP_LAST_NOTE_TAG_KEY) || '{}'); return map && typeof map === 'object' ? map : {}; } catch (_) { return {}; }
+    }
+    function wpLastNoteTagRemember(row, tag) {
+        let path = '';
+        try { path = wpRowCrmPath(row); } catch (_) {}
+        if (!path || !tag) return;
+        const map = wpLastNoteTagAll();
+        const old = map[path];
+        if (old && old.type === tag.type && old.text === tag.text) return;
+        const now = Date.now();
+        Object.keys(map).forEach(function(key) { if (now - Number(map[key] && map[key].at) > 3 * 86400000) delete map[key]; });
+        map[path] = { type: tag.type, text: tag.text, at: now };
+        try { localStorage.setItem(WP_LAST_NOTE_TAG_KEY, JSON.stringify(map)); } catch (_) {}
+    }
+    function wpEarlierNoteTag(row) {
+        let path = '';
+        try { path = wpRowCrmPath(row); } catch (_) {}
+        if (!path) return null;
+        try {
+            const cached = WP_CRM_DETAILS_CACHE.get(path) || WP_CRM_DETAILS_CACHE.get(path.replace(/\/details_v\d+\/?$/, ''));
+            const tasks = cached && cached.data && Array.isArray(cached.data.tasks) ? cached.data.tasks : [];
+            for (const task of tasks) {
+                const found = wpDetectNoteTag(String(task && task.note || '').replace(/\s+/g, ' ').trim());
+                if (found) { wpLastNoteTagRemember(row, found); return found; }
+            }
+        } catch (_) {}
+        const kept = wpLastNoteTagAll()[path];
+        // 1.7.376: BC / HIGH VOL remembered before 1.7.373 are not shown
+        if (kept && (kept.type === 'bc' || kept.type === 'high-vol')) return null;
+        return kept && kept.type ? { type: String(kept.type), text: String(kept.text || kept.type) } : null;
+    }
     function wpUpdateTransferTag(row, taskText) {
         wpUpdateTransferNoteTag(row, taskText);
         // Keep the real price tags (loaded in the background) in place.
@@ -10186,7 +10418,10 @@ async function wpTransferAssistantExtensionEnabled() {
             .replace(/\s+/g, ' ')
             .trim();
 
-        const tag = wpDetectNoteTag(cleanTaskText);
+        let tag = wpDetectNoteTag(cleanTaskText);
+        // 1.7.342: a newer note that is not a tag keeps the last tag
+        if (tag) wpLastNoteTagRemember(row, tag);
+        else if (cleanTaskText) tag = wpEarlierNoteTag(row);
 
         // Performance (1.7.185): the cell was emptied and rebuilt on every
         // pass; now only when the tag is different or the badge is missing.
@@ -10829,17 +11064,10 @@ async function wpTransferAssistantExtensionEnabled() {
             const title = mark ? 'AutoCancel runs out at ' + at + ' to pickup — ' + (mark === 'late' ? 'AFTER' : 'before') + ' the ' + limitInfo.mark : '';
             if (autoCancelCell.title !== title) autoCancelCell.title = title;
         } catch (_) {}
-        // 1.7.296: mod's own auto-cancel coming (set by wpAutoTopRuleCheck each
-        // round): "cancel in 12m" in front of the timer. Dropped when mod has
-        // not confirmed it for 3 minutes (mod off, assigned, gone).
-        try {
-            const cancelAt = Number(row.dataset.wpCancelAt || 0);
-            const fresh = cancelAt && Date.now() - Number(row.dataset.wpCancelSeen || 0) < 3 * 60000;
-            const left = fresh ? Math.max(0, Math.round((cancelAt - Date.now()) / 60000)) : null;
-            const label = left === null ? '' : (left <= 0 ? 'cancelling now' : 'cancel in ' + left + 'm');
-            if ((autoCancelCell.dataset.wpCancelIn || '') !== label) { if (label) autoCancelCell.dataset.wpCancelIn = label; else delete autoCancelCell.dataset.wpCancelIn; }
-            if (autoCancelCell.classList.contains('wp-ac-soon') !== Boolean(label)) autoCancelCell.classList.toggle('wp-ac-soon', Boolean(label));
-        } catch (_) {}
+        // 1.7.416: no "cancel in …" label in front of the timer any more (wlcm's own
+        // cancellation time is still in its cards and the Terminal)
+        if (autoCancelCell.dataset.wpCancelIn) delete autoCancelCell.dataset.wpCancelIn;
+        if (autoCancelCell.classList.contains('wp-ac-soon')) autoCancelCell.classList.remove('wp-ac-soon');
     }
 
     // ============================================================
@@ -10939,6 +11167,14 @@ async function wpTransferAssistantExtensionEnabled() {
         });
     }
 
+    // 1.7.399: the quickbar's Raise starting on the EM Project suggestion: on by default
+    function wpQuickbarSuggestOn() {
+        try { return localStorage.getItem('wp_quickbar_suggest_v1') !== '0'; } catch (_) { return true; }
+    }
+    function wpQuickbarSuggestSet(on) {
+        try { localStorage.setItem('wp_quickbar_suggest_v1', on ? '1' : '0'); } catch (_) {}
+    }
+
     // ---- Quickbar on the transfer page (1.7.264) ----
     // The same quickbar as on the dashboard (Raise % with the new price,
     // Note, BC, Final BC, Apply, A/C Off), opened from a small "Quickbar"
@@ -10946,6 +11182,57 @@ async function wpTransferAssistantExtensionEnabled() {
     // own bar built for this one transfer, so everything it does — the
     // workflow in a background tab, the WhatsApp message — is the same. When
     // the work is done this page loads again to show the result.
+    // ---- Split message (1.7.337) ----
+    // Read from the open transfer page: traveller first name, From / To
+    // addresses, pickup date and time (transfer_from_datetime), the booking
+    // number (w-…) and the booked car.
+    function wpSplitInfoFromPage() {
+        const value = function(id) { const el = document.getElementById(id); return el ? String(el.value || '').replace(/\s+/g, ' ').trim() : ''; };
+        let car = '';
+        try { car = String(wpFindBookedCarType() || ''); } catch (_) {}
+        const booking = (String(document.body ? document.body.innerText : '').match(/\bw-\d+(?:-\d+)?\b/i) || String(document.title || '').match(/\bw-\d+(?:-\d+)?\b/i) || [])[0] || '';
+        return { name: value('traveler_first_name'), from: value('transfer_from_address'), to: value('transfer_to_address'), when: value('transfer_from_datetime'), booking: booking, car: car };
+    }
+    // { text, what, missing } — or { error } when the car is not a minivan / minibus.
+    function wpSplitMessage(info) {
+        info = info || {};
+        const car = String(info.car || '').toLowerCase().replace(/\s+/g, '');
+        const bus = /minibus|^bus$/.test(car), van = !bus && /minivan|^van$/.test(car);
+        if (!bus && !van) return { error: 'the booked car is ' + (info.car || 'not readable') + ', not a minivan or minibus' };
+        const missing = [];
+        const take = function(text, label) { if (!text) missing.push(label); return text || '(' + label + ')'; };
+        const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const parts = String(info.when || '').match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+        let date = '', time = '';
+        if (parts) {
+            const day = Number(parts[3]);
+            const suffix = day % 10 === 1 && day !== 11 ? 'st' : day % 10 === 2 && day !== 12 ? 'nd' : day % 10 === 3 && day !== 13 ? 'rd' : 'th';
+            date = day + suffix + ' of ' + months[Number(parts[2]) - 1] + ' ' + parts[1];
+            time = parts[4] + ':' + parts[5];
+        }
+        const name = take(String(info.name || '').split(' ')[0], 'name');
+        const from = take(info.from, 'pickup address');
+        const to = take(info.to, 'dropoff address');
+        date = take(date, 'date');
+        time = take(time, 'pickup time');
+        const booking = take(info.booking, 'booking number');
+        const text = [
+            'Dear ' + name + ',',
+            '',
+            'We are contacting you in regards to your Welcome Pickups transfer from ' + from + ' to ' + to + ', scheduled for the ' + date + ' at ' + time + ', under reference number ' + booking + '.',
+            '',
+            'Kindly be advised that regrettably, we are not able to accommodate your transfer with a ' + (bus ? 'minibus' : 'minivan') + ', but we will be able to accommodate your transfer with ' + (bus ? 'one minivan and one sedan vehicle' : 'two sedan vehicles') + ' with no additional cost to you, also offering you a more comfortable ride.',
+            '',
+            'In the event that you don\'t agree, kindly be advised that your transfer will be cancelled and fully refunded back to you.',
+            '',
+            'Should you require any further assistance, please do not hesitate to contact us.',
+            '',
+            'Kind regards,',
+            'Argiro',
+            'Welcome Pickups Support Team'
+        ].join('\n');
+        return { text: text, what: bus ? 'minibus → 1 minivan + 1 sedan' : 'minivan → 2 sedans', missing: missing };
+    }
     function wpTransferPageQuickbar() {
         if (!wpIsTransferDetailPage() || document.getElementById('wp-page-quickbar')) return;
         // not on the tabs the extension itself opened to do a job
@@ -10960,7 +11247,7 @@ async function wpTransferAssistantExtensionEnabled() {
 
         const host = document.createElement('div');
         host.id = 'wp-page-quickbar';
-        Object.assign(host.style, { position: 'fixed', left: '12px', bottom: '12px', zIndex: '2147482000', display: 'flex', alignItems: 'center', gap: '8px', font: '12px Consolas, "Cascadia Mono", monospace' });
+        Object.assign(host.style, { position: 'fixed', left: '12px', bottom: '12px', zIndex: '2147482000', display: 'flex', alignItems: 'center', gap: '8px', font: '12px Segoe UI,system-ui,sans-serif' });
         const table = document.createElement('table');
         Object.assign(table.style, { borderCollapse: 'collapse', margin: '0', width: 'auto', background: 'transparent', border: '0' });
         const row = document.createElement('tr');
@@ -10985,6 +11272,13 @@ async function wpTransferAssistantExtensionEnabled() {
         body.appendChild(row);
         table.appendChild(body);
         host.appendChild(table);
+        // 1.7.337: Split — the "two vehicles instead of a minivan / minibus" message for the traveller, copied
+        const split = document.createElement('a');
+        split.href = '#';
+        split.textContent = 'Split';
+        split.title = 'Copy the split message for the traveller: a minivan becomes 2 sedans, a minibus 1 minivan + 1 sedan (name, addresses, date, time and booking number filled in)';
+        Object.assign(split.style, { display: 'inline-block', padding: '7px 13px', borderRadius: '9px', background: 'rgba(14,20,22,0.62)', backdropFilter: 'blur(18px)', border: '1px solid rgba(143,255,213,0.45)', color: '#8fffd5', fontWeight: '700', textDecoration: 'none', cursor: 'pointer', boxShadow: '0 6px 18px rgba(0,0,0,0.35)' });
+        host.appendChild(split);
         host.appendChild(status);
         document.body.appendChild(host);
 
@@ -10993,6 +11287,15 @@ async function wpTransferAssistantExtensionEnabled() {
             status.style.display = text ? '' : 'none';
             status.style.color = tone === 'error' ? '#ff8a80' : tone === 'ok' ? '#6fd16f' : '#dfe4e6';
         };
+        split.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const info = wpSplitInfoFromPage();
+            const made = wpSplitMessage(info);
+            if (!made.text) { say('Split: ' + made.error, 'error'); return; }
+            const copied = wpCopyTextFromUserGesture(made.text);
+            say(copied ? 'Split message copied (' + made.what + ')' + (made.missing.length ? ' — not found on the page: ' + made.missing.join(', ') : '') : 'Split: could not copy', copied && !made.missing.length ? 'ok' : 'error');
+        });
         row.__wpTransferPage = true;
         row.__wpCityText = city;
         row.__wpOrderLabel = order ? '#' + order : '#' + id;
@@ -11030,6 +11333,280 @@ async function wpTransferAssistantExtensionEnabled() {
             }, 1000);
         };
         wpSetupOrderQuickActions(row);
+    }
+
+    // ---- 1.7.327: tick boxes + worked-on mark (Em Hailing lists) ----
+    // Left: a tick box in its own first column (Shift-click: a range). A
+    // quickbar button you press on a ticked transfer is then pressed on every
+    // ticked transfer too, each with its own row's rules; the ticks are
+    // cleared. BC&G / Final BC go one after another (each WhatsApp message
+    // waits for the previous one), and only with WhatsApp auto-send on.
+    // Right: a dot in the last column — mint = you worked on it, purple =
+    // only wlcm did (1.7.329), grey = nobody. Yours is set by your own
+    // quickbar / City Manager / phone / A/C Off actions and notes you added
+    // through wlcm; a click on the dot turns yours on or off.
+    const wpBulkSelected = new Set();
+    let wpBulkLastBox = null;
+    function wpBulkPage() {
+        return /[?&]em_hailing=true/.test(window.location.search) && !wpIsTransferDetailPage();
+    }
+    function wpBulkFindRows() {
+        const seen = {};
+        return Array.from(document.querySelectorAll('table.transfers tr')).filter(function(row) {
+            const id = row.__wpBulkId;
+            if (!id || seen[id] || !wpBulkSelected.has(id) || typeof row.__wpQuickBar !== 'function') return false;
+            seen[id] = true;
+            return true;
+        });
+    }
+    function wpBulkCountShow() {
+        let pill = document.getElementById('wp-bulk-pill');
+        const count = wpBulkSelected.size;
+        if (!count) { if (pill) pill.style.display = 'none'; return; }
+        if (!pill) {
+            pill = document.createElement('div');
+            pill.id = 'wp-bulk-pill';
+            Object.assign(pill.style, { position: 'fixed', left: '14px', bottom: '14px', zIndex: '2147483646', display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 9px', background: 'rgba(17,20,22,.88)', backdropFilter: 'blur(6px)', border: '1px solid rgba(143,255,213,.35)', borderRadius: '8px', color: '#8fffd5', font: '700 11px Segoe UI,system-ui,sans-serif', boxShadow: '0 6px 18px rgba(0,0,0,.45)' });
+            const text = document.createElement('span');
+            text.className = 'wp-bulk-pill-text';
+            const clear = document.createElement('button');
+            clear.type = 'button';
+            clear.textContent = 'Clear';
+            clear.title = 'Untick all';
+            Object.assign(clear.style, { height: '21px', padding: '0 7px', background: '#111416', color: '#8fffd5', border: '1px solid rgba(143,255,213,.25)', borderRadius: '5px', font: '700 11px Segoe UI,system-ui,sans-serif', cursor: 'pointer' });
+            clear.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); wpBulkClear(); });
+            pill.appendChild(text);
+            pill.appendChild(clear);
+            (document.body || document.documentElement).appendChild(pill);
+        }
+        pill.querySelector('.wp-bulk-pill-text').textContent = count + ' ticked — open the quickbar on a ticked one';
+        pill.style.display = 'flex';
+    }
+    function wpBulkClear() {
+        wpBulkSelected.clear();
+        wpBulkLastBox = null;
+        document.querySelectorAll('input.wp-bulk-sel').forEach(function(box) { box.checked = false; });
+        wpBulkCountShow();
+    }
+    // The choices of the bar you pressed.
+    function wpBulkPick(bar) {
+        const selects = bar.querySelectorAll('select');
+        const custom = bar.querySelector('input[type="text"]');
+        const amount = bar.querySelector('input.wp-raise-amount');
+        return { raise: selects[0] ? String(selects[0].value || '') : '', note: selects[1] ? String(selects[1].value || '') : '', custom: custom ? String(custom.value || '') : '', amount: amount ? String(amount.value || '') : '' };
+    }
+    // The same choices in another row's own quickbar, then its own button.
+    function wpBulkPress(row, label, pick) {
+        const api = typeof row.__wpQuickBar === 'function' ? row.__wpQuickBar() : null;
+        const bar = api && api.bar;
+        const selects = bar ? bar.querySelectorAll('select') : [];
+        const button = bar ? Array.from(bar.querySelectorAll('button')).find(function(node) { return String(node.textContent || '').trim() === label; }) : null;
+        const link = row.querySelector('a[href*="/admin/transfers/"]');
+        const name = String(link ? link.textContent : row.__wpBulkId).trim();
+        if (!button || selects.length < 2 || !document.documentElement.contains(row)) { wpDashLog('wlcm: ticked ' + name + ' is no longer in the list — skipped', 'warn'); return false; }
+        const has = function(select, value) { return !value || Array.from(select.options).some(function(option) { return option.value === value; }); };
+        if (!has(selects[0], pick.raise) || !has(selects[1], pick.note)) { wpDashLog('wlcm: ticked ' + name + ' — that raise or note is not in its quickbar — skipped', 'warn'); return false; }
+        selects[0].value = pick.raise;
+        selects[1].value = pick.note;
+        selects[1].dispatchEvent(new Event('change'));
+        const custom = bar.querySelector('input[type="text"]');
+        if (custom) custom.value = pick.note === '__custom__' ? pick.custom : '';
+        const amount = bar.querySelector('input.wp-raise-amount'); // 1.7.343
+        if (amount) amount.value = pick.raise === '__amount__' ? (pick.amount || '') : '';
+        button.click();
+        return true;
+    }
+    // After your own click on a ticked row's quickbar button.
+    function wpBulkFollow(sourceRow, label, pick) {
+        if (!sourceRow.__wpBulkId || !wpBulkSelected.has(sourceRow.__wpBulkId)) return;
+        const rows = wpBulkFindRows().filter(function(row) { return row.__wpBulkId !== sourceRow.__wpBulkId; });
+        const ids = rows.map(function(row) { return row.__wpBulkId; });
+        wpBulkClear();
+        if (!rows.length) return;
+        const whatsApp = label === 'BC&G' || label === 'Final BC';
+        if (whatsApp && !wpWhatsAppAutoSendOn()) {
+            wpDashLog('wlcm: ' + label + ' done for this transfer only — the other ' + rows.length + ' ticked need WhatsApp auto-send on (one clipboard for several messages would mix them up)', 'warn');
+            return;
+        }
+        wpDashLog('wlcm: ' + label + ' for ' + (rows.length + 1) + ' ticked transfers' + (whatsApp ? ', one after another' : ''));
+        let previous = sourceRow;
+        let waitFrom = Date.now();
+        let index = 0;
+        (function next() {
+            if (index >= ids.length) { wpDashLog('✓ wlcm: ' + label + ' started for all ' + (ids.length + 1) + ' ticked transfers'); return; }
+            // Each WhatsApp message waits for the previous hand-off (max 3 min).
+            if (whatsApp && previous.__wpHandOffBusy && Date.now() - waitFrom < 180000) { window.setTimeout(next, 1000); return; }
+            const id = ids[index];
+            // The list may have been refreshed: find the row again by its id.
+            let row = rows[index];
+            index += 1;
+            if (!document.documentElement.contains(row)) {
+                row = Array.from(document.querySelectorAll('table.transfers tr')).find(function(node) { return node.__wpBulkId === id && typeof node.__wpQuickBar === 'function'; }) || row;
+            }
+            wpBulkPress(row, label, pick);
+            previous = row;
+            waitFrom = Date.now();
+            window.setTimeout(next, whatsApp ? 3000 : 1500);
+        })();
+    }
+
+    const WP_WORKED_KEY = 'wp_worked_v1';
+    // 1.7.328: what wlcm itself did on a transfer (its own colour on the dot).
+    const WP_WORKED_GHAS_KEY = 'wp_worked_ghas_v1';
+    function wpWorkedLoad(key) {
+        try { return JSON.parse(localStorage.getItem(key || WP_WORKED_KEY) || '{}') || {}; } catch (_) { return {}; }
+    }
+    function wpWorkedMark(id, on, how) {
+        if (!id) return;
+        try {
+            const map = wpWorkedLoad();
+            const now = Date.now();
+            Object.keys(map).forEach(function(key) { if (!(now - Number(map[key] && map[key].at) < 7 * 86400000)) delete map[key]; });
+            map[id] = { at: now, on: Boolean(on), how: String(how || '') };
+            localStorage.setItem(WP_WORKED_KEY, JSON.stringify(map));
+        } catch (_) {}
+        wpWorkedPaintAll();
+    }
+    function wpWorkedGhasMark(id, how) {
+        id = String(id || '');
+        if (!/^\d+$/.test(id)) return;
+        try {
+            const map = wpWorkedLoad(WP_WORKED_GHAS_KEY);
+            const now = Date.now();
+            Object.keys(map).forEach(function(key) { if (!(now - Number(map[key] && map[key].at) < 7 * 86400000)) delete map[key]; });
+            map[id] = { at: now, how: String(how || '').slice(0, 60) };
+            localStorage.setItem(WP_WORKED_GHAS_KEY, JSON.stringify(map));
+        } catch (_) {}
+        wpWorkedPaintAll();
+    }
+    // { on, at, how } for you (your latest mark, or a newer note you added
+    // through wlcm) and { at, how } for wlcm (its actions and notes).
+    function wpWorkedState(id) {
+        const entry = wpWorkedLoad()[id];
+        let noteAt = 0;
+        let ghasNoteAt = 0;
+        try {
+            ((JSON.parse(localStorage.getItem('wp_note_log_v1') || '{}') || {})[id] || []).forEach(function(note) {
+                if (!note) return;
+                if (note.by === 'you') { if (Number(note.at) > noteAt) noteAt = Number(note.at); }
+                else if (Number(note.at) > ghasNoteAt) ghasNoteAt = Number(note.at);
+            });
+        } catch (_) {}
+        const you = entry && Number(entry.at) >= noteAt
+            ? { on: Boolean(entry.on), at: Number(entry.at) || 0, how: String(entry.how || '') }
+            : noteAt ? { on: true, at: noteAt, how: 'note' } : { on: false, at: 0, how: '' };
+        const mark = wpWorkedLoad(WP_WORKED_GHAS_KEY)[id];
+        const wlcm = mark && Number(mark.at) >= ghasNoteAt ? { at: Number(mark.at) || 0, how: String(mark.how || '') } : ghasNoteAt ? { at: ghasNoteAt, how: 'note' } : { at: 0, how: '' };
+        you.wlcm = wlcm;
+        return you;
+    }
+    function wpWorkedPaint(dot, id) {
+        const state = wpWorkedState(id);
+        const clock = function(at) { return new Date(at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }); };
+        const ghasLine = state.wlcm.at ? ' wlcm worked on it ' + clock(state.wlcm.at) + (state.wlcm.how ? ' (' + state.wlcm.how + ')' : '') + '.' : '';
+        // Mint: you. Pink (1.7.331, same strength as the mint): only wlcm. Grey: nobody.
+        const colour = state.on ? '#8fffd5' : state.wlcm.at ? '#ff8fd5' : '';
+        dot.style.background = colour || 'rgba(255,255,255,.06)';
+        dot.style.border = colour ? '1px solid ' + colour : '1px solid rgba(255,255,255,.45)';
+        dot.style.boxShadow = colour ? '0 0 6px ' + (state.on ? 'rgba(143,255,213,.55)' : 'rgba(255,143,213,.55)') : 'none';
+        dot.title = (state.on
+            ? 'Worked on by you — ' + clock(state.at) + (state.how ? ' (' + state.how + ')' : '') + '.'
+            : 'Not worked on by you' + (state.at ? ' (unmarked ' + clock(state.at) + ')' : '') + '.') +
+            ghasLine + ' Click: mark as ' + (state.on ? 'not ' : '') + 'worked on by you';
+    }
+    // 1.7.328: the tick box and the dot have their own columns (first and
+    // last), so the City cell and the row height stay as they were.
+    function wpBulkCell(row, tag, cls, first) {
+        let cell = row.querySelector(':scope > ' + tag + '.' + cls);
+        if (!cell) {
+            cell = document.createElement(tag);
+            cell.className = cls;
+        }
+        if (first ? row.firstElementChild !== cell : row.lastElementChild !== cell) {
+            if (first) row.insertBefore(cell, row.firstElementChild); else row.appendChild(cell);
+        }
+        return cell;
+    }
+    function wpBulkSetupRow(row) {
+        const link = typeof wpGetTransferHistoryLinkFromRow === 'function' ? wpGetTransferHistoryLinkFromRow(row) : null;
+        const id = link ? wpOutcomeId(link.href) : '';
+        const selCell = wpBulkCell(row, 'td', 'wp-sel-cell', true);
+        const workedCell = wpBulkCell(row, 'td', 'wp-worked-cell', false);
+        if (!id) return;
+        row.__wpBulkId = id;
+        let box = selCell.querySelector('input.wp-bulk-sel');
+        if (!box) {
+            box = document.createElement('input');
+            box.type = 'checkbox';
+            box.className = 'wp-bulk-sel';
+            box.title = 'Tick several transfers (Shift-click: a range), then press a quickbar button on one of them: it is done for all ticked';
+            box.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+            box.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const boxes = Array.from(document.querySelectorAll('input.wp-bulk-sel'));
+                const from = e.shiftKey && wpBulkLastBox ? boxes.indexOf(wpBulkLastBox) : -1;
+                const to = boxes.indexOf(box);
+                const range = from >= 0 && to >= 0 ? boxes.slice(Math.min(from, to), Math.max(from, to) + 1) : [box];
+                range.forEach(function(node) {
+                    node.checked = box.checked;
+                    const nodeRow = node.closest('tr');
+                    const nodeId = nodeRow && nodeRow.__wpBulkId;
+                    if (!nodeId) return;
+                    if (box.checked) wpBulkSelected.add(nodeId); else wpBulkSelected.delete(nodeId);
+                });
+                wpBulkLastBox = box;
+                wpBulkCountShow();
+            });
+            selCell.appendChild(box);
+        }
+        if (box.checked !== wpBulkSelected.has(id)) box.checked = wpBulkSelected.has(id);
+        let dot = workedCell.querySelector('.wp-worked-dot');
+        if (!dot) {
+            dot = document.createElement('span');
+            dot.className = 'wp-worked-dot';
+            dot.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+            dot.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const current = row.__wpBulkId || id;
+                wpWorkedMark(current, !wpWorkedState(current).on, 'by hand');
+            });
+            workedCell.appendChild(dot);
+        }
+        wpWorkedPaint(dot, id);
+    }
+    // Header cells + every row of every list table (the CRM and the column
+    // arranging redraw rows; this puts the two columns back in place).
+    function wpWorkedPaintAll() {
+        if (!wpBulkPage()) return;
+        if (!document.getElementById('wp-bulk-style')) {
+            const style = document.createElement('style');
+            style.id = 'wp-bulk-style';
+            style.textContent =
+                'table.transfers th.wp-sel-cell,table.transfers td.wp-sel-cell,table.transfers th.wp-worked-cell,table.transfers td.wp-worked-cell{width:1%!important;white-space:nowrap!important;padding:0 4px!important;text-align:center!important;vertical-align:middle!important}' +
+                // 1.7.330: the dot sits right after Driver: Driver as narrow as its text, the dot column takes the spare width (dot on its left)
+                'table.transfers td:has(+ td.wp-worked-cell),table.transfers th:has(+ th.wp-worked-cell){width:1%!important;white-space:nowrap!important}' +
+                'table.transfers th.wp-worked-cell,table.transfers td.wp-worked-cell{width:100%!important;text-align:left!important;padding-left:8px!important}' +
+                'table.transfers input.wp-bulk-sel{margin:0;width:13px;height:13px;accent-color:#8fffd5;cursor:pointer;vertical-align:middle;position:relative;z-index:2}' +
+                'table.transfers .wp-worked-dot{display:inline-block;width:10px;height:10px;border-radius:50%;box-sizing:border-box;cursor:pointer;vertical-align:middle}';
+            (document.head || document.documentElement).appendChild(style);
+        }
+        document.querySelectorAll('table.transfers').forEach(function(table) {
+            const rows = Array.from(table.querySelectorAll(':scope > thead > tr, :scope > tbody > tr'));
+            const header = rows.find(function(row) { return row.querySelector(':scope > th'); });
+            if (!header) return;
+            wpBulkCell(header, 'th', 'wp-sel-cell', true).title = 'Tick transfers to act on them together';
+            const workedTh = wpBulkCell(header, 'th', 'wp-worked-cell', false);
+            workedTh.title = 'Worked on: mint = you, pink = wlcm only, grey = nobody';
+            rows.forEach(function(row) {
+                if (row === header || row.classList.contains('wp-rx-detail') || !row.querySelector(':scope > td')) return;
+                try { wpBulkSetupRow(row); } catch (_) {}
+            });
+        });
+    }
+    if (wpBulkPage()) {
+        window.setInterval(wpWorkedPaintAll, 3000);
+        window.addEventListener('storage', function(e) { if (e.key === WP_WORKED_KEY || e.key === WP_WORKED_GHAS_KEY || e.key === 'wp_note_log_v1') wpWorkedPaintAll(); });
     }
 
     function wpSetupOrderQuickActions(row) {
@@ -11150,6 +11727,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const config = wpGetManagedCostOptions().find(function(item) { return String(item.value) === String(value); });
             const pct = String(value).match(/^pct:([\d.]+):([\d.]+)$/);
             if (!config && pct) return '+' + pct[1] + '% (+' + pct[2] + '% total)';
+            if (/^eur:/.test(String(value))) return 'to ' + String(value).slice(4) + '€';
             return config ? config.label : '+' + value + '%';
         }
 
@@ -11238,7 +11816,10 @@ async function wpTransferAssistantExtensionEnabled() {
                 }
                 clearInterval(timer);
                 release();
-                const text = wpBuildBroadcastWhatsAppText(mode, [{ stored: stored, city: city, newPrice: newPrice, acMinutes: acMinutes }], '');
+                const groupEntry = { stored: stored, city: city, newPrice: newPrice, acMinutes: acMinutes };
+                const text = wpBuildBroadcastWhatsAppText(mode, [groupEntry], '');
+                // 1.7.367: held a moment and sent with the city's other transfers (one message per city)
+                if (text && !onTransferPage && wpWhatsAppAutoSendOn() && wpGroupHold(city, mode, groupEntry, label, transferUrl)) { finish(); return; }
                 if (text && await wpWhatsAppAutoSend(city, text, label)) { finish(); return; }
                 if (text && await wpWriteClipboardText(text)) {
                     wpDashLog('✓ ' + label + ': WhatsApp message copied — paste with Ctrl+V');
@@ -11270,20 +11851,29 @@ async function wpTransferAssistantExtensionEnabled() {
         function button(label, title, handler) {
             const b=document.createElement('button'); b.type='button'; b.textContent=label; b.title=title;
             Object.assign(b.style,{height:'27px',background:'#111416',color:'#8fffd5',border:'1px solid rgba(143,255,213,.20)',borderRadius:'6px',padding:'4px 9px',fontSize:'11px',fontWeight:'700',cursor:'pointer',whiteSpace:'nowrap',flex:'0 0 auto'});
-            b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();handler();}); return b;
+            // 1.7.327: your own click on a ticked row: the same button on every ticked row
+            b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();const pick=e.isTrusted?wpBulkPick(bar):null;handler();if(pick)try{wpBulkFollow(row,label,pick);}catch(_){}}); return b;
         }
 
         const raise=document.createElement('select'); raise.title='Choose a raise percentage';
         Object.assign(raise.style,{height:'27px',minWidth:'105px',padding:'3px 7px',background:'#111416',color:'#8fffd5',border:'1px solid rgba(143,255,213,.20)',borderRadius:'6px',fontSize:'11px',outline:'none'});
         let o=document.createElement('option'); o.value=''; o.textContent='Raise %'; raise.appendChild(o);
         (typeof wpGetManagedCostOptions==='function'?wpGetManagedCostOptions():[]).forEach(config=>{o=document.createElement('option');o.value=String(config.value);o.textContent=String(config.label||('+'+config.value+'%'));raise.appendChild(o);});
+        // 1.7.343: Custom amount: last option; type the exact new driver cost.
+        o=document.createElement('option');o.value='__amount__';o.textContent='Custom amount…';raise.appendChild(o);
+        const customAmount=document.createElement('input'); customAmount.type='number'; customAmount.min='1'; customAmount.step='1'; customAmount.placeholder='DC €'; customAmount.title='Exact new driver cost'; customAmount.className='wp-raise-amount';
+        Object.assign(customAmount.style,{display:'none',height:'27px',width:'72px',boxSizing:'border-box',padding:'3px 6px',background:'#111416',color:'#e8eef0',border:'1px solid rgba(143,255,213,.30)',borderRadius:'6px',fontSize:'11px',outline:'none',flex:'0 0 auto'});
+        customAmount.addEventListener('click',e=>e.stopPropagation());
+        customAmount.addEventListener('keydown',e=>e.stopPropagation());
+        function raiseChoice(){ if(raise.value!=='__amount__') return String(raise.value||'').trim(); const n=parseFloat(String(customAmount.value||'').replace(',','.')); return Number.isFinite(n)&&n>0 ? 'eur:'+(Math.round(n*100)/100) : ''; }
 
         // 1.7.264: the driver cost this raise gives, shown as soon as a % is picked
         const priceNote=document.createElement('span'); priceNote.title='Driver cost now and after this raise';
         Object.assign(priceNote.style,{display:'none',height:'27px',lineHeight:'27px',padding:'0 8px',color:'#ffd27a',border:'1px solid rgba(255,210,122,.35)',borderRadius:'6px',fontSize:'11px',fontWeight:'700',whiteSpace:'nowrap',flex:'0 0 auto',boxSizing:'border-box'});
         let priceData=null, priceAsked=false;
         function showPrice(){
-            const value=String(raise.value||'').trim();
+            customAmount.style.display=raise.value==='__amount__'?'':'none';
+            const value=raiseChoice();
             if(!value){ priceNote.style.display='none'; try{positionBar();}catch(_){} return; }
             priceNote.style.display='';
             if(!priceData){
@@ -11298,11 +11888,12 @@ async function wpTransferAssistantExtensionEnabled() {
             const money=function(amount){ return (Math.round(Number(amount)*100)/100)+'€'; };
             const dc=priceData.dc===null||priceData.dc===undefined?NaN:Number(priceData.dc);
             const config=wpGetManagedCostOptions().find(function(item){ return String(item.value)===value; });
-            const next=config&&config.dcEqualsTc ? (priceData.tc===null||priceData.tc===undefined?NaN:Number(priceData.tc)) : Number(wpCalculateRaisedDriverCost(String(dc),value));
+            const next=/^eur:/.test(value) ? Number(value.slice(4)) : config&&config.dcEqualsTc ? (priceData.tc===null||priceData.tc===undefined?NaN:Number(priceData.tc)) : Number(wpCalculateRaisedDriverCost(String(dc),value));
             priceNote.textContent=Number.isFinite(dc)&&Number.isFinite(next)&&next>0 ? 'DC '+money(dc)+' → '+money(next) : 'DC: price not read';
             try{positionBar();}catch(_){}
         }
-        raise.addEventListener('change',showPrice);
+        raise.addEventListener('change',function(){ showPrice(); if(raise.value==='__amount__'){ customAmount.value=''; try{customAmount.focus();}catch(_){} } });
+        customAmount.addEventListener('input',showPrice);
 
         const note=document.createElement('select'); note.title='Choose a task note';
         Object.assign(note.style,{height:'27px',minWidth:'230px',maxWidth:'340px',padding:'3px 7px',background:'#111416',color:'#8fffd5',border:'1px solid rgba(143,255,213,.20)',borderRadius:'6px',fontSize:'11px',outline:'none',flex:'0 1 300px'});
@@ -11335,7 +11926,7 @@ async function wpTransferAssistantExtensionEnabled() {
         });
 
         function getQuickWorkflowOptions(broadcastMode) {
-            let raiseValue = String(raise.value || '').trim();
+            let raiseValue = raiseChoice();
             const selectedNote = noteText();
             const customMessage = /^em$/i.test(selectedNote) ? '' : selectedNote;
             // A last-resort note carries its own raise when none is chosen.
@@ -11364,6 +11955,8 @@ async function wpTransferAssistantExtensionEnabled() {
         // 1.7.266: Apply only writes the notes and changes the price — it never sends to BC or Final BC
         const apply=button('Apply','EM if untagged, the raise and its note, the selected note — nothing is broadcast',function(){
             const options = getQuickWorkflowOptions('');
+            // 1.7.427: nothing is sent, so the raise note is only "raised to +X% DC" (no "/ sent to BC, Group")
+            if (options.raiseMessage && !options.afterFinal) options.raiseMessage = String(options.raiseMessage).replace(/\s*\/\s*sent\s+to\s+BC(?:\s*,\s*Group|\s+and\s+Group)?\s*$/i, '').trim();
             if(!isUntagged && !options.priceIncrease && !options.customMessage)return;
             openQuickWorkflow(options);
             closeBar();
@@ -11408,10 +12001,10 @@ async function wpTransferAssistantExtensionEnabled() {
             closeBar();
         });
 
-        const finalBroadcast=button('Final BC','Apply the selected EM/raise/note workflow, then run native 1-Step Broadcast & mark as EM with AutoCancel ON; opens the city WhatsApp group. With no note picked, the note "sent to suggested / final BC" is added.',function(){
+        const finalBroadcast=button('Final BC','Apply the selected EM/raise/note workflow, then run native 1-Step Broadcast & mark as EM with AutoCancel ON; opens the city WhatsApp group. With no note picked, the note "final BC" is added.',function(){
             // Just Final BC, no note picked: the usual note is added (1.7.198).
             const finalOptions = getQuickWorkflowOptions('final');
-            if (!finalOptions.customMessage && !finalOptions.afterFinal) finalOptions.customMessage = 'sent to suggested / final BC';
+            if (!finalOptions.customMessage && !finalOptions.afterFinal) finalOptions.customMessage = 'final BC';
             openQuickWorkflow(finalOptions); // opens WhatsApp after copying the message
             closeBar();
         });
@@ -11431,6 +12024,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 if(typeof wpExtensionOpenInTab==='function')wpExtensionOpenInTab(url.toString(), {active:false, insert:true, setParent:true});
                 else window.open(url.toString(), '_blank');
                 wpDashLog(orderLabel() + ' (' + (cityText() || '?') + '): A/C Off tab opened');
+                try{ wpWorkedMark(wpOutcomeId(transferUrl), true, 'A/C Off'); }catch(_){}
                 try{ if(typeof row.__wpAfterOpen==='function') row.__wpAfterOpen('', false); }catch(_){}
             }catch(_){}
             closeBar();
@@ -11446,8 +12040,90 @@ async function wpTransferAssistantExtensionEnabled() {
         const acOffGap=document.createElement('span');
         Object.assign(acOffGap.style,{display:'inline-block',width:'14px',flex:'0 0 14px'});
 
-        // Order: Raise / Note / BC (+ A/C 30s) / Final BC / Apply / gap / A/C Off
+        // 1.7.400: a small "Copy" dropdown left of Raise: pick a driver message and that
+        // message with this transfer's details goes on the clipboard. Not a <select>:
+        // the ticked rows and the phone read the quickbar's selects in order, and not
+        // through button(): a copy is for this transfer only, never for all ticked.
+        const copyWrap=document.createElement('div');
+        Object.assign(copyWrap.style,{position:'relative',flex:'0 0 auto',display:'inline-flex'});
+        const copyBtn=document.createElement('button');
+        copyBtn.type='button'; copyBtn.className='wp-quick-copy-btn'; copyBtn.textContent='Copy ▾'; copyBtn.title='Copy a driver message with this transfer\'s details';
+        Object.assign(copyBtn.style,{height:'27px',background:'#111416',color:'#8fffd5',border:'1px solid rgba(143,255,213,.20)',borderRadius:'6px',padding:'4px 7px',fontSize:'11px',fontWeight:'700',cursor:'pointer',whiteSpace:'nowrap'});
+        const copyMenu=document.createElement('div');
+        copyMenu.className='wp-quick-copy-menu';
+        Object.assign(copyMenu.style,{display:'none',position:'absolute',left:'0',zIndex:'1',width:'330px',maxWidth:'calc(100vw - 24px)',maxHeight:'260px',overflowY:'auto',padding:'4px',boxSizing:'border-box',background:'#1f2529',border:'1px solid rgba(255,255,255,.14)',borderRadius:'10px',boxShadow:'0 10px 28px rgba(0,0,0,.55)'});
+        copyWrap.appendChild(copyBtn);
+        copyWrap.appendChild(copyMenu);
+        let copyData=null, copyJob=null, copyTimer=0;
+        function copySay(text){
+            clearTimeout(copyTimer);
+            copyBtn.textContent=text;
+            copyTimer=setTimeout(function(){ copyBtn.textContent='Copy ▾'; try{positionBar();}catch(_){} },1800);
+            try{positionBar();}catch(_){}
+        }
+        function copyMessageText(message){
+            const template=String(message||'');
+            if(template!==WP_DRIVER_MESSAGES[6]&&template!==WP_DRIVER_MESSAGES[7]) return template;
+            // The two last-call messages say the minutes left, as on the transfer page.
+            let minutes=null;
+            try{ const acCell=getAutoCancelCell(row); minutes=acCell?parseAutoCancelMinutes(acCell.textContent||''):null; }catch(_){}
+            if(!minutes&&Number(row.__wpAcMinutes)>0) minutes=Number(row.__wpAcMinutes);
+            return minutes>0?template.replace(/\b59\b/,String(Math.min(59,minutes))):template;
+        }
+        function copyBuild(message,data){
+            const details=data&&data.emDetails?String(data.emDetails):'';
+            if(!details) return '';
+            const prefix=copyMessageText(message);
+            const parsed=wpParseCRMClipboardText(details);
+            const lines=parsed?[parsed.dateTime,parsed.route,parsed.paxLug].filter(Boolean):[details.trim()];
+            if(parsed&&parsed.price&&wpIsItalianPriceCity(cityText())) lines.push('Price: '+parsed.price);
+            return (prefix?prefix+'\n\n':'')+lines.join('\n');
+        }
+        function copyLoad(){
+            copyData=null;
+            copyJob=wpFetchTransferCrmDetails(transferUrl,true).then(function(data){ copyData=data||null; return copyData; },function(){ return null; });
+            return copyJob;
+        }
+        async function copyPick(message){
+            copyMenu.style.display='none';
+            // Already loaded: copied right inside your click, which always works.
+            if(copyData){ const ready=copyBuild(message,copyData); if(ready&&wpCopyTextFromUserGesture(ready)){ copySay('Copied ✓'); return; } }
+            copyBtn.textContent='Copy …';
+            const data=await (copyJob||copyLoad());
+            const text=copyBuild(message,data);
+            copySay(text&&await wpWriteClipboardText(text)?'Copied ✓':'Not copied');
+        }
+        function copyAddItem(label,message){
+            const item=document.createElement('div');
+            item.className='wp-quick-copy-item'; item.textContent=label; item.title=label;
+            Object.assign(item.style,{padding:'5px 8px',borderRadius:'7px',font:'12px "Segoe UI",system-ui,sans-serif',lineHeight:'1.3',color:'#e8ecee',cursor:'pointer',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'});
+            item.addEventListener('mouseenter',function(){ item.style.background='rgba(255,255,255,.09)'; });
+            item.addEventListener('mouseleave',function(){ item.style.background=''; });
+            item.addEventListener('click',function(e){ e.preventDefault(); e.stopPropagation(); copyPick(message); });
+            copyMenu.appendChild(item);
+        }
+        copyBtn.addEventListener('click',function(e){
+            e.preventDefault(); e.stopPropagation();
+            if(copyMenu.style.display!=='none'){ copyMenu.style.display='none'; return; }
+            copyMenu.replaceChildren();
+            copyAddItem('Details only, no message','');
+            wpBuildManagedDriverMessages().forEach(function(message){ copyAddItem(copyMessageText(message),message); });
+            // Opens on the side where it fits; short on room: the bigger side, and it scrolls.
+            copyMenu.style.display='block';
+            const place=copyWrap.getBoundingClientRect();
+            const below=window.innerHeight-place.bottom-10, above=place.top-10;
+            const down=below>=260||below>=above;
+            copyMenu.style.top=down?'calc(100% + 5px)':'auto';
+            copyMenu.style.bottom=down?'auto':'calc(100% + 5px)';
+            copyMenu.style.maxHeight=Math.max(80,Math.min(260,down?below:above))+'px';
+            copyLoad();
+        });
+        bar.addEventListener('click',function(e){ if(!copyWrap.contains(e.target)) copyMenu.style.display='none'; });
+
+        // Order: Copy / Raise / Note / BC (+ A/C 30s) / Final BC / Apply / gap / A/C Off
+        bar.appendChild(copyWrap);
         bar.appendChild(raise);
+        bar.appendChild(customAmount);
         bar.appendChild(priceNote);
         bar.appendChild(note);
         bar.appendChild(customNote);
@@ -11479,6 +12155,27 @@ async function wpTransferAssistantExtensionEnabled() {
             document.querySelectorAll('.wp-order-quick-popout').forEach(other=>{if(other!==bar&&typeof other.__wpClose==='function')other.__wpClose();});
             bar.style.display='flex';
             if(!onTransferPage&&typeof wpSetOrderQuickActionOpen==='function')wpSetOrderQuickActionOpen(true);
+            // 1.7.327: how many ticked transfers this bar's buttons act on
+            try{
+                let chip=bar.querySelector('.wp-bulk-chip');
+                const count=row.__wpBulkId&&wpBulkSelected.has(row.__wpBulkId)?wpBulkSelected.size:0;
+                if(!chip){ chip=document.createElement('span'); chip.className='wp-bulk-chip'; chip.title='The button you press is done for every ticked transfer'; Object.assign(chip.style,{height:'27px',lineHeight:'27px',padding:'0 8px',color:'#111416',background:'#8fffd5',borderRadius:'6px',fontSize:'11px',fontWeight:'800',whiteSpace:'nowrap',flex:'0 0 auto',boxSizing:'border-box'}); bar.insertBefore(chip,bar.firstChild); }
+                chip.textContent='All '+count+' ticked';
+                chip.style.display=count>1?'':'none';
+            }catch(_){}
+            copyMenu.style.display='none';
+            // 1.7.345: on your first open, Raise starts on the EM Project suggested raise for this city (and car)
+            // 1.7.399: unless switched off in wlcm settings, Raises
+            try{
+                if(wpQuickbarSuggestOn()&&!raise.__wpSuggested&&!raise.value){
+                    raise.__wpSuggested=true;
+                    const carCell=row.querySelector(':scope > td.wp-car-cell');
+                    const tip=wpParseEmRaiseSuggestion(cityText(),carCell?String(carCell.textContent||'').trim():'');
+                    const pick=tip&&tip.kind==='pct'?Array.from(raise.options).find(function(option){ return option.value!==''&&option.value!=='__amount__'&&Number(option.value)===Number(tip.percent); }):
+                        tip&&tip.kind==='dctc'?Array.from(raise.options).find(function(option){ const config=wpGetManagedCostOptions().find(function(item){ return String(item.value)===option.value; }); return config&&config.dcEqualsTc; }):null;
+                    if(pick){ raise.value=pick.value; raise.title='Suggested raise (EM Project): '+String(tip.text||'').slice(0,120); }
+                }
+            }catch(_){}
             try{ showPrice(); }catch(_){}
             // Force layout after display so the popup dimensions are known before positioning.
             void bar.offsetWidth; positionBar();
@@ -11546,6 +12243,11 @@ async function wpTransferAssistantExtensionEnabled() {
             setupCity(
                 cityCell
             );
+
+            // 1.7.324: traveller comment in the city hover + city colour
+            if (transferLink) {
+                try { wpTravelerNoteWatch(cityCell, transferLink.href); } catch (_) {}
+            }
 
         }
 
@@ -11911,6 +12613,10 @@ async function wpTransferAssistantExtensionEnabled() {
                     cell.classList.add('wp-partner-cell');
                 }
 
+                if (key === 'order') {
+                    cell.classList.add('wp-order-cell'); // 1.7.396
+                }
+
                 if (key === 'from') {
                     cell.classList.add('wp-from-cell');
                 }
@@ -12168,280 +12874,177 @@ async function wpTransferAssistantExtensionEnabled() {
     // TRANSFER FOCUS MODE
     // ============================================================
 
-    let WP_TRANSFER_FOCUS_MODE = '';
+    // 1.7.380: the values combine: Athens, then Booking.com, then PICKUP shows the
+    // Athens Booking.com pickups. One value per column (another city replaces the
+    // city), the same value clicked again takes it off. Every column of a matching
+    // transfer stays lit. It only goes with the Clear button on the bar (or by taking
+    // each value off), and it stays through the page's refreshes in this tab.
+    const WP_TRANSFER_FOCUS_KEY = 'wp_transfer_focus_v1';
+    let wpTransferFocusFilters = null; // [{ group, value, label }]
+    let wpTransferFocusTimer = null;
 
-    function wpGetTransferFocusLinkCell(row) {
-        if (!row) {
-            return null;
+    function wpTransferFocusLoad() {
+        if (wpTransferFocusFilters) return wpTransferFocusFilters;
+        wpTransferFocusFilters = [];
+        try {
+            const saved = JSON.parse(sessionStorage.getItem(WP_TRANSFER_FOCUS_KEY) || 'null');
+            if (saved && saved.path === location.pathname && Array.isArray(saved.filters)) wpTransferFocusFilters = saved.filters;
+        } catch (_) {}
+        return wpTransferFocusFilters;
+    }
+    function wpTransferFocusSave() {
+        try {
+            if (wpTransferFocusFilters && wpTransferFocusFilters.length) sessionStorage.setItem(WP_TRANSFER_FOCUS_KEY, JSON.stringify({ path: location.pathname, filters: wpTransferFocusFilters }));
+            else sessionStorage.removeItem(WP_TRANSFER_FOCUS_KEY);
+        } catch (_) {}
+    }
+    function wpTransferFocusClean(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+    function wpTransferFocusPartner(cell) {
+        if (!cell) return '';
+        if (cell.classList.contains('wp-booking')) return 'booking';
+        if (cell.classList.contains('wp-airbnb')) return 'airbnb';
+        return wpTransferFocusClean(cell.textContent).toLowerCase();
+    }
+    // 1.7.381: From / To: the whole address; the date: the day, not the time.
+    function wpTransferFocusPlace(row, which) {
+        return wpTransferFocusClean(wpLocationCellText(wpGetRowLocationCell(row, which))).toLowerCase();
+    }
+    function wpTransferFocusDay(cell) {
+        const text = wpTransferFocusClean(cell ? cell.textContent : '');
+        const day = text.match(/\d{1,2}\s+[A-Za-z]{3,}[a-z]*(?:\s+\d{4})?/);
+        return (day ? day[0] : text).toLowerCase();
+    }
+    // Does this transfer have this value?
+    function wpTransferFocusHas(row, filter) {
+        const value = filter.value;
+        if (filter.group === 'city') {
+            const cell = row.querySelector('td.wp-city-link') || row.querySelector('td.city');
+            return wpNormalizeCityKey(cell ? cell.textContent : '') === value;
         }
-
-        const preferred =
-            row.querySelector('td.order-number a[href]');
-
-        if (preferred) {
-            return preferred.closest('td');
+        if (filter.group === 'partner') return wpTransferFocusPartner(row.querySelector('td.partner')) === value;
+        if (filter.group === 'car') {
+            const cell = row.querySelector('td.wp-car-cell');
+            return wpTransferFocusClean(cell ? cell.textContent : '').toLowerCase() === value;
         }
-
-        const links =
-            Array.from(
-                row.querySelectorAll('a[href]')
-            );
-
-        for (const link of links) {
-            const href =
-                String(
-                    link.getAttribute('href') ||
-                    ''
-                );
-
-            if (!href) {
-                continue;
-            }
-
-            if (
-                /\/admin\/transfers\//i.test(href) &&
-                !/\/admin\/transfers\/index_v2(?:\/|$)/i.test(href)
-            ) {
-                return link.closest('td');
-            }
+        if (filter.group === 'from' || filter.group === 'to') return wpTransferFocusPlace(row, filter.group) === value;
+        if (filter.group === 'date') return wpTransferFocusDay(row.querySelector(':scope > td.date')) === value;
+        if (filter.group === 'pudo') {
+            // a transfer that starts and ends at an airport / port / station is both
+            const chip = row.querySelector('td.wp-pudo-cell .wp-pudo-chip');
+            if (!chip) return false;
+            if (chip.classList.contains('is-both')) return true;
+            return chip.classList.contains(value === 'pu' ? 'is-pu' : 'is-do');
         }
-
-        return null;
+        if (filter.group === 'place') {
+            return Array.from(row.querySelectorAll('td.wp-loc-cell .wp-loc-badge')).some(function(badge) { return badge.title === value; });
+        }
+        if (filter.group === 'tag') {
+            const tags = row.querySelector('td.wp-transfer-tags');
+            return Boolean(tags && tags.querySelector(value === 'final-bc' ? '.wp-transfer-tag-final' : '.wp-transfer-tag-no-tag'));
+        }
+        if (filter.group === 'tbo') {
+            const cell = row.querySelector('td.wp-tbo-cell');
+            return Boolean(cell && (row.classList.contains('wp-tbo-red') || row.classList.contains('wp-tbo-flash') || cell.classList.contains('wp-tbo-red') || cell.classList.contains('wp-tbo-flash')));
+        }
+        if (filter.group === 's') {
+            const cell = row.querySelector('td.wp-s-cell');
+            return Boolean(cell && cell.classList.contains('wp-s-' + value));
+        }
+        if (filter.group === 'autocancel') {
+            const cell = row.querySelector('td.wp-autocancel-cell');
+            if (!cell) return false;
+            // Clicking an orange timer focuses every transfer with less than
+            // one hour remaining: orange + red.
+            return cell.classList.contains('wp-autocancel-red') || (value === 'orange' && cell.classList.contains('wp-autocancel-orange'));
+        }
+        return false;
+    }
+    function wpTransferFocusBar(count) {
+        const filters = wpTransferFocusLoad();
+        let bar = document.getElementById('wp-transfer-focus-bar');
+        if (!filters.length || !document.querySelector('table.transfers')) {
+            if (bar) bar.remove();
+            return;
+        }
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = 'wp-transfer-focus-bar';
+            Object.assign(bar.style, {
+                position: 'fixed', left: '50%', bottom: '14px', transform: 'translateX(-50%)', zIndex: 2147483000, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px',
+                maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box', padding: '6px 8px 6px 12px', borderRadius: '999px', background: '#1f2529', border: '1px solid rgba(255,255,255,0.09)',
+                color: '#dfe6e9', font: '12px Segoe UI,system-ui,sans-serif', boxShadow: '0 8px 24px rgba(0,0,0,0.45)', backdropFilter: 'blur(6px)'
+            });
+            ['click', 'mousedown'].forEach(function(type) { bar.addEventListener(type, function(event) { event.stopPropagation(); }); });
+            document.body.appendChild(bar);
+        }
+        const signature = JSON.stringify([count, filters]);
+        if (bar.dataset.wpSig === signature) return;
+        bar.dataset.wpSig = signature;
+        bar.textContent = '';
+        const total = document.createElement('span');
+        total.textContent = count + ' transfer' + (count === 1 ? '' : 's');
+        total.style.color = count ? '#8fffd5' : '#ffd27a';
+        bar.appendChild(total);
+        const pill = function(text, title, action, strong) {
+            const node = document.createElement('button');
+            node.type = 'button';
+            node.textContent = text;
+            node.title = title;
+            if (strong) node.dataset.wpMain = '1'; // 1.7.384: green in the card theme
+            Object.assign(node.style, {
+                font: 'inherit', cursor: 'pointer', padding: '3px 9px', borderRadius: '999px', whiteSpace: 'nowrap', fontWeight: strong ? '700' : '400',
+                background: strong ? '#2fbf71' : 'rgba(255,255,255,0.09)', color: strong ? '#06210f' : '#e8ecee', border: '0'
+            });
+            node.addEventListener('click', action);
+            bar.appendChild(node);
+        };
+        filters.forEach(function(filter) {
+            pill(filter.label + ' ×', 'Take ' + filter.label + ' off', function() {
+                wpTransferFocusFilters = filters.filter(function(item) { return item !== filter; });
+                wpTransferFocusChanged();
+            }, false);
+        });
+        pill('Clear', 'Show every transfer again', function() { wpClearTransferFocus(); }, true);
+    }
+    // Marks every row from the values now on. Safe to run again (new rows, a refresh).
+    function wpTransferFocusPaint() {
+        const filters = wpTransferFocusLoad();
+        let count = 0;
+        document.querySelectorAll('table.transfers').forEach(function(table) {
+            table.classList.toggle('wp-transfer-focus-active', filters.length > 0);
+            let lastMatch = false;
+            table.querySelectorAll(':scope > tbody > tr').forEach(function(row) {
+                // an opened transfer's details go with their transfer
+                const detail = row.classList.contains('wp-rx-detail');
+                const match = filters.length > 0 && (detail ? lastMatch : filters.every(function(filter) { return wpTransferFocusHas(row, filter); }));
+                if (!detail) { lastMatch = match; if (match) count++; }
+                row.classList.toggle('wp-transfer-focus-match', match);
+                row.classList.toggle('wp-transfer-focus-whole', match);
+            });
+        });
+        wpTransferFocusBar(count);
+    }
+    function wpTransferFocusChanged() {
+        wpTransferFocusSave();
+        wpTransferFocusPaint();
+    }
+    // Rows are drawn and coloured a moment after a page pass.
+    function wpTransferFocusSoon() {
+        if (!wpTransferFocusLoad().length || wpTransferFocusTimer) return;
+        wpTransferFocusTimer = window.setTimeout(function() { wpTransferFocusTimer = null; wpTransferFocusPaint(); }, 300);
     }
 
     function wpClearTransferFocus() {
-        document
-            .querySelectorAll('table.transfers.wp-transfer-focus-active')
-            .forEach(function(table) {
-                table.classList.remove(
-                    'wp-transfer-focus-active'
-                );
-            });
-
-        document
-            .querySelectorAll(
-                'table.transfers .wp-transfer-focus-match, ' +
-                'table.transfers .wp-transfer-focus-keep'
-            )
-            .forEach(function(element) {
-                element.classList.remove(
-                    'wp-transfer-focus-match',
-                    'wp-transfer-focus-keep',
-                    'wp-transfer-focus-whole'
-                );
-            });
-
-        WP_TRANSFER_FOCUS_MODE = '';
+        wpTransferFocusFilters = [];
+        wpTransferFocusChanged();
     }
 
-    function wpApplyTransferFocus(mode) {
-        if (
-            WP_TRANSFER_FOCUS_MODE === mode
-        ) {
-            wpClearTransferFocus();
-            return;
-        }
-
-        wpClearTransferFocus();
-        WP_TRANSFER_FOCUS_MODE = mode;
-
-        document
-            .querySelectorAll('table.transfers')
-            .forEach(function(table) {
-                const rows =
-                    Array.from(
-                        table.querySelectorAll(':scope > tbody > tr')
-                    );
-
-                let hasMatch = false;
-
-                rows.forEach(function(row) {
-                    const partnerCell =
-                        row.querySelector('td.partner');
-
-                    const tagsCell =
-                        row.querySelector('td.wp-transfer-tags');
-
-                    const isBooking =
-                        Boolean(
-                            partnerCell &&
-                            partnerCell.classList.contains('wp-booking')
-                        );
-
-                    const isAirbnb =
-                        Boolean(
-                            partnerCell &&
-                            partnerCell.classList.contains('wp-airbnb')
-                        );
-
-                    const isNoTag =
-                        Boolean(
-                            tagsCell &&
-                            tagsCell.querySelector('.wp-transfer-tag-no-tag')
-                        );
-
-                    const isFinalBc =
-                        Boolean(
-                            tagsCell &&
-                            tagsCell.querySelector('.wp-transfer-tag-final')
-                        );
-
-                    const tboCell =
-                        row.querySelector('td.wp-tbo-cell');
-
-                    const isTboRed =
-                        Boolean(
-                            tboCell &&
-                            (
-                                row.classList.contains('wp-tbo-red') ||
-                                row.classList.contains('wp-tbo-flash') ||
-                                tboCell.classList.contains('wp-tbo-red') ||
-                                tboCell.classList.contains('wp-tbo-flash')
-                            )
-                        );
-
-                    const sCell =
-                        row.querySelector('td.wp-s-cell');
-
-                    const isSOrange =
-                        Boolean(
-                            sCell &&
-                            sCell.classList.contains('wp-s-orange')
-                        );
-
-                    const isSRed =
-                        Boolean(
-                            sCell &&
-                            sCell.classList.contains('wp-s-red')
-                        );
-
-                    const autoCancelCell =
-                        row.querySelector('td.wp-autocancel-cell');
-
-                    const isAutoCancelOrange =
-                        Boolean(
-                            autoCancelCell &&
-                            autoCancelCell.classList.contains('wp-autocancel-orange')
-                        );
-
-                    const isAutoCancelRed =
-                        Boolean(
-                            autoCancelCell &&
-                            autoCancelCell.classList.contains('wp-autocancel-red')
-                        );
-
-                    const cityCell =
-                        row.querySelector('td.wp-city-link') ||
-                        row.querySelector('td.city');
-
-                    const rowCity =
-                        wpNormalizeCityKey(
-                            cityCell ? cityCell.textContent : ''
-                        );
-
-                    let match = false;
-
-                    if (mode === 'booking') {
-                        match = isBooking;
-                    } else if (mode === 'airbnb') {
-                        match = isAirbnb;
-                    } else if (mode === 'no-tag') {
-                        match = isNoTag;
-                    } else if (mode === 'final-bc') {
-                        match = isFinalBc;
-                    } else if (mode === 'tbo-red') {
-                        match = isTboRed;
-                    } else if (mode === 's-orange') {
-                        match = isSOrange;
-                    } else if (mode === 's-red') {
-                        match = isSRed;
-                    } else if (mode === 'autocancel-orange') {
-                        // Clicking an orange timer focuses every transfer
-                        // with less than one hour remaining: orange + red.
-                        match = isAutoCancelOrange || isAutoCancelRed;
-                    } else if (mode === 'autocancel-red') {
-                        match = isAutoCancelRed;
-                    } else if (mode.indexOf('city:') === 0) {
-                        match = rowCity === mode.slice(5);
-                    }
-
-                    if (!match) {
-                        return;
-                    }
-
-                    hasMatch = true;
-                    row.classList.add(
-                        'wp-transfer-focus-match'
-                    );
-
-                    // 1.7.296: a city's transfers are shown whole
-                    if (mode.indexOf('city:') === 0) {
-                        row.classList.add(
-                            'wp-transfer-focus-whole'
-                        );
-                    }
-
-                    /*
-                     * When a focus is active, keep the contextual columns
-                     * visible on every matching row. This is intentional:
-                     * City, Partner, TBO, Tags and S should never be dimmed
-                     * because they are the information needed to understand
-                     * why the row matched the focus.
-                     */
-                    if (cityCell) {
-                        cityCell.classList.add(
-                            'wp-transfer-focus-keep'
-                        );
-                    }
-
-                    if (partnerCell) {
-                        partnerCell.classList.add(
-                            'wp-transfer-focus-keep'
-                        );
-                    }
-
-                    if (tboCell) {
-                        tboCell.classList.add(
-                            'wp-transfer-focus-keep'
-                        );
-                    }
-
-                    if (tagsCell) {
-                        tagsCell.classList.add(
-                            'wp-transfer-focus-keep'
-                        );
-                    }
-
-                    if (sCell) {
-                        sCell.classList.add(
-                            'wp-transfer-focus-keep'
-                        );
-                    }
-
-                    /* Keep the AutoCancel number/timer visible for the
-                     * rows that actually match the active focus. */
-                    if (autoCancelCell) {
-                        autoCancelCell.classList.add(
-                            'wp-transfer-focus-keep'
-                        );
-                    }
-
-                    const linkCell =
-                        wpGetTransferFocusLinkCell(row);
-
-                    if (linkCell) {
-                        linkCell.classList.add(
-                            'wp-transfer-focus-keep'
-                        );
-                    }
-                });
-
-                if (hasMatch) {
-                    table.classList.add(
-                        'wp-transfer-focus-active'
-                    );
-                }
-            });
+    function wpApplyTransferFocus(group, value, label) {
+        const filters = wpTransferFocusLoad();
+        const same = filters.find(function(item) { return item.group === group; });
+        const rest = filters.filter(function(item) { return item.group !== group; });
+        wpTransferFocusFilters = same && same.value === value ? rest : rest.concat([{ group: group, value: value, label: label }]);
+        wpTransferFocusChanged();
     }
 
     function wpInstallTransferFocusHandlers() {
@@ -12461,125 +13064,89 @@ async function wpTransferAssistantExtensionEnabled() {
                         ? event.target
                         : null;
 
-                if (!target) {
+                if (!target || event.ctrlKey || event.metaKey || !target.closest('table.transfers')) {
                     return;
                 }
 
-                const cityCell =
-                    target.closest('td.wp-city-link');
-
-                if (
-                    !event.ctrlKey &&
-                    cityCell &&
-                    cityCell.closest('table.transfers')
-                ) {
+                const use = function(group, value, label) {
                     event.preventDefault();
                     event.stopPropagation();
+                    wpApplyTransferFocus(group, value, label);
+                };
 
-                    const cityKey =
-                        wpNormalizeCityKey(
-                            cityCell.textContent || ''
-                        );
-
-                    if (cityKey) {
-                        wpApplyTransferFocus('city:' + cityKey);
-                    }
-
-                    return;
-                }
-
-                const partnerCell =
-                    target.closest('td.partner');
-
-                if (
-                    partnerCell &&
-                    partnerCell.closest('table.transfers')
-                ) {
-                    if (
-                        partnerCell.classList.contains('wp-booking')
-                    ) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        wpApplyTransferFocus('booking');
-                        return;
-                    }
-
-                    if (
-                        partnerCell.classList.contains('wp-airbnb')
-                    ) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        wpApplyTransferFocus('airbnb');
-                        return;
-                    }
-                }
-
-                const autoCancelCell =
-                    target.closest('td.wp-autocancel-cell');
-
-                if (
-                    autoCancelCell &&
-                    autoCancelCell.closest('table.transfers')
-                ) {
-                    if (autoCancelCell.classList.contains('wp-autocancel-red')) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        wpApplyTransferFocus('autocancel-red');
-                        return;
-                    }
-
-                    if (autoCancelCell.classList.contains('wp-autocancel-orange')) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        wpApplyTransferFocus('autocancel-orange');
-                        return;
-                    }
-                }
-
-                const sCell =
-                    target.closest('td.wp-s-cell');
-
-                if (
-                    sCell &&
-                    sCell.closest('table.transfers')
-                ) {
-                    if (sCell.classList.contains('wp-s-red')) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        wpApplyTransferFocus('s-red');
-                        return;
-                    }
-
-                    if (sCell.classList.contains('wp-s-orange')) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        wpApplyTransferFocus('s-orange');
-                        return;
-                    }
-                }
-
-                const finalBc =
-                    target.closest(
-                        'td.wp-transfer-tags .wp-transfer-tag-final'
-                    );
-
-                if (
-                    finalBc &&
-                    finalBc.closest('table.transfers')
-                ) {
+                const cityCell = target.closest('td.wp-city-link');
+                if (cityCell) {
                     event.preventDefault();
                     event.stopPropagation();
-                    wpApplyTransferFocus('final-bc');
+                    const cityKey = wpNormalizeCityKey(cityCell.textContent || '');
+                    if (cityKey) wpApplyTransferFocus('city', cityKey, wpTransferFocusClean(cityCell.textContent));
                     return;
                 }
 
-                const tboCell =
-                    target.closest('td.wp-tbo-cell');
+                const partnerCell = target.closest('td.partner');
+                if (partnerCell) {
+                    const partner = wpTransferFocusPartner(partnerCell);
+                    if (partner && !target.closest('a')) { use('partner', partner, wpTransferFocusClean(partnerCell.textContent)); return; }
+                }
 
-                if (
-                    tboCell &&
-                    tboCell.closest('table.transfers')
-                ) {
+                const carCell = target.closest('td.wp-car-cell');
+                if (carCell) {
+                    const car = wpTransferFocusClean(carCell.textContent);
+                    if (car) { use('car', car.toLowerCase(), car); return; }
+                }
+
+                const placeCell = target.closest('td.wp-from-cell, td.wp-to-cell, td.from, td.to');
+                if (placeCell && !target.closest('a, button, input')) {
+                    const which = placeCell.classList.contains('wp-from-cell') || placeCell.classList.contains('from') ? 'from' : 'to';
+                    const row = placeCell.closest('tr');
+                    const place = wpTransferFocusPlace(row, which);
+                    if (place) {
+                        const shown = wpTransferFocusClean(wpLocationCellText(placeCell));
+                        use(which, place, (which === 'from' ? 'From ' : 'To ') + (shown.length > 28 ? shown.slice(0, 27) + '…' : shown));
+                        return;
+                    }
+                }
+
+                const dateCell = target.closest('td.date');
+                if (dateCell && !target.closest('a, button, input')) {
+                    const day = wpTransferFocusDay(dateCell);
+                    if (day) { use('date', day, day.replace(/\s+\d{4}$/, '').replace(/\b[a-z]/g, function(letter) { return letter.toUpperCase(); })); return; }
+                }
+
+                const pudoCell = target.closest('td.wp-pudo-cell');
+                if (pudoCell) {
+                    const chip = pudoCell.querySelector('.wp-pudo-chip');
+                    if (chip) {
+                        // PU + DO is both: it asks for the pickups
+                        const dropOff = chip.classList.contains('is-do');
+                        use('pudo', dropOff ? 'do' : 'pu', dropOff ? 'Drop-off' : 'Pickup');
+                        return;
+                    }
+                }
+
+                const locCell = target.closest('td.wp-loc-cell');
+                if (locCell) {
+                    const badges = locCell.querySelectorAll('.wp-loc-badge');
+                    const badge = target.closest('.wp-loc-badge') || (badges.length === 1 ? badges[0] : null);
+                    if (badge && badge.title) { use('place', badge.title, badge.title); return; }
+                }
+
+                const autoCancelCell = target.closest('td.wp-autocancel-cell');
+                if (autoCancelCell) {
+                    if (autoCancelCell.classList.contains('wp-autocancel-red')) { use('autocancel', 'red', 'Auto-cancel red'); return; }
+                    if (autoCancelCell.classList.contains('wp-autocancel-orange')) { use('autocancel', 'orange', 'Auto-cancel under 1 h'); return; }
+                }
+
+                const sCell = target.closest('td.wp-s-cell');
+                if (sCell) {
+                    if (sCell.classList.contains('wp-s-red')) { use('s', 'red', 'S red'); return; }
+                    if (sCell.classList.contains('wp-s-orange')) { use('s', 'orange', 'S orange'); return; }
+                }
+
+                if (target.closest('td.wp-transfer-tags .wp-transfer-tag-final')) { use('tag', 'final-bc', 'Final BC'); return; }
+
+                const tboCell = target.closest('td.wp-tbo-cell');
+                if (tboCell) {
                     const tboRow = tboCell.closest('tr');
                     const tboIsRed = Boolean(
                         tboRow &&
@@ -12590,39 +13157,12 @@ async function wpTransferAssistantExtensionEnabled() {
                             tboCell.classList.contains('wp-tbo-flash')
                         )
                     );
-
-                    if (tboIsRed) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        wpApplyTransferFocus('tbo-red');
-                        return;
-                    }
+                    if (tboIsRed) { use('tbo', 'red', 'TBO red'); return; }
                 }
 
-                const noTag =
-                    target.closest(
-                        'td.wp-transfer-tags .wp-transfer-tag-no-tag'
-                    );
-
-                if (
-                    noTag &&
-                    noTag.closest('table.transfers')
-                ) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    wpApplyTransferFocus('no-tag');
-                }
+                if (target.closest('td.wp-transfer-tags .wp-transfer-tag-no-tag')) use('tag', 'no-tag', 'No tag');
             },
             true
-        );
-
-        document.addEventListener(
-            'keydown',
-            function(event) {
-                if (event.key === 'Escape') {
-                    wpClearTransferFocus();
-                }
-            }
         );
     }
 
@@ -12681,6 +13221,7 @@ async function wpTransferAssistantExtensionEnabled() {
         wpRemoveTransferDetailsRedDot();
 
         wpInstallTransferFocusHandlers();
+        wpTransferFocusSoon(); // 1.7.380: new rows follow the values on
 
         wpSoftenPriorityAtRisk();
 
@@ -12912,6 +13453,43 @@ async function wpTransferAssistantExtensionEnabled() {
     }
 
     // Price tags into the Tags cell (next to the note tag) + the Car cell.
+    // 1.7.339: child seats of a transfer, booked or written in its notes.
+    // Per type the higher of the two (a note repeating the booking is not
+    // counted twice). 1.7.340: the number may come after the word ("Booster
+    // seats: 2", the CRM's "Preselected extras"), and a seat with no type
+    // ("baby seat", "car seat") counts only as the largest such mention, never
+    // on top of the booked ones ("Baby seats: 1 /// newborn baby seat" = 1).
+    const WP_SEAT_WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
+    const WP_SEATS_VERSION = 2;
+    function wpChildSeatCount(booking) {
+        if (!booking) return 0;
+        const text = [booking.travelerNote, booking.driverNote, booking.pickupNote].join(' \n ').toLowerCase();
+        const noted = { infant: 0, child: 0, booster: 0 };
+        let anyMax = 0;
+        const re = /(?:\b(\d+|a|an|one|two|three|four|five|six)\s*(?:x\s*)?)?\b(booster(?:\s*seat)?s?|infant\s*(?:car\s*)?(?:carrier|seat|capsule)s?|baby\s*(?:carrier|capsule)s?|child\s*seats?|toddler\s*seats?|(?:car|baby|kids?)\s*seats?)(?:\s*(?:[:=x×]\s*|\(\s*)(\d+))?/g;
+        let match;
+        while ((match = re.exec(text))) {
+            const before = match[1] ? (WP_SEAT_WORDS[match[1]] || parseInt(match[1], 10) || 1) : 0;
+            const after = match[3] ? parseInt(match[3], 10) : 0;
+            const count = after || before || 1;
+            if (count > 9) continue;
+            const word = match[2];
+            const type = /^booster/.test(word) ? 'booster' : /^infant|^baby\s*(carrier|capsule)/.test(word) ? 'infant' : /^(child|toddler)/.test(word) ? 'child' : '';
+            if (type) noted[type] += count; else anyMax = Math.max(anyMax, count);
+        }
+        const n = function(value) { return Number(value) > 0 ? Number(value) : 0; };
+        const typed = Math.max(n(booking.infant), noted.infant) + Math.max(n(booking.child), noted.child) + Math.max(n(booking.booster), noted.booster);
+        return Math.max(typed, anyMax);
+    }
+    // Pink city name: a sedan with 2+ child seats, a minivan with 4+.
+    function wpSeatsTooMany(entry) {
+        if (!entry || !(Number(entry.seats) > 0)) return false;
+        const car = String(entry.car || '').toLowerCase();
+        if (/sedan/.test(car)) return Number(entry.seats) > 1;
+        if (wpEmCarClass(entry.car) === 2) return Number(entry.seats) >= 4;
+        return false;
+    }
+
     function wpRowCrmPaint(row) {
         const path = row && row.dataset.wpCrmPath;
         const entry = path ? wpRowCrmLoad()[path] : null;
@@ -12919,7 +13497,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const tagCell = row.querySelector(':scope > td.wp-price-cell') || row.querySelector(':scope > td.wp-transfer-tags');
         // Performance (1.7.182): repainted for every row every 4 s; skipped
         // when the same tags are already there (in the same cell).
-        const signature = JSON.stringify([entry && entry.tags || [], entry ? String(entry.car || '') : '']);
+        const signature = JSON.stringify([entry && entry.tags || [], entry ? String(entry.car || '') : '', entry ? [entry.tc, entry.dc] : []]);
         const wanted = entry && entry.tags ? entry.tags.length : 0;
         const carNow = row.querySelector(':scope > td.wp-car-cell');
         // 1.7.296: minivan transfers that are not Booking.com / Airbnb are highlighted
@@ -12931,6 +13509,15 @@ async function wpTransferAssistantExtensionEnabled() {
             } catch (_) {}
             if (carNow.classList.contains('wp-car-minivan') !== minivan) carNow.classList.toggle('wp-car-minivan', minivan);
         }
+        // 1.7.339: too many child seats for the car → pink city name
+        try {
+            const cityCell = getCityCell(row);
+            const pink = wpSeatsTooMany(entry);
+            if (cityCell && cityCell.classList.contains('wp-city-seats-pink') !== pink) {
+                cityCell.classList.toggle('wp-city-seats-pink', pink);
+                cityCell.title = pink ? entry.seats + ' child seats (booked or in the notes) for a ' + entry.car : '';
+            }
+        } catch (_) {}
         if (row.dataset.wpCrmSig === signature && tagCell &&
             tagCell.querySelectorAll('.wp-price-tag').length === wanted &&
             row.querySelectorAll(':scope > td .wp-price-tag').length === wanted &&
@@ -12949,6 +13536,25 @@ async function wpTransferAssistantExtensionEnabled() {
                 tagCell.appendChild(badge);
             });
         }
+        // 1.7.373: "Price" column with the CRM's TC and DC
+        const tcdcCell = row.querySelector(':scope > td.wp-tcdc-cell');
+        if (tcdcCell) {
+            const num = function(value) { const n = Number(value); return value === null || value === undefined || value === '' || !Number.isFinite(n) ? '' : String(Math.round(n * 10) / 10); };
+            const tc = entry ? num(entry.tc) : '', dc = entry ? num(entry.dc) : '';
+            tcdcCell.replaceChildren();
+            if (tc || dc) {
+                // 1.7.374: "TC • DC" (e.g. 57 • 50), no labels
+                tcdcCell.textContent = (tc || '?') + ' \u2022 ';
+                // 1.7.375: DC in the colour of the row's raise tag
+                const raiseTag = (entry && entry.tags || []).find(function(tag) { return tag && tag.type !== 'tc-minus'; });
+                const dcColour = raiseTag ? ({ 'dc-tc': '#74b8f4', '10': '#e0b92e', '20': '#ffb347', 'raised': '#f2d45f' })[raiseTag.type] : '';
+                const dcSpan = document.createElement('span');
+                dcSpan.textContent = dc || '?';
+                if (dcColour) { dcSpan.style.color = dcColour; dcSpan.style.fontWeight = '700'; }
+                tcdcCell.appendChild(dcSpan);
+                tcdcCell.title = 'TC ' + (tc || '?') + '€ · DC ' + (dc || '?') + '€ (CRM)';
+            } else tcdcCell.title = '';
+        }
         const carCell = row.querySelector(':scope > td.wp-car-cell');
         if (carCell) {
             const car = entry ? String(entry.car || '') : '';
@@ -12966,16 +13572,32 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!header) return;
             const tagsTh = header.querySelector(':scope > th.wp-transfer-tags');
             if (!tagsTh) return;
+            // 1.7.373: Tags | Price (TC / DC) | Raise (the old "Price" tags)
+            let tcTh = header.querySelector(':scope > th.wp-tcdc-cell');
+            if (!tcTh) {
+                tcTh = document.createElement('th');
+                tcTh.className = 'wp-tcdc-cell';
+                tcTh.textContent = 'Price';
+            }
+            // 1.7.393: Tags before Price
+            if (tagsTh.nextElementSibling !== tcTh) tagsTh.insertAdjacentElement('afterend', tcTh);
             let th = header.querySelector(':scope > th.wp-price-cell');
             if (!th) {
                 th = document.createElement('th');
                 th.className = 'wp-price-cell';
-                th.textContent = 'Price';
             }
-            if (tagsTh.nextElementSibling !== th) tagsTh.insertAdjacentElement('afterend', th);
+            if (th.textContent !== 'Raise') th.textContent = 'Raise';
+            if (tcTh.nextElementSibling !== th) tcTh.insertAdjacentElement('afterend', th);
+            const tcIndex = Array.from(header.children).indexOf(tcTh);
             const index = Array.from(header.children).indexOf(th);
             rows.forEach(function(row) {
                 if (row === header || row.classList.contains('wp-rx-detail') || !row.querySelector(':scope > td')) return;
+                let tcTd = row.querySelector(':scope > td.wp-tcdc-cell');
+                if (!tcTd) {
+                    tcTd = document.createElement('td');
+                    tcTd.className = 'wp-tcdc-cell';
+                    delete row.dataset.wpCrmSig; // painted on the next pass
+                }
                 let td = row.querySelector(':scope > td.wp-price-cell');
                 if (!td) {
                     td = document.createElement('td');
@@ -12983,10 +13605,13 @@ async function wpTransferAssistantExtensionEnabled() {
                 }
                 const tagsTd = row.querySelector(':scope > td.wp-transfer-tags');
                 if (tagsTd) {
-                    if (tagsTd.nextElementSibling !== td) tagsTd.insertAdjacentElement('afterend', td);
-                } else if (row.children[index] !== td) {
-                    row.insertBefore(td, row.children[index] || null);
+                    if (tagsTd.nextElementSibling !== tcTd) tagsTd.insertAdjacentElement('afterend', tcTd);
+                    if (tcTd.nextElementSibling !== td) tcTd.insertAdjacentElement('afterend', td);
+                } else {
+                    if (row.children[tcIndex] !== tcTd) row.insertBefore(tcTd, row.children[tcIndex] || null);
+                    if (row.children[index] !== td) row.insertBefore(td, row.children[index] || null);
                 }
+                void index;
             });
         });
     }
@@ -12995,6 +13620,8 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpRowCrmRefresh() {
         if (wpIsTransferDetailPage()) return;
         try { wpEnsurePriceColumn(); } catch (_) {}
+        // 1.7.328: tick box + worked-on columns
+        try { wpWorkedPaintAll(); } catch (_) {}
         // Today panel: count today's transfers (at most every 3 s).
         if (Date.now() - wpTodayScanAt > 3000) {
             wpTodayScanAt = Date.now();
@@ -13009,7 +13636,8 @@ async function wpTransferAssistantExtensionEnabled() {
             if (row.dataset.wpCrmPath !== path) row.dataset.wpCrmPath = path;
             wpRowCrmPaint(row);
             const entry = store[path];
-            if ((!entry || now - entry.at > WP_ROW_CRM_FRESH) && !wpRowCrmQueued.has(path)) {
+            // 1.7.340: entries read before the seat count (or with an older count) are read again
+            if ((!entry || now - entry.at > WP_ROW_CRM_FRESH || entry.seatsV !== WP_SEATS_VERSION) && !wpRowCrmQueued.has(path)) {
                 wpRowCrmQueued.add(path);
                 wpRowCrmQueue.push(path);
             }
@@ -13041,7 +13669,7 @@ async function wpTransferAssistantExtensionEnabled() {
             wpRowCrmBusy++;
             wpFetchTransferCrmDetails(path, true).then(function(data) {
                 const store = wpRowCrmLoad();
-                store[path] = { at: Date.now(), tags: wpCrmPriceTags(data), car: data && data.carType || '' };
+                store[path] = { at: Date.now(), tags: wpCrmPriceTags(data), tc: data && data.prices ? data.prices.tc : null, dc: data && data.prices ? data.prices.dc : null, car: data && data.carType || '', seats: wpChildSeatCount(data && data.booking), seatsV: WP_SEATS_VERSION };
                 try { localStorage.setItem(WP_ROW_CRM_KEY, JSON.stringify(store)); } catch (_) {}
                 document.querySelectorAll('table.transfers > tbody > tr').forEach(function(row) {
                     if (row.dataset.wpCrmPath === path) wpRowCrmPaint(row);
@@ -13454,8 +14082,15 @@ async function wpTransferAssistantExtensionEnabled() {
 
                 const dcEqualsTc = Boolean(managedCostOption && managedCostOption.dcEqualsTc);
                 const dcBeforeRaise = parseFloat(String(field.value || '').replace(',', '.'));
+                // 1.7.343: Custom amount ('eur:<new DC>'): writes that exact driver cost.
+                const exactAmount = String(select.value).match(/^eur:([\d.]+)$/);
 
-                if (dcEqualsTc) {
+                if (exactAmount) {
+                    field.value = exactAmount[1];
+                    field.dispatchEvent(new Event('input', { bubbles: true }));
+                    field.dispatchEvent(new Event('change', { bubbles: true }));
+                    costPercent = !Number.isFinite(dcBeforeRaise) || Number(exactAmount[1]) > dcBeforeRaise ? 1 : 0;
+                } else if (dcEqualsTc) {
                     // Treated like a real raise below (task text + A/C off).
                     if (!wpApplyDriverCostEqualsTravelerCost(field)) return;
                     costPercent = 1;
@@ -13478,7 +14113,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 // ordered batch workflow can still clear this exact text after
                 // its explicit raise task has been created, so it cannot become
                 // a duplicate there.
-                if (!dcEqualsTc && costPercent > 0 && typeof wpSetTaskMessageFromDriverCostIncrease === 'function') {
+                if (!exactAmount && !dcEqualsTc && costPercent > 0 && typeof wpSetTaskMessageFromDriverCostIncrease === 'function') {
                     wpSetTaskMessageFromDriverCostIncrease(taskPercent);
                 }
 
@@ -13983,7 +14618,6 @@ async function wpTransferAssistantExtensionEnabled() {
         'dc = tc to save',
         'raised a bit more to save',
         'sent to BC, Group and suggested',
-        'sent to suggested / final bc',
         'final BC',
         'last resort 10% / final'
     ];
@@ -15945,7 +16579,7 @@ async function wpTransferAssistantExtensionEnabled() {
     async function wpWhatsAppQueue(target, text, name, image) {
         wpWhatsAppListen();
         const city = target.name;
-        text = wpWithAtAll(city, text);
+        // 1.7.378: "@all" is added where the message is built (wpBuildBroadcastWhatsAppText)
         const code = target.code || '';
         try {
             const response = await chrome.runtime.sendMessage({ type: 'WP_WA_SEND', city: city, text: text, label: name, code: code, image: image || '', expect: target.expect || [city] });
@@ -16143,7 +16777,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // With WhatsApp auto-send on, groups open in WhatsApp Web (the
         // existing web.whatsapp.com tab), never in the desktop app.
         const inviteCode = (String(resolvedUrl).match(/chat\.whatsapp\.com\/(?:invite\/)?([A-Za-z0-9]+)/) || [])[1];
-        if (inviteCode && wpWhatsAppAutoSendOn()) {
+        if (inviteCode) { // 1.7.386: always the panel
             try {
                 // The city goes along (1.7.234), so the WhatsApp tab can find
                 // the group by name inside the page instead of reloading on its link.
@@ -16745,6 +17379,9 @@ async function wpTransferAssistantExtensionEnabled() {
             cityLink,
             getTransferCityHoverData
         );
+
+        // 1.7.324: Welcome green (1.7.326) when this transfer has a traveller comment
+        try { wpTravelerNoteStyle(); wpTravelerNoteMark(cityLink); } catch (_) {}
 
         cityLink.addEventListener(
             'click',
@@ -17553,7 +18190,7 @@ async function wpTransferAssistantExtensionEnabled() {
     };
     const WP_DASH_TAG_LABELS = {
         QB: 'Quickbar', RADAR: 'Overview', WA: 'WhatsApp', CLIP: 'Clipboard',
-        PRICE: 'Price', 'A/C': 'A/C', RES: 'Result', SYS: 'System', DIR: 'mod'
+        PRICE: 'Price', 'A/C': 'A/C', RES: 'Result', SYS: 'System', DIR: 'wlcm'
     };
     let wpDashState = null;
     let wpDashBusyCount = 0;
@@ -17586,7 +18223,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (/^(City Manager|City Radar)/.test(t)) return 'RADAR';
         if (/A\/C Off (tab|window)|re-enable/i.test(t)) return 'A/C';
         // mod lines, and the workflow steps it starts while running (1.7.165).
-        if (/^(✓ )?(🎬 |🤖 )?(mod|D[i]rector|Autopilot)\b/.test(t) || (typeof wpDirector !== 'undefined' && wpDirector && wpDirector.running)) return 'DIR';
+        if (/^(✓ )?(🎬 |🤖 )?(wlcm|mod|D[i]rector|Autopilot)\b/.test(t) || (typeof wpDirector !== 'undefined' && wpDirector && wpDirector.running)) return 'DIR';
         return 'QB';
     }
 
@@ -17596,7 +18233,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (document.getElementById('wp-dash-term-style')) return;
         const style = document.createElement('style');
         style.id = 'wp-dash-term-style';
-        const MONO = 'Consolas,monospace';
+        const MONO = 'Segoe UI,system-ui,sans-serif';
         const MINT = '#8fffd5';
         style.textContent = [
             '#wp-dash-term{position:fixed;left:14px;bottom:14px;z-index:2147483646;width:420px;max-width:calc(100vw - 24px);max-height:260px;display:flex;flex-direction:column;',
@@ -17708,9 +18345,11 @@ async function wpTransferAssistantExtensionEnabled() {
         try { wpDashSwitch('pnotify', wpPhoneNotifyOn(), wpPhoneNotifyOn() ? '' : 'off'); } catch (_) {}
         try { wpDashSwitch('bkcancel', wpBookingCancelOn(), wpBookingCancelOn() ? 'Booking 2:02 · DO 1:10 · PU 0:40' : 'off — only warns'); } catch (_) {}
         try { wpDashSwitch('tickbox', wpTickBoxesOn(), wpTickBoxesOn() ? 'from the notes' : 'off'); } catch (_) {}
-        try { wpDashSwitch('heroes', wpAutoHeroesOn(), wpAutoHeroesOn() ? '1 hour before Final BC, fitting car' : 'off'); } catch (_) {}
+        try { wpDashSwitch('heroes', wpAutoHeroesOn(), wpAutoHeroesOn() ? (wpAutoFullOn() ? '2 hours before Final BC, fitting car' : 'waits for Full auto') : 'off'); } catch (_) {}
+        try { wpDashSwitch('suggested', wpAutoSuggestedOn(), wpAutoSuggestedOn() ? (wpAutoFullOn() ? '' : 'waits for Full auto · ') + 'grouped per city' + (wpAutoSuggestedHours() ? ' · up to ' + wpAutoSuggestedHours() + ' h ahead' : '') : 'off'); } catch (_) {}
+        // 1.7.369: the hours box shows the saved value (unless you are typing in it)
+        try { const box = document.querySelector('#wp-dash-controls .wpdt-hours'); if (box && document.activeElement !== box) box.value = wpAutoSuggestedHours() || ''; } catch (_) {}
         try { wpAutoSetButton(); } catch (_) {}
-        try { wpAiSetButton(); } catch (_) {}
         try { wpRemoteSetButton(); } catch (_) {}
     }
 
@@ -17727,13 +18366,13 @@ async function wpTransferAssistantExtensionEnabled() {
             '<div class="wpdt-head">' +
                 '<span class="wpdt-dot"></span>' +
                 '<span class="wpdt-title">Terminal</span>' +
-                '<span class="wpdt-ctl wpdt-tools-btn" data-act="tools" title="Open the controls: mod, Full auto, WhatsApp auto-send, Local AI, Phone app, start again" style="margin-left:auto;font-size:11px">☰ Controls</span>' +
+                '<span class="wpdt-ctl wpdt-tools-btn" data-act="automations" title="Every automation (Today, Tomorrow, later days) in one window" style="margin-left:auto;font-size:11px">Automations</span>' +
+                '<span class="wpdt-ctl wpdt-tools-btn" data-act="tools" title="wlcm settings: switches, steps, rules, WhatsApp, phone — all in one window" style="margin-left:10px;font-size:11px">☰ Settings</span>' +
                 '<span class="wpdt-ctl" data-act="min" title="Minimise to the Terminal button" style="margin-left:10px">×</span>' +
             '</div>' +
             '<div class="wpdt-log"></div>' +
             '<div class="wpdt-cmd" style="flex:0 0 auto;display:flex;gap:6px;align-items:center;padding:5px 8px;border-top:1px solid rgba(143,255,213,0.2)">' +
-                '<span style="color:#c9a3ff">🧠</span>' +
-                '<input class="wpdt-cmd-input" type="text" placeholder="Talk to mod… ask, give a rule (new york for booking.com is 10% only for today) or an order (raise 15% for airbnb in rome)" title="Type and press Enter. Anything that is not a plain order is a conversation: the local AI answers here, and whatever it is asked to do still comes as a card to confirm.&#10;An order: The local AI reads it, shows what it understood and which transfers match, and waits for your OK.&#10;Rules for mod&#39;s memory:&quot;new york for booking.com is 10%&quot;, &quot;never raise airbnb in agadir&quot;, &quot;show rules&quot;, &quot;forget the rule for new york booking&quot;." style="flex:1 1 auto;min-width:0;background:#111416;color:#dfe4e6;border:1px solid rgba(201,163,255,0.35);border-radius:6px;padding:4px 7px;font:11px Consolas,monospace;outline:none">' +
+                '<input class="wpdt-cmd-input" type="text" placeholder="Give wlcm a rule (new york for booking.com is 10%) or a WhatsApp group link" title="Type and press Enter.&#10;Rules for wlcm&#39;s memory: &quot;new york for booking.com is 10%&quot;, &quot;never raise airbnb in agadir&quot;, &quot;show rules&quot;, &quot;forget the rule for new york booking&quot;." style="flex:1 1 auto;min-width:0;background:#111416;color:#dfe4e6;border:1px solid rgba(201,163,255,0.35);border-radius:6px;padding:4px 7px;font:11px Segoe UI,system-ui,sans-serif;outline:none">' +
             '</div>';
         // The controls pop-up (1.7.235): each control is its name, a few
         // words about its state, and a switch.
@@ -17744,35 +18383,59 @@ async function wpTransferAssistantExtensionEnabled() {
         const controlRow = function(key, act, name, title, gear) {
             return '<div class="wpdt-row" data-sw="' + key + '" data-act="' + act + '" title="' + title + '"><span class="wpdt-text"><span class="wpdt-name">' + name + '</span><span class="wpdt-state"></span></span>' +
                 (gear ? '<span class="wpdt-gear" data-act="' + gear + '" title="' + name + ' settings">⚙</span>' : '') +
-                (key === 'run' ? '<span class="wpdt-go">↻ Run</span>' : (key === 'history' || key === 'queue' || key === 'rules' || key === 'wapanel') ? '<span class="wpdt-go">Open</span>' : '<span class="wpdt-sw" role="switch"></span>') + '</div>';
+                (key === 'run' ? '<span class="wpdt-go">↻ Run</span>' : (key === 'history' || key === 'queue' || key === 'rules' || key === 'wapanel' || key === 'comments') ? '<span class="wpdt-go">Open</span>' : '<span class="wpdt-sw" role="switch"></span>') + '</div>';
         };
         controls.innerHTML =
             '<div class="wpdc-head"><span>Controls</span><span class="wpdc-x" data-act="tools-close" title="Close">×</span></div>' +
-            controlRow('autopilot', 'autopilot', 'mod', 'mod on / off. On: it watches Em Hailing - Today and its suggestions pop up.') +
-            controlRow('full', 'full', 'Full auto', 'Full auto: mod answers its own suggestions when nobody can watch. It says Yes only to a suggestion with no warning on it; anything with a warning or something to check is left for you. Needs mod on.') +
-            controlRow('bkcancel', 'bkcancel', 'Auto-cancel', 'The rule above every other rule: a transfer still unassigned at its limit is auto-cancelled on its page (Auto Cancel Transfer, reason No Available driver), by itself — Booking.com at 2:02, other drop-offs (to an airport / port / station) at 1:10, other pickups at 0:40. Off: mod only warns you. Needs mod on and Auto Refresh on.') +
-            controlRow('tickbox', 'tickbox', 'Tick wheelchair / bulky', 'When the passenger, driver or pickup notes of a transfer mention a wheelchair or bulky luggage (skis, surfboard, bike, golf bag) and the box on the transfer is not ticked, mod ticks it and saves. Nothing else on the transfer is changed. Needs mod on.') +
-            controlRow('heroes', 'heroes', 'Send to heroes', 'A transfer still unassigned 1 hour before its Final BC time is sent to the city&#39;s heroes whose car type fits the booked car (a hero with no car type written gets it too), through WhatsApp Web, and the note &quot;sent to heroes&quot; is written. Once per transfer; not when that note is already there. Needs mod on.') +
-            controlRow('wapanel', 'wapanel', 'WhatsApp panel', 'WhatsApp Web in Chrome&#39;s side panel, on the right of the window. It stays open when the CRM page refreshes; scan its QR code once. While it is open and logged in, mod sends from it instead of a WhatsApp tab.') +
+            controlRow('autopilot', 'autopilot', 'wlcm', 'wlcm on / off. On: it watches Em Hailing - Today and its suggestions pop up.') +
+            controlRow('full', 'full', 'Full auto', 'Full auto: wlcm answers its own suggestions when nobody can watch. It says Yes only to a suggestion with no warning on it; anything with a warning or something to check is left for you. Needs wlcm on.') +
+            controlRow('bkcancel', 'bkcancel', 'Auto-cancel', 'The rule above every other rule: a transfer still unassigned at its limit is auto-cancelled on its page (Auto Cancel Transfer, reason No Available driver), by itself — Booking.com at 2:02, other drop-offs (to an airport / port / station) at 1:10, other pickups at 0:40. Off: wlcm only warns you. Needs wlcm on and Auto Refresh on.') +
+            controlRow('tickbox', 'tickbox', 'Tick wheelchair / bulky', 'When the passenger, driver or pickup notes of a transfer mention a wheelchair or bulky luggage (skis, surfboard, bike, golf bag) and the box on the transfer is not ticked, wlcm ticks it and saves. Nothing else on the transfer is changed. Needs wlcm on.') +
+            controlRow('heroes', 'heroes', 'Send to heroes', 'A transfer still unassigned 1 hour before its Final BC time is sent to the city&#39;s heroes whose car type fits the booked car (a hero with no car type written gets it too), through WhatsApp Web, and the note &quot;sent to heroes&quot; is written. Once per transfer; not when that note is already there. Needs wlcm on.') +
+            controlRow('suggested', 'suggested', 'Send to suggested', 'A transfer with no &quot;sent to suggested&quot; note yet (and not at Final BC) is sent to its top 5 suggested drivers through WhatsApp Web, and the note &quot;sent to suggested&quot; is written. One city at a time: its transfers go together, one message per driver. Once per transfer. Needs wlcm on.') +
+            controlRow('wapanel', 'wapanel', 'WhatsApp panel', 'WhatsApp Web in Chrome&#39;s side panel, on the right of the window. It stays open when the CRM page refreshes; scan its QR code once. While it is open and logged in, wlcm sends from it instead of a WhatsApp tab.') +
             controlRow('wa', 'wa', 'WhatsApp auto-send', 'BC / Final BC / Custom raise send the message through WhatsApp Web. Off: the message is copied and the group opens.') +
-            controlRow('ai', 'ai', 'Local AI', 'A model on this PC explains suggestions, reads the notes and talks in the Terminal. The gear opens its settings.', 'ai-settings') +
-            controlRow('phone', 'phone', 'Phone app', 'mod&#39;s suggestions on your phone, answered with a tap. The gear opens its settings (relay, pairing, your other PC).', 'phone-settings') +
+            controlRow('phone', 'phone', 'Phone app', 'wlcm&#39;s suggestions on your phone, answered with a tap. The gear opens its settings (relay, pairing, your other PC).', 'phone-settings') +
             controlRow('pnotify', 'pnotify', 'Phone notifications', 'A notification on the phone for each new suggestion. Off: the phone app still shows the suggestions when you open it, but it does not ring. With Full auto on nothing is sent to the phone to answer anyway.') +
-            controlRow('run', 'autopilot-restart', 'Start again', 'mod forgets its answers and skips and goes through every transfer again, Final BC first.') +
+            controlRow('run', 'autopilot-restart', 'Start again', 'wlcm forgets its answers and skips and goes through every transfer again, Final BC first.') +
+            controlRow('comments', 'comments', 'Comments', 'The transfers with a traveller comment, one card at a time in the middle of the screen (details, passengers, the comment and its English). Do what it needs, then Next (Right arrow): it goes into History. Skip (Down arrow) goes on without marking it seen. Also on the phone app, swiped.') +
             controlRow('queue', 'queue', 'Queue', 'What is waiting for your answer, what is running, and what was put off. Click a waiting line to open its card.') +
-            controlRow('rules', 'rules', 'Rules', 'Every rule mod runs — the built-in ones (with your exceptions) and the ones you typed.') +
+            controlRow('rules', 'rules', 'Rules', 'Every rule wlcm runs — the built-in ones (with your exceptions) and the ones you typed.') +
             controlRow('history', 'history', 'Suggestion history', 'Every suggestion that got an answer: what it was, who answered (you, the phone, Full auto) and how it ended.');
         const runState = controls.querySelector('.wpdt-row[data-sw="run"] .wpdt-state');
         if (runState) runState.textContent = 'every transfer again, Final BC first';
         document.body.appendChild(controls);
         ['mousedown', 'keydown', 'keyup'].forEach(function(type) { controls.addEventListener(type, function(event) { event.stopPropagation(); }); });
+        // 1.7.369: hours box next to Send to suggested — only transfers within that many hours of pickup (empty = no limit)
+        try {
+            const sugRow = controls.querySelector('.wpdt-row[data-sw="suggested"]');
+            const sugSwitch = sugRow && sugRow.querySelector('.wpdt-sw');
+            if (sugRow && sugSwitch && !sugRow.querySelector('.wpdt-hours')) {
+                const wrap = document.createElement('span');
+                wrap.title = 'Send to suggested only up to this many hours before pickup (empty = no limit)';
+                // 1.7.370: the row's children ignore clicks (the whole row is the switch); this one must not
+                Object.assign(wrap.style, { pointerEvents: 'auto', cursor: 'text', display: 'inline-flex', alignItems: 'center', gap: '3px', color: '#8b979e', fontSize: '11.5px', flex: '0 0 auto' });
+                const box = document.createElement('input');
+                box.className = 'wpdt-hours';
+                box.type = 'number'; box.min = '0'; box.max = '72'; box.step = '0.5';
+                box.placeholder = '∞';
+                box.value = wpAutoSuggestedHours() || '';
+                Object.assign(box.style, { width: '46px', padding: '2px 4px', borderRadius: '6px', border: '1px solid rgba(143,255,213,.35)', background: 'rgba(0,0,0,.35)', color: '#8fffd5', font: '12px Segoe UI,system-ui,sans-serif', textAlign: 'right' });
+                ['click', 'mousedown', 'keydown', 'keyup', 'keypress'].forEach(function(type) { box.addEventListener(type, function(event) { event.stopPropagation(); if (type === 'keydown' && event.key === 'Enter') box.blur(); }); });
+                wrap.addEventListener('click', function(event) { event.stopPropagation(); box.focus(); });
+                box.addEventListener('change', function() { box.value = wpAutoSuggestedHoursSet(box.value) || ''; });
+                wrap.appendChild(box);
+                wrap.appendChild(document.createTextNode('h'));
+                sugRow.insertBefore(wrap, sugSwitch);
+            }
+        } catch (_) {}
         // A click anywhere else, or Escape, closes it.
         if (!window.__wpDashControlsWired) {
             window.__wpDashControlsWired = true;
             document.addEventListener('mousedown', function(event) {
                 if (!wpDashToolsOpen()) return;
                 const target = event.target;
-                if (target && target.closest && (target.closest('#wp-dash-controls') || target.closest('.wpdt-tools-btn') || target.closest('#wp-director-card') || target.closest('#wp-remote-settings') || target.closest('#wp-ai-settings'))) return;
+                if (target && target.closest && (target.closest('#wp-dash-controls') || target.closest('.wpdt-tools-btn') || target.closest('#wp-director-card') || target.closest('#wp-remote-settings'))) return;
                 wpDashToolsShow(document.getElementById('wp-dash-term'), false);
             }, true);
             document.addEventListener('keydown', function(event) { if (event.key === 'Escape' && wpDashToolsOpen()) wpDashToolsShow(document.getElementById('wp-dash-term'), false); }, true);
@@ -17797,23 +18460,20 @@ async function wpTransferAssistantExtensionEnabled() {
             event.preventDefault();
             event.stopPropagation();
             if (act === 'min') { wpDashToolsShow(panel, false); wpDashSetCollapsed(true); }
-            if (act === 'tools') wpDashToolsShow(panel, !wpDashToolsOpen());
+            // 1.7.378: Settings = the one settings window (switches, steps, rules, WhatsApp, phone)
+            if (act === 'tools') { wpDashToolsShow(panel, false); wpRulesWindow(false); }
+            if (act === 'automations') { wpDashToolsShow(panel, false); wpAutomationsWindow(); }
             if (act === 'tools-close') wpDashToolsShow(panel, false);
             if (act === 'autopilot') wpAutoCycle();
             if (act === 'autopilot-restart') wpAutoRestart();
             if (act === 'history') { wpDashToolsShow(panel, false); wpSuggestWindow(); }
             if (act === 'rules') { wpDashToolsShow(panel, false); wpRulesWindow(false); }
             if (act === 'queue') { wpDashToolsShow(panel, false); wpQueueWindow(); }
+            if (act === 'comments') { wpDashToolsShow(panel, false); wpCommentWindow(); } // 1.7.357
             if (act === 'full') wpAutoFullToggle();
-            if (act === 'ai-settings') wpAiSettings();
             if (act === 'phone-settings') wpRemoteSettings();
             // The switch itself (1.7.234): on / off; the settings box only
             // when there is nothing to switch on yet.
-            if (act === 'ai') {
-                const cfg = wpAiConfig();
-                if (!cfg.on && !cfg.model) wpAiSettings();
-                else { cfg.on = !cfg.on; wpAiSaveConfig(cfg); wpDashLog('🧠 Local AI ' + (cfg.on ? 'ON (' + cfg.model + ')' : 'OFF')); }
-            }
             if (act === 'phone') {
                 const cfg = wpRemoteConfig();
                 if (!cfg.on && !(cfg.key && WP_REMOTE_URL.test(cfg.url))) wpRemoteSettings();
@@ -17836,15 +18496,15 @@ async function wpTransferAssistantExtensionEnabled() {
                 const on = !wpTickBoxesOn();
                 try { localStorage.setItem('wp_tick_boxes_v1', on ? '1' : '0'); } catch (_) {}
                 wpDashPaintSwitches();
-                wpDashLog('Tick wheelchair / bulky ' + (on ? 'ON — when the notes mention a wheelchair or bulky luggage, mod ticks the box on the transfer and saves' : 'OFF'));
+                wpDashLog('Tick wheelchair / bulky ' + (on ? 'ON — when the notes mention a wheelchair or bulky luggage, wlcm ticks the box on the transfer and saves' : 'OFF'));
             }
             if (act === 'wapanel') {
                 // 1.7.282: Chrome opens the side panel only right after a click
                 try {
                     chrome.runtime.sendMessage({ type: 'WP_WA_PANEL_OPEN' }, function(reply) {
                         void chrome.runtime.lastError;
-                        if (reply && reply.ok) wpDashLog('WhatsApp panel opened on the right — scan its QR code once; while it is logged in, mod sends from it');
-                        else wpDashLog('WhatsApp panel: Chrome did not open it from here (' + (reply && reply.error || 'no answer') + ') — open it from the mod button in the toolbar → WhatsApp', 'warn');
+                        if (reply && reply.ok) wpDashLog('WhatsApp panel opened on the right — scan its QR code once; while it is logged in, wlcm sends from it');
+                        else wpDashLog('WhatsApp panel: Chrome did not open it from here (' + (reply && reply.error || 'no answer') + ') — open it from the wlcm button in the toolbar → WhatsApp', 'warn');
                     });
                 } catch (_) {}
             }
@@ -17852,13 +18512,19 @@ async function wpTransferAssistantExtensionEnabled() {
                 const on = !wpAutoHeroesOn();
                 try { localStorage.setItem('wp_auto_heroes_v1', on ? '1' : '0'); } catch (_) {}
                 wpDashPaintSwitches();
-                wpDashLog('Send to heroes ' + (on ? 'ON — 1 hour before Final BC, a transfer still unassigned goes to the heroes with a fitting car, note "sent to heroes"' : 'OFF'));
+                wpDashLog('Send to heroes ' + (on ? 'ON — 2 hours before Final BC, a transfer still unassigned goes to the heroes with a fitting car, note "sent to heroes"' : 'OFF'));
+            }
+            if (act === 'suggested') {
+                const on = !wpAutoSuggestedOn();
+                try { localStorage.setItem('wp_auto_suggested_v1', on ? '1' : '0'); } catch (_) {}
+                wpDashPaintSwitches();
+                wpDashLog('Send to suggested ' + (on ? 'ON — a transfer not sent to suggested yet goes to its top 5 suggested drivers (grouped per city), note "sent to suggested"' : 'OFF'));
             }
             if (act === 'bkcancel') {
                 const on = !wpBookingCancelOn();
                 try { localStorage.setItem('wp_booking_autocancel_v1', on ? '1' : '0'); } catch (_) {}
                 wpDashPaintSwitches();
-                wpDashLog('Auto-cancel Booking.com ' + (on ? 'ON — a Booking.com transfer still unassigned at 2:02 to pickup is auto-cancelled (No Available driver)' : 'OFF — mod only warns at 2:02'), on ? 'warn' : undefined);
+                wpDashLog('Auto-cancel Booking.com ' + (on ? 'ON — a Booking.com transfer still unassigned at 2:02 to pickup is auto-cancelled (No Available driver)' : 'OFF — wlcm only warns at 2:02'), on ? 'warn' : undefined);
             }
             if (act === 'wa') {
                 const on = !wpWhatsAppAutoSendOn();
@@ -17936,7 +18602,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // 1.7.253: the tag already says who is speaking — the name is not repeated
         // in the line, and a plain line of his (not green, amber or red) is violet.
         if (entry.tag === 'DIR') {
-            text.textContent = text.textContent.replace(/^(?:🤖|🎬)?\s*(?:mod|D[i]rector|Autopilot)\s*:\s*/, '');
+            text.textContent = text.textContent.replace(/^(?:🤖|🎬)?\s*(?:wlcm|mod|D[i]rector|Autopilot)\s*:\s*/, '');
             if (!entry.kind) line.classList.add('is-dir');
         }
         line.appendChild(time);
@@ -18188,7 +18854,8 @@ async function wpTransferAssistantExtensionEnabled() {
             } else {
                 const countdown = document.getElementById('wp-refresh-countdown');
                 const match = countdown && String(countdown.textContent || '').match(/(\d+)/);
-                if (match) refreshText = match[1] + 's';
+                if (countdown && /after wlcm/.test(countdown.textContent || '')) refreshText = 'after wlcm check'; // 1.7.372
+                else if (match) refreshText = match[1] + 's';
                 else if (countdown) refreshText = 'now';
                 else if (wpOrderQuickActionOpen || wpAutoRefreshPausedByTransferOverview) refreshText = 'paused';
             }
@@ -18295,6 +18962,7 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpCalculateRaisedDriverCost(oldPrice, raiseValue) {
         const value = String(raiseValue || '').trim();
         if (!value || value === '0') return '';
+        if (/^eur:[\d.]+$/.test(value)) return value.slice(4); // 1.7.343: Custom amount
         const match = String(oldPrice || '').match(/\d+(?:[.,]\d+)?/);
         if (!match) return '';
         const base = parseFloat(match[0].replace(',', '.'));
@@ -18320,17 +18988,36 @@ async function wpTransferAssistantExtensionEnabled() {
     // 1.7.296: messages to the Barcelona group start with "@all" (everyone
     // in the group is notified). The message itself is left as it is.
     const WP_AT_ALL_CITIES = ['barcelona'];
+    // 1.7.378: when "@all" goes in front (setting in wlcm Settings → WhatsApp):
+    // 'smart' (default) = more than one transfer or a Final BC message,
+    // 'always', 'off'.
+    var WP_AT_ALL_MODE_KEY = 'wp_at_all_mode_v1';
+    function wpAtAllMode() {
+        let value = '';
+        try { value = localStorage.getItem(WP_AT_ALL_MODE_KEY) || ''; } catch (_) {}
+        return ['smart', 'always', 'off'].indexOf(value) >= 0 ? value : 'smart';
+    }
+    function wpAtAllWanted(count, mode) {
+        const setting = wpAtAllMode();
+        if (setting === 'off') return false;
+        if (setting === 'always') return true;
+        return Number(count) > 1 || mode === 'final';
+    }
     function wpWithAtAll(city, text) {
         const value = String(text || '');
-        if (!value || WP_AT_ALL_CITIES.indexOf(wpNormalizeCityKey(city)) < 0 || /^@all\b/i.test(value)) return value;
+        // 1.7.376: every city group (WhatsApp keeps the mention only where you are an admin)
+        if (!value || !city || /^@all\b/i.test(value)) return value;
+        void WP_AT_ALL_CITIES;
         return '@all ' + value;
     }
-    function wpBuildBroadcastWhatsAppText(mode, entries, introText) {
-        const text = wpBuildBroadcastWhatsAppTextOnly(mode, entries, introText);
+    function wpBuildBroadcastWhatsAppText(mode, entries, introText, keepIntro) {
+        const text = wpBuildBroadcastWhatsAppTextOnly(mode, entries, introText, keepIntro);
         const first = (entries || []).find(function(entry) { return entry && entry.city; });
+        if (!wpAtAllWanted((entries || []).length, mode)) return text; // 1.7.378
         return first ? wpWithAtAll(first.city, text) : text;
     }
-    function wpBuildBroadcastWhatsAppTextOnly(mode, entries, introText) {
+    // keepIntro (1.7.356): a day of a split batch — its greeting even for one transfer
+    function wpBuildBroadcastWhatsAppTextOnly(mode, entries, introText, keepIntro) {
         const blocks = [];
         (entries || []).forEach(function(entry) {
             const stored = entry && entry.stored;
@@ -18354,7 +19041,10 @@ async function wpTransferAssistantExtensionEnabled() {
             message = blocks.length === 1
                 ? 'LAST CHANCE FOR THIS ONE! It will be canceled in ' + minutes + ' minutes 🗣️'
                 : 'LAST CHANCE FOR THESE! They will be canceled in ' + minutes + ' minutes 🗣️';
-        } else if (blocks.length === 1 || !introText) {
+        } else if (blocks.length > 1 && !introText) {
+            // 1.7.392: several transfers with no intro given (the held group sent together)
+            message = 'Hey team! Anyone available for these transfers?';
+        } else if ((blocks.length === 1 && !keepIntro) || !introText) {
             const managed = wpBuildManagedDriverMessages();
             message = managed[0] || WP_DRIVER_MESSAGES[0];
         } else {
@@ -18609,6 +19299,8 @@ async function wpTransferAssistantExtensionEnabled() {
         return {
             batchId: batchId,
             tabName: tabName,
+            // 1.7.352: the later-days page (2-4 days…) the batch came from, for the WhatsApp wording.
+            period: wpTabPeriod(tabName),
             city: orderedItems[0] && orderedItems[0].city ? orderedItems[0].city : '',
             orderedItems: orderedItems,
             urls: urls
@@ -18731,6 +19423,8 @@ async function wpTransferAssistantExtensionEnabled() {
         // Suggested raise: the note shows the total the transfer is raised to.
         const suggested = value.match(/^pct:([\d.]+):([\d.]+)$/);
         if (suggested) return 'raised to +' + suggested[2] + '% DC/ sent to BC, Group';
+        // 1.7.343: Custom amount: the exact new driver cost.
+        if (/^eur:[\d.]+$/.test(value)) return 'raised to ' + value.slice(4) + '€ DC/ sent to BC, Group';
 
         try {
             const config = wpGetManagedCostOptions().find(function(item) {
@@ -18789,9 +19483,25 @@ async function wpTransferAssistantExtensionEnabled() {
     // City Manager "Generate image": reads each transfer's "Copy details
     // for EM" text and car type from its CRM page in the background (no
     // tabs), stores them like the tab collector does, then shows the image.
-    async function wpGenerateTransfersImage(items, tabName, groupName) {
+    // 1.7.346: the same transfers twice within a minute give one image (not two);
+    // fresh = read the CRM pages again (after a Hub price change / broadcast).
+    var wpCmImagePending = 0;
+    var wpCmImageLast = { key: '', at: 0 };
+    // 1.7.367: mode ('send' / 'final') gives the image's text the BC / Final BC wording; true when it went to WhatsApp.
+    async function wpGenerateTransfersImage(items, tabName, groupName, fresh, mode) {
+        const list = (items || []).filter(function(item) { return item && item.url; });
+        const key = list.map(function(item) { return String(item.url); }).sort().join('|');
+        if (key && key === wpCmImageLast.key && Date.now() - wpCmImageLast.at < 60000) {
+            wpDashLog('City Manager: the image for these ' + list.length + ' transfer' + (list.length === 1 ? ' was' : 's was') + ' just sent — not sent again', 'warn');
+            return true;
+        }
+        wpCmImageLast = { key: key, at: Date.now() };
+        wpCmImagePending++;
+        try { return await wpGenerateTransfersImageNow(list, tabName, groupName, fresh === true, mode); } finally { wpCmImagePending--; }
+    }
+    async function wpGenerateTransfersImageNow(items, tabName, groupName, fresh, mode) {
         const batch = wpCreateCityBatch((items || []).filter(function(item) { return item && item.url; }), tabName);
-        if (!batch) return;
+        if (!batch) return false;
         const total = batch.orderedItems.length;
         const label = 'City Manager' + (batch.city ? ' ' + batch.city : '') + (groupName ? ' ' + groupName : '');
         wpDashLog(label + ': generating the image from ' + total + ' transfer page' + (total === 1 ? '' : 's') + ' (no tabs opened)…');
@@ -18802,7 +19512,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 const index = next++;
                 const item = batch.orderedItems[index];
                 try {
-                    let data = await wpFetchTransferCrmDetails(item.url);
+                    let data = await wpFetchTransferCrmDetails(item.url, fresh);
                     if (!data || typeof data.emDetails !== 'string') data = await wpFetchTransferCrmDetails(item.url, true);
                     const details = data && data.emDetails;
                     if (!details) { failed++; continue; }
@@ -18824,13 +19534,629 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         if (failed >= total) {
             wpDashLog(label + ': no transfer details could be read — image not generated', 'error');
-            return;
+            return false;
         }
         wpDashLog('✓ ' + label + ': image ready (' + (total - failed) + ' transfer' + (total - failed === 1 ? '' : 's') + ')');
         // 1.7.318: Generate image (PC or phone) sends the image + text to the
         // city's WhatsApp group straight away, like after a broadcast.
         batch._wpSendNow = true;
+        if (mode === 'send' || mode === 'final') batch.broadcastMode = mode; // 1.7.367
         wpShowCityTransfersImage(batch);
+        return true;
+    }
+
+    // 1.7.367: one WhatsApp group message per city. A transfer's group message
+    // (BC / Final BC from its quickbar, wlcm's own rounds too) waits up to 20 s
+    // for the same city's others (at most 60 s after the first): one goes as
+    // before, 2-4 as one text, more than 4 as the generated image with its text.
+    // BC and Final BC are held apart (Final BC has its own wording). Held in
+    // localStorage, so a refreshed tab does not lose them: another CRM tab
+    // sends what was left 15 s after it was due. Whoever sends first takes it.
+    const WP_GROUP_HELD_KEY = 'wp_group_held_v1';
+    const WP_GROUP_QUIET_MS = 20000;
+    const WP_GROUP_MAX_MS = 60000;
+    var wpGroupTimers = {};
+    function wpGroupHeldLoad() {
+        try { const all = JSON.parse(localStorage.getItem(WP_GROUP_HELD_KEY) || '{}'); return all && typeof all === 'object' ? all : {}; } catch (_) { return {}; }
+    }
+    function wpGroupHeldSave(all) {
+        try { if (Object.keys(all).length) localStorage.setItem(WP_GROUP_HELD_KEY, JSON.stringify(all)); else localStorage.removeItem(WP_GROUP_HELD_KEY); } catch (_) {}
+    }
+    function wpGroupDue(held) {
+        return Math.min(Number(held.last) + WP_GROUP_QUIET_MS, Number(held.first) + WP_GROUP_MAX_MS);
+    }
+    function wpGroupSchedule(key, delay) {
+        clearTimeout(wpGroupTimers[key]);
+        wpGroupTimers[key] = setTimeout(function() { wpGroupFlush(key, delay > WP_GROUP_MAX_MS).catch(function() {}); }, Math.max(500, delay));
+    }
+    function wpGroupHold(city, mode, entry, label, url) {
+        if (!city) return false;
+        const key = wpNormalizeCityKey(city) + '|' + (mode === 'final' ? 'final' : 'send');
+        const all = wpGroupHeldLoad();
+        const now = Date.now();
+        const held = all[key] || { city: city, mode: mode, items: [], first: now };
+        held.items.push({ entry: entry, label: label, url: url || '' });
+        held.last = now;
+        all[key] = held;
+        wpGroupHeldSave(all);
+        wpGroupSchedule(key, wpGroupDue(held) - now);
+        if (held.items.length === 1) wpDashLog(label + ': the ' + city + ' group message waits up to ' + Math.round(WP_GROUP_QUIET_MS / 1000) + ' s for the city\'s other transfers');
+        else wpDashLog(label + ': goes with ' + (held.items.length - 1) + ' other ' + city + ' transfer' + (held.items.length === 2 ? '' : 's') + ' in one message');
+        return true;
+    }
+    async function wpGroupFlush(key, late) {
+        const all = wpGroupHeldLoad();
+        const held = all[key];
+        if (!held) return;
+        const now = Date.now();
+        const due = wpGroupDue(held) + (late ? 15000 : 0);
+        if (now < due - 300) { wpGroupSchedule(key, due - now); return; }
+        delete all[key];
+        wpGroupHeldSave(all);
+        const items = (held.items || []).filter(function(item) { return item && item.entry; });
+        if (!items.length) return;
+        const count = items.length;
+        const name = count === 1 ? items[0].label : held.city + ' (' + count + ' transfers: ' + items.map(function(item) { return item.label; }).join(', ') + ')';
+        if (count > 4 && items.every(function(item) { return item.url; })) {
+            wpDashLog(name + ': more than 4 — one message with the image');
+            let ok = false;
+            try { ok = await wpGenerateTransfersImage(items.map(function(item) { return { url: item.url, city: held.city }; }), 'today', '', true, held.mode); } catch (_) {}
+            if (ok) return;
+            wpDashLog(name + ': the image could not be made — sending them as one text', 'warn');
+        }
+        const text = wpBuildBroadcastWhatsAppText(held.mode, items.map(function(item) { return item.entry; }), '');
+        if (!text) return;
+        if (await wpWhatsAppAutoSend(held.city, text, name)) return;
+        let copied = false;
+        wpDashLog('📋 ' + name + ': WhatsApp did not take it — click here to copy the message for the ' + held.city + ' group', 'warn', function(line) {
+            if (copied || !wpCopyTextFromUserGesture(text)) return;
+            copied = true;
+            line.style.textDecoration = 'none';
+            wpDashLog('✓ ' + name + ': WhatsApp message copied — paste with Ctrl+V');
+        });
+    }
+    // Left over by a tab that was closed or refreshed
+    function wpGroupRecover() {
+        const all = wpGroupHeldLoad();
+        Object.keys(all).forEach(function(key) {
+            const held = all[key];
+            if (!held || !Array.isArray(held.items)) { delete all[key]; wpGroupHeldSave(all); return; }
+            if (Date.now() - Number(held.first) > 30 * 60000) { delete all[key]; wpGroupHeldSave(all); return; }
+            wpGroupSchedule(key, WP_GROUP_MAX_MS + 1 + Math.max(0, wpGroupDue(held) + 15000 - Date.now()));
+        });
+    }
+    try { if (window.top === window && !/\/admin\/transfers\/\d+/.test(location.pathname)) setTimeout(wpGroupRecover, 8000); } catch (_) {}
+
+    // 1.7.346: after a City Manager batch, the page is refreshed once nothing
+    // is busy any more (no image being made, no WhatsApp hand-off waiting,
+    // quickbar closed). Still busy after 5 minutes: not refreshed, the Terminal says so.
+    var wpCmReloadTimer = null;
+    function wpCmReloadWhenIdle(label, batch) {
+        if (wpCmReloadTimer || wpCmAutoRunning) return; // 1.7.347: auto mode refreshes once, at its end
+        const startedAt = Date.now();
+        let calm = 0;
+        // a BC / Final BC batch: its image + WhatsApp message first (up to 2 min)
+        const imageDue = Boolean(batch && (batch.broadcastMode === 'send' || batch.broadcastMode === 'final'));
+        wpCmReloadTimer = window.setInterval(function() {
+            const idle = (!imageDue || batch._wpImageShown || Date.now() - startedAt > 120000) && wpDashBusyCount === 0 && !wpCmImagePending && !Object.keys(wpWhatsAppFallbacks).length && !wpOrderQuickActionOpen;
+            calm = idle ? calm + 1 : 0;
+            if (calm >= 3) {
+                clearInterval(wpCmReloadTimer);
+                wpDashLog((label || 'City Manager') + ': batch finished — refreshing the page');
+                window.setTimeout(function() { location.reload(); }, 300);
+            } else if (Date.now() - startedAt > 5 * 60000) {
+                clearInterval(wpCmReloadTimer);
+                wpCmReloadTimer = null;
+                wpDashLog((label || 'City Manager') + ': batch finished — not refreshed (still busy after 5 min), refresh the page yourself', 'warn');
+            }
+        }, 2000);
+    }
+    // 1.7.347: City Manager auto mode: every city of the list, top to bottom,
+    // that has untagged transfers: open it, tick only the untagged ones, run the
+    // Ops Hub chain (Tag → Price Change from the box → Remove Auto-C → Broadcast
+    // → Ask best drivers → Enable Auto-C → note → image to the group), wait for
+    // its note + image, then the next city.
+    // 1.7.348: the whole page is refreshed after each city; where it is (the
+    // cities, the next one) is kept in wp_cm_auto_v1 and it goes on after the
+    // refresh. Left alone for 20 min (page closed): it does not go on.
+    var wpCmAutoRunning = false;
+    var wpCmAutoStop = false;
+    const WP_CM_AUTO_KEY = 'wp_cm_auto_v1';
+    function wpCmAutoLoad() {
+        if (WP_NO_AUTO) return null;
+        try { const state = JSON.parse(localStorage.getItem(WP_CM_AUTO_KEY) || 'null'); if (state && Array.isArray(state.cities) && Date.now() - Number(state.at || 0) < 20 * 60000) return state; } catch (_) {}
+        return null;
+    }
+    function wpCmAutoSave(state) {
+        try { if (state) { state.at = Date.now(); localStorage.setItem(WP_CM_AUTO_KEY, JSON.stringify(state)); } else { localStorage.removeItem(WP_CM_AUTO_KEY); localStorage.removeItem('wp_auto_hub_days_v1'); } } catch (_) {} // 1.7.415: the runner stopped = its Ops Hub days are off
+    }
+    function wpCmAutoRows() {
+        const text = function(node) { return String(node ? node.textContent : '').replace(/\s+/g, ' ').trim(); };
+        return Array.from(document.querySelectorAll('#wp-today-city-window .wp-today-city-summary > .wp-today-city-stat'))
+            .filter(function(row) { return !/wp-today-city-(booking|untagged|tbo-alert)-row/.test(row.className); })
+            .map(function(row) { return { city: text(row.querySelector('.wp-today-city-name')), u: Number(text(row.querySelector('.wp-today-city-untagged'))) || 0 }; })
+            .filter(function(entry) { return entry.city; });
+    }
+    // also when the City Manager was closed by the refresh (its list not built yet)
+    // 1.7.349: checked every 3 s for 3 min (a big list takes long to load), not once at 8 s
+    (function() {
+        if (!wpCmAutoLoad()) return;
+        let tries = 0;
+        const kick = window.setInterval(function() {
+            tries++;
+            if (!wpCmAutoLoad() || wpCmAutoRunning || tries > 60) { clearInterval(kick); return; }
+            if (document.getElementById('wp-today-city-toggle') || document.getElementById('wp-today-city-window')) { clearInterval(kick); wpCmAutoStep(); }
+        }, 3000);
+    })();
+    // 1.7.412: when every city is done, auto keeps watching: after each page refresh
+    // (your auto-refresh) — and every 30 s — a new untagged transfer of the day gets
+    // the same chain. A transfer auto already worked on is not taken again (kept 12 h),
+    // so one the Hub cannot tag is not tried every 30 s. Stop: the same tab button.
+    function wpCmAutoKey(url) {
+        try { return new URL(url, location.href).pathname.replace(/\/details_v3$/, ''); } catch (_) { return String(url || ''); }
+    }
+    function wpCmAutoNewCities(state) {
+        const tried = state.tried || {};
+        const cities = [];
+        let all = [];
+        try { all = wpTodayCityGetTransfers(state.tab) || []; } catch (_) {}
+        all.forEach(function(item) {
+            if (!item || item.tagged || !item.url || !item.city || tried[wpCmAutoKey(item.url)]) return;
+            if (state.skipped && Date.now() - Number(state.skipped[item.city] || 0) < 30 * 60000) return;
+            if (cities.indexOf(item.city) < 0) cities.push(item.city);
+        });
+        return cities;
+    }
+    function wpCmAutoWatch(state) {
+        state.watching = true;
+        state.cities = [];
+        state.index = 0;
+        const cutoff = Date.now() - 12 * 3600000;
+        Object.keys(state.tried || {}).forEach(function(key) { if (Number(state.tried[key]) < cutoff) delete state.tried[key]; });
+        wpCmAutoSave(state);
+    }
+    function wpCmAutoRun(tab, paint, allowRefresh, opts) {
+        if (wpCmAutoRunning) return;
+        opts = opts || {};
+        const day = opts.day || (wpEmPeriod() ? 'later' : tab === 'tomorrow' ? 'tomorrow' : 'today');
+        const cities = wpCmAutoRows().filter(function(entry) { return entry.u > 0; }).map(function(entry) { return entry.city; });
+        { const days = wpHubDays(); if (!days[day]) { days[day] = { ask: opts.ask === true }; wpHubDaysSave(days); } }
+        const base = { tab: tab === 'later24' ? 'later24' : tab === 'tomorrow' ? 'tomorrow' : 'today', day: day, ask: opts.ask === true, cities: cities, index: 0, ran: 0, allowRefresh: allowRefresh === true, tried: {}, skipped: {} };
+        if (!cities.length) {
+            // 1.7.414: nothing untagged right now: it starts by watching
+            wpDashLog('Automations · ' + wpAutoDayName(day) + ': no untagged transfers right now — watching for new ones');
+            base.watching = true;
+            wpCmAutoSave(base);
+            if (allowRefresh === true) { try { wpResumeAutoRefreshAfterTransferOverview(); } catch (_) {} }
+            return wpCmAutoStep(paint);
+        }
+        wpDashLog('City Manager auto: chain on the untagged transfers of ' + cities.length + ' cit' + (cities.length === 1 ? 'y' : 'ies') + ', top to bottom — the page refreshes after each');
+        wpCmAutoSave(base);
+        if (allowRefresh === true) {
+            try { wpResumeAutoRefreshAfterTransferOverview(); } catch (_) {}
+            if (!wpIsAutoRefreshEnabled()) wpDashLog('City Manager auto: the page\'s auto-refresh is OFF — switch it on so new transfers come in', 'warn');
+        }
+        return wpCmAutoStep(paint);
+    }
+    var wpCmAutoPaint = null;
+
+    // ============================================================
+    // AUTOMATIONS (1.7.414) — every day's automation in one window
+    // ============================================================
+    // One row per day (Today, Tomorrow, the later-days page) with the same
+    // switches: Off · Ask me · Full auto, and the page refresh. Each day has an
+    // engine: "CRM pages" (wlcm: transfer by transfer through the CRM pages,
+    // its cards) or "Ops Hub" (city by city, the Ops Hub chain). Today starts on
+    // CRM pages, Tomorrow and later days on Ops Hub; the day the CRM work moves
+    // to the Ops Hub, Today is switched here and nothing else changes.
+    const WP_AUTO_ENGINE_KEY = 'wp_auto_engine_v1';
+    // 1.7.415: the days that are on with the Ops Hub engine ({ day: { ask } }); one runner works them in turn
+    const WP_HUB_DAYS_KEY = 'wp_auto_hub_days_v1';
+    function wpHubDays() {
+        try { const days = JSON.parse(localStorage.getItem(WP_HUB_DAYS_KEY) || '{}'); return days && typeof days === 'object' ? days : {}; } catch (_) { return {}; }
+    }
+    function wpHubDaysSave(days) {
+        try { if (Object.keys(days).length) localStorage.setItem(WP_HUB_DAYS_KEY, JSON.stringify(days)); else localStorage.removeItem(WP_HUB_DAYS_KEY); } catch (_) {}
+    }
+    function wpAutoTabFor(day) { return day === 'tomorrow' ? 'tomorrow' : day === 'later' ? (wpEmPeriod() ? 'today' : 'later24') : 'today'; }
+    const WP_AUTO_REFRESH_OK_KEY = 'wp_auto_refresh_ok_v1';
+    function wpAutoDayName(day) { return day === 'tomorrow' ? 'Tomorrow' : day === 'later' ? (wpEmPeriod() || '2-4 days') : 'Today'; }
+    function wpAutoEngine(day) {
+        let saved = {};
+        try { saved = JSON.parse(localStorage.getItem(WP_AUTO_ENGINE_KEY) || '{}') || {}; } catch (_) {}
+        if (day === 'tomorrow') return 'hub'; // wlcm works on today's transfers (or a later-days page) only
+        if (day === 'later' && !wpEmPeriod()) return 'hub'; // 1.7.415: 2-4 days from this tab: the Ops Hub only
+        return saved[day] === 'hub' || saved[day] === 'crm' ? saved[day] : (day === 'today' ? 'crm' : 'hub');
+    }
+    function wpAutoEngineSet(day, engine) {
+        let saved = {};
+        try { saved = JSON.parse(localStorage.getItem(WP_AUTO_ENGINE_KEY) || '{}') || {}; } catch (_) {}
+        saved[day] = engine;
+        try { localStorage.setItem(WP_AUTO_ENGINE_KEY, JSON.stringify(saved)); } catch (_) {}
+    }
+    function wpAutoRefreshOk(day) {
+        try { return Boolean((JSON.parse(localStorage.getItem(WP_AUTO_REFRESH_OK_KEY) || '{}') || {})[day]); } catch (_) { return false; }
+    }
+    function wpAutoRefreshOkSet(day, on) {
+        let saved = {};
+        try { saved = JSON.parse(localStorage.getItem(WP_AUTO_REFRESH_OK_KEY) || '{}') || {}; } catch (_) {}
+        saved[day] = Boolean(on);
+        try { localStorage.setItem(WP_AUTO_REFRESH_OK_KEY, JSON.stringify(saved)); } catch (_) {}
+        const state = wpCmAutoLoad();
+        if (state && state.day === day) { state.allowRefresh = Boolean(on); wpCmAutoSave(state); }
+        try { wpSyncAutoRefreshWithTransferOverview(document.getElementById('wp-today-city-window')); } catch (_) {}
+    }
+    // The days this page can run: Today and Tomorrow on the Today-Tomorrow page, its own on a later-days page.
+    function wpAutoDaysHere() { return wpEmPeriod() ? ['later'] : ['today', 'tomorrow'].concat(wpLater24On() ? ['later'] : []); }
+    // Off / ask / full of a day, whatever its engine.
+    function wpAutoDayMode(day) {
+        if (wpAutoEngine(day) === 'crm') {
+            if (wpAutoDaysHere().indexOf(day) < 0) return 'off';
+            const mode = wpAutoMode();
+            return mode === 'off' ? 'off' : wpAutoFullOn() ? 'full' : 'ask';
+        }
+        if (wpAutoDaysHere().indexOf(day) < 0) return 'off';
+        const on = wpHubDays()[day];
+        return !on ? 'off' : on.ask ? 'ask' : 'full';
+    }
+    function wpAutoDayStatus(day) {
+        const engine = wpAutoEngine(day);
+        if (wpAutoDaysHere().indexOf(day) < 0) return day === 'later' ? 'Tick "Also work 2-4 days from this tab" — or open a later-days page' : 'Runs on the Today-Tomorrow page';
+        if (engine === 'crm') {
+            if (wpAutoMode() === 'off') return 'Off';
+            const items = Object.values(wpAutoLoad().items || {});
+            const waiting = items.filter(function(item) { return item && item.status === 'queued'; }).length;
+            const running = items.filter(function(item) { return item && (item.status === 'inflight' || item.status === 'approved'); }).length;
+            const paused = wpAutoPaused();
+            return (paused ? 'Paused: ' + paused : 'Watching ' + (day === 'later' ? 'this page' : 'Em Hailing - Today')) + (waiting ? ' · ' + waiting + ' waiting' : '') + (running ? ' · ' + running + ' running' : '');
+        }
+        const state = wpCmAutoLoad() || {};
+        if (wpAutoDayMode(day) === 'off') return 'Off';
+        if (state.day !== day) return 'Watching for new untagged transfers (in turn with the other Ops Hub days)';
+        if (wpCmAutoRunning && (state.cities || []).length) return 'Working: ' + Math.min(state.index || 0, state.cities.length) + '/' + state.cities.length + (state.cities[state.index - 1] ? ' · ' + state.cities[state.index - 1] : '');
+        if (state.watching && !(state.cities || []).length) return 'Watching for new untagged transfers' + (state.allowRefresh ? ' · the page refreshes' : ' · refresh held by the City Manager');
+        return 'Next: ' + ((state.cities || [])[state.index] || '…');
+    }
+    function wpAutoDaySetMode(day, mode) {
+        const engine = wpAutoEngine(day);
+        if (engine === 'crm') {
+            if (mode === 'off') {
+                const open = document.getElementById('wp-director-card');
+                if (open && typeof wpDirector.answer === 'function') wpDirector.answer('later');
+                if (wpAutoFullOn()) wpAutoFullSet(false, 'Automations');
+                if (wpAutoMode() !== 'off') { wpAutoSetMode('off'); wpDashLog('🤖 wlcm: OFF (Automations)'); }
+                return;
+            }
+            if (wpAutoMode() === 'off' || wpAutoPaused()) wpAutoCycle();
+            if ((mode === 'full') !== wpAutoFullOn()) wpAutoFullSet(mode === 'full', 'Automations');
+            return;
+        }
+        // Ops Hub: the day joins / leaves the runner
+        const days = wpHubDays();
+        const state = wpCmAutoLoad();
+        if (mode === 'off') {
+            delete days[day];
+            wpHubDaysSave(days);
+            wpDashLog('Automations · ' + wpAutoDayName(day) + ': off');
+            if (!Object.keys(days).length && state) {
+                wpCmAutoStop = true;
+                wpCmAutoSave(null);
+                clearTimeout(wpCmAutoWatchTimer);
+                if (wpCmAutoRunning) wpDashLog('Automations: the Ops Hub runner stops after this city');
+                else if (wpCmAutoPaint) wpCmAutoPaint('');
+            }
+            try { wpSyncAutoRefreshWithTransferOverview(document.getElementById('wp-today-city-window')); } catch (_) {}
+            return;
+        }
+        days[day] = { ask: mode === 'ask' };
+        wpHubDaysSave(days);
+        if (state) {
+            if (state.day === day) { state.ask = mode === 'ask'; wpCmAutoSave(state); }
+            wpDashLog('Automations · ' + wpAutoDayName(day) + ': ' + (mode === 'ask' ? 'Ask me' : 'Full auto') + ' — worked in turn with the other Ops Hub days');
+            if (!wpCmAutoRunning) { clearTimeout(wpCmAutoWatchTimer); window.setTimeout(function() { wpCmAutoStep(); }, 300); }
+            return;
+        }
+        // no runner yet: the City Manager on that day, then the chain
+        try {
+            const overview = document.getElementById('wp-today-city-window');
+            if (overview && overview.classList.contains('is-closed')) { const toggle = document.getElementById('wp-today-city-toggle'); if (toggle) toggle.click(); }
+        } catch (_) {}
+        const tab = wpAutoTabFor(day);
+        (tab === 'later24' ? wpLater24Ensure(0) : Promise.resolve()).then(function() {
+            try { wpTodayCitySelectedTab = tab; wpTodayCityUpdate(); } catch (_) {}
+            window.setTimeout(function() {
+                wpCmAutoRun(tab, wpCmAutoPaint, wpAutoRefreshOk(day), { ask: mode === 'ask', day: day });
+            }, 400);
+        });
+    }
+    function wpAutomationsWindow() {
+        const old = document.getElementById('wp-automations-window');
+        if (old) { old.remove(); return; }
+        const box = document.createElement('div');
+        box.id = 'wp-automations-window';
+        const set = function(node, styles) { Object.keys(styles).forEach(function(prop) { node.style.setProperty(prop, styles[prop], 'important'); }); return node; };
+        set(box, { position: 'fixed', right: '18px', top: '58px', 'z-index': '2147483645', width: 'min(470px, calc(100vw - 24px))', 'max-height': 'calc(100vh - 90px)', 'overflow-y': 'auto', 'box-sizing': 'border-box',
+            background: '#1f2529', color: '#e8ecee', border: '1px solid rgba(255,255,255,0.09)', 'border-radius': '18px', 'box-shadow': '0 18px 48px rgba(0,0,0,.6)', padding: '14px 16px 16px', font: '13px "Segoe UI",system-ui,sans-serif' });
+        ['click', 'mousedown', 'keydown'].forEach(function(type) { box.addEventListener(type, function(event) { event.stopPropagation(); }); });
+        const el = function(tag, text, parent, styles) { const node = document.createElement(tag); if (text !== undefined && text !== null) node.textContent = text; if (styles) set(node, styles); (parent || box).appendChild(node); return node; };
+        const head = el('div', null, box, { display: 'flex', 'align-items': 'center', gap: '8px', 'margin-bottom': '10px' });
+        el('span', 'Automations', head, { 'font-size': '16px', 'font-weight': '700', flex: '1 1 auto' });
+        const settingsLink = el('span', 'wlcm settings', head, { color: '#9aa6ad', cursor: 'pointer', 'font-size': '12px' });
+        settingsLink.addEventListener('click', function() { try { wpRulesWindow(true); } catch (_) {} });
+        const close = el('span', '×', head, { color: '#9aa6ad', cursor: 'pointer', 'font-size': '18px', padding: '0 4px' });
+        close.addEventListener('click', function() { box.remove(); });
+        if (WP_NO_AUTO) {
+            el('div', 'This version has no automations.', box, { color: '#9aa6ad' });
+            document.body.appendChild(box);
+            return;
+        }
+        const list = el('div', null, box, { display: 'flex', 'flex-direction': 'column', gap: '10px' });
+        let fullArmed = '';
+        const paint = function() {
+            if (!document.body.contains(box)) { clearInterval(timer); return; }
+            list.textContent = '';
+            ['today', 'tomorrow', 'later'].forEach(function(day) {
+                const here = wpAutoDaysHere().indexOf(day) >= 0;
+                const engine = wpAutoEngine(day);
+                const mode = wpAutoDayMode(day);
+                const card = el('div', null, list, { background: 'rgba(255,255,255,0.04)', 'border-radius': '14px', padding: '10px 12px 11px', 'box-shadow': 'inset 3px 0 0 ' + (mode === 'full' ? '#ff8a80' : mode === 'ask' ? '#2fbf71' : 'rgba(255,255,255,0.12)'), opacity: here ? '1' : '0.55' });
+                const top = el('div', null, card, { display: 'flex', 'align-items': 'center', gap: '8px', 'margin-bottom': '8px' });
+                el('span', wpAutoDayName(day), top, { 'font-size': '14px', 'font-weight': '700', flex: '1 1 auto' });
+                const engineSel = el('select', null, top, { background: '#161a1d', color: '#e8ecee', border: '1px solid rgba(255,255,255,0.14)', 'border-radius': '8px', padding: '3px 6px', font: '12px "Segoe UI",system-ui,sans-serif' });
+                [['crm', 'CRM pages (wlcm)'], ['hub', 'Ops Hub']].forEach(function(pair) {
+                    const option = el('option', pair[1], engineSel);
+                    option.value = pair[0];
+                    if (day === 'tomorrow' && pair[0] === 'crm') { option.disabled = true; option.textContent += ' — today / later days only'; }
+                });
+                engineSel.value = engine;
+                engineSel.title = 'How this day is worked. CRM pages: wlcm, transfer by transfer through the CRM pages. Ops Hub: city by city, the Ops Hub chain.';
+                engineSel.addEventListener('change', function() {
+                    if (wpAutoDayMode(day) !== 'off') wpAutoDaySetMode(day, 'off');
+                    wpAutoEngineSet(day, engineSel.value);
+                    wpDashLog('Automations · ' + wpAutoDayName(day) + ': engine ' + (engineSel.value === 'hub' ? 'Ops Hub' : 'CRM pages (wlcm)') + ' — switched off; choose Ask me or Full auto to start');
+                    paint();
+                });
+                const modes = el('div', null, card, { display: 'flex', gap: '6px' });
+                [['off', 'Off'], ['ask', 'Ask me'], ['full', 'Full auto']].forEach(function(pair) {
+                    const chosen = mode === pair[0];
+                    const button = el('button', fullArmed === day && pair[0] === 'full' ? 'Click again: Full auto' : pair[1], modes, {
+                        flex: '1 1 0', border: '0', 'border-radius': '999px', padding: '6px 8px', cursor: here ? 'pointer' : 'default', font: '600 12px "Segoe UI",system-ui,sans-serif',
+                        background: chosen ? (pair[0] === 'full' ? '#ff6b5e' : pair[0] === 'ask' ? '#2fbf71' : 'rgba(255,255,255,0.16)') : 'rgba(255,255,255,0.07)',
+                        color: chosen ? (pair[0] === 'off' ? '#e8ecee' : '#06210f') : '#cfd6da'
+                    });
+                    button.type = 'button';
+                    button.disabled = !here;
+                    button.title = pair[0] === 'off' ? 'Nothing runs by itself' : pair[0] === 'ask' ? 'It finds the work and asks you before each step' : 'It does the work by itself (anything with a warning is still left for you)';
+                    button.addEventListener('click', function() {
+                        if (!here || chosen) return;
+                        // Full auto takes a second click, so it is never switched on by mistake
+                        if (pair[0] === 'full' && fullArmed !== day) {
+                            fullArmed = day;
+                            window.setTimeout(function() { if (fullArmed === day) { fullArmed = ''; paint(); } }, 5000);
+                            paint();
+                            return;
+                        }
+                        fullArmed = '';
+                        wpAutoDaySetMode(day, pair[0]);
+                        window.setTimeout(paint, 300);
+                    });
+                });
+                if (day === 'later' && !wpEmPeriod()) {
+                    const also = el('label', null, card, { display: 'flex', 'align-items': 'center', gap: '7px', 'margin-top': '8px', 'font-size': '12px', color: '#e8ecee', cursor: 'pointer' });
+                    const alsoTick = el('input', null, also);
+                    alsoTick.type = 'checkbox';
+                    alsoTick.checked = wpLater24On();
+                    alsoTick.style.setProperty('accent-color', '#2fbf71');
+                    el('span', 'Also work 2-4 days from this tab (its list is loaded in the background, not shown)', also);
+                    alsoTick.addEventListener('change', function() {
+                        if (!alsoTick.checked && wpAutoDayMode('later') !== 'off') wpAutoDaySetMode('later', 'off');
+                        wpLater24Set(alsoTick.checked);
+                        window.setTimeout(paint, 300);
+                    });
+                }
+                if (engine === 'hub') {
+                    const refresh = el('label', null, card, { display: 'flex', 'align-items': 'center', gap: '7px', 'margin-top': '8px', 'font-size': '12px', color: '#cfd6da', cursor: here ? 'pointer' : 'default' });
+                    const tick = el('input', null, refresh);
+                    tick.type = 'checkbox';
+                    tick.checked = wpAutoRefreshOk(day);
+                    tick.disabled = !here;
+                    tick.style.setProperty('accent-color', '#2fbf71');
+                    el('span', 'Let the page auto-refresh while it runs (new transfers come in)', refresh);
+                    tick.addEventListener('change', function() {
+                        wpAutoRefreshOkSet(day, tick.checked);
+                        if (tick.checked && !wpIsAutoRefreshEnabled()) wpDashLog('Automations: the page\'s auto-refresh is OFF — switch it on so new transfers come in', 'warn');
+                    });
+                }
+                el('div', wpAutoDayStatus(day), card, { 'margin-top': '8px', 'font-size': '12px', color: mode === 'off' ? '#7d8a90' : '#b4bec3' });
+            });
+            el('div', 'Full auto on Today (CRM pages) also sends to suggested / heroes when those are on in wlcm settings.', list, { 'font-size': '11px', color: '#6f7b81', 'margin-top': '2px' });
+        };
+        const timer = window.setInterval(function() { if (!box.matches(':hover') || !document.activeElement || !box.contains(document.activeElement)) paint(); }, 2500);
+        document.body.appendChild(box);
+        paint();
+    }
+    // 1.7.413: with your OK when auto started, the open City Manager does not hold the page's auto-refresh
+    function wpCmAutoLetsRefresh() {
+        const state = wpCmAutoLoad();
+        return Boolean(state && state.allowRefresh);
+    }
+    var wpCmAutoWatchTimer = null;
+    async function wpCmAutoStep(paint) {
+        let state = wpCmAutoLoad();
+        if (!state || wpCmAutoRunning) return;
+        paint = paint || wpCmAutoPaint;
+        const pause = function(ms) { return new Promise(function(resolve) { window.setTimeout(resolve, ms); }); };
+        if (state.watching && !(state.cities || []).length) {
+            // 1.7.415: every Ops Hub day that is on, in turn (Today, Tomorrow, 2-4 days)
+            const hubDays = wpHubDays();
+            const order = ['today', 'tomorrow', 'later'].filter(function(name) { return hubDays[name] && wpAutoDaysHere().indexOf(name) >= 0; });
+            if (!order.length) { wpCmAutoSave(null); if (paint) paint(''); try { wpSyncAutoRefreshWithTransferOverview(document.getElementById('wp-today-city-window')); } catch (_) {} return; }
+            state.allowRefresh = order.some(function(name) { return wpAutoRefreshOk(name); });
+            let found = [];
+            for (const name of order) {
+                const tabName = wpAutoTabFor(name);
+                if (tabName === 'later24') { try { await wpLater24Ensure(60000); } catch (_) {} }
+                const cities = wpCmAutoNewCities(Object.assign({}, state, { tab: tabName }));
+                if (cities.length) { found = cities; state.day = name; state.tab = tabName; state.ask = Boolean(hubDays[name].ask); break; }
+            }
+            if (!found.length) {
+                wpCmAutoSave(state);
+                if (paint) paint('watching');
+                clearTimeout(wpCmAutoWatchTimer);
+                wpCmAutoWatchTimer = window.setTimeout(function() { wpCmAutoStep(); }, 30000);
+                return;
+            }
+            wpDashLog('Automations · ' + wpAutoDayName(state.day) + ': new untagged transfer' + (found.length === 1 ? '' : 's') + ' in ' + found.join(', ') + ' — same chain');
+            state.cities = found;
+            state.index = 0;
+            wpCmAutoSave(state);
+        }
+        wpCmAutoRunning = true;
+        wpCmAutoStop = false;
+        wpDashSetBusy(true);
+        let reload = false;
+        try {
+            // after a refresh: the City Manager open and its list read in
+            // (the refresh closes it: opened again here, like a click on "City Manager")
+            for (let i = 0; i < 60 && !document.getElementById('wp-today-city-window'); i++) await pause(1000);
+            const overview = document.getElementById('wp-today-city-window');
+            if (!overview) return; // not a page with the City Manager: leave it for that page
+            if (overview.classList.contains('is-closed')) {
+                const toggle = document.getElementById('wp-today-city-toggle');
+                if (toggle) toggle.click();
+                await pause(600);
+                if (overview.classList.contains('is-closed')) { wpDashLog('City Manager auto: the City Manager could not be opened — stopped', 'error'); wpCmAutoSave(null); return; }
+            }
+            // the list of the day auto mode works on, drawn now (not at the next refresh round)
+            try { if (wpTodayCitySelectedTab !== state.tab) { wpTodayCitySelectedTab = state.tab; } wpTodayCityUpdate(); } catch (_) {}
+            for (let i = 0; i < 60 && !wpCmAutoRows().length; i++) { await pause(1000); if (i % 10 === 9) { try { wpTodayCityUpdate(); } catch (_) {} } }
+            if (!wpCmAutoRows().length) { wpDashLog('City Manager auto: the City Manager list did not load after the refresh — stopped', 'error'); wpCmAutoSave(null); return; }
+            if (Number(state.index) > 0) wpDashLog('City Manager auto: picking up after the refresh — ' + (Number(state.index) + 1) + '/' + state.cities.length);
+            const fresh = {};
+            wpCmAutoRows().forEach(function(entry) { fresh[entry.city] = entry.u; });
+            let index = Number(state.index) || 0;
+            const skippedNow = function(name) { return state.skipped && Date.now() - Number(state.skipped[name] || 0) < 30 * 60000; };
+            while (index < state.cities.length && (!(fresh[state.cities[index]] > 0) || skippedNow(state.cities[index]))) index++;
+            if (index >= state.cities.length) {
+                if (!state.watching) wpDashLog('City Manager auto: done (' + (state.ran || 0) + ' cit' + (state.ran === 1 ? 'y' : 'ies') + ') — now watching for new untagged transfers');
+                wpCmAutoWatch(state);
+                window.setTimeout(function() { wpCmAutoStep(); }, 1000);
+                return;
+            }
+            const city = state.cities[index];
+            if (paint) paint((index + 1) + '/' + state.cities.length + ' ' + city);
+            // 1.7.414: Ask me: each city waits for your Yes (after any open wlcm card)
+            if (state.ask) {
+                for (let i = 0; i < 600 && document.getElementById('wp-director-card'); i++) await pause(1000);
+                const answer = await wpDirectorConfirm('automations · ' + wpAutoDayName(state.day), [
+                    'Run the Ops Hub chain on ' + city + ' (' + (fresh[city] || 0) + ' untagged)?',
+                    'Tag → price from the Hub box → Remove Auto-C → Broadcast → Ask best drivers → Enable Auto-C → note → image.',
+                    'Not now: ' + city + ' is skipped for 30 minutes.'
+                ], 'Yes, run it', undefined, 'AUTO');
+                if (!answer || answer.action !== 'yes') {
+                    state = wpCmAutoLoad() || state;
+                    if (!wpCmAutoLoad()) return;
+                    state.skipped = state.skipped || {};
+                    state.skipped[city] = Date.now();
+                    state.index = index + 1;
+                    wpCmAutoSave(state);
+                    wpDashLog('Automations: ' + city + ' skipped for 30 min (Not now)');
+                    window.setTimeout(function() { wpCmAutoStep(); }, 800);
+                    return;
+                }
+            }
+            wpTodayCitySelectedTab = state.tab;
+            try { wpTodayCityOpenCityWindow(city, state.tab); } catch (_) {}
+            await pause(1200);
+            const panel = document.getElementById('wp-today-city-orders-window');
+            state.index = index + 1;
+            if (!panel || typeof panel._wpAutoChain !== 'function') {
+                wpDashLog('City Manager auto: ' + city + ' did not open — skipped', 'warn');
+            } else {
+                wpCmAutoSave(state);
+                const before = panel._wpLastBatch;
+                const result = await panel._wpAutoChain(state.tried || {});
+                state.tried = state.tried || {};
+                (result.taken || []).forEach(function(key) { state.tried[key] = Date.now(); });
+                wpCmAutoSave(state);
+                if (result.count) {
+                    state.ran = (state.ran || 0) + 1;
+                    wpDashLog('City Manager auto: ' + city + ' (' + result.count + ') — ' + result.text.replace(/\n/g, ' '), /^✓/.test(result.text) ? undefined : 'warn');
+                    // the Hub itself is not working: the next cities would fail the same way
+                    // 1.7.355: none of this city's transfers in the Hub list: only this city is skipped
+                    if (/Hub not reached|did not answer/i.test(result.text) || (/stopped at Select/i.test(result.text) && !/in the Hub list/i.test(result.text))) { wpDashLog('City Manager auto: stopped — the Hub is not answering', 'error'); wpCmAutoSave(null); return; }
+                    // this city's note + image (and its WhatsApp send) first, at most 4 min
+                    const batch = panel._wpLastBatch !== before ? panel._wpLastBatch : null;
+                    const startedAt = Date.now();
+                    let calm = 0;
+                    while (calm < 3 && Date.now() - startedAt < 240000) {
+                        let open = 0;
+                        if (batch && Array.isArray(batch.orderedItems)) {
+                            for (let k = 0; k < batch.orderedItems.length; k++) { try { if (!localStorage.getItem('wp_batch_result_v1_' + batch.batchId + '_' + k)) open++; } catch (_) {} }
+                        }
+                        calm = !open && !wpCmImagePending && !Object.keys(wpWhatsAppFallbacks).length && wpDashBusyCount <= 1 ? calm + 1 : 0;
+                        await pause(2000);
+                    }
+                } else {
+                    wpDashLog('City Manager auto: ' + city + ' — no untagged transfers any more');
+                }
+            }
+            if (wpCmAutoStop || !wpCmAutoLoad()) { wpDashLog('City Manager auto: stopped by you after ' + city, 'warn'); wpCmAutoSave(null); return; }
+            if (state.day && !wpHubDays()[state.day]) { state.cities = []; state.index = 0; } // 1.7.415: its day was switched off
+            if (state.index >= state.cities.length) { wpDashLog('City Manager auto: done (' + (state.ran || 0) + ' cit' + (state.ran === 1 ? 'y' : 'ies') + ') — refreshing the page, then watching for new untagged transfers'); wpCmAutoWatch(state); }
+            else { wpCmAutoSave(state); wpDashLog('City Manager auto: refreshing the page — next: ' + state.cities[state.index]); }
+            reload = true;
+        } catch (error) {
+            wpDashLog('City Manager auto failed: ' + String(error && error.message || error), 'error');
+            wpCmAutoSave(null);
+        } finally {
+            if (reload) { window.setTimeout(function() { location.reload(); }, 500); }
+            else { wpCmAutoRunning = false; wpDashSetBusy(false); if (paint) paint(''); }
+        }
+    }
+    // Watches a batch's results (also when its window is closed); all in → refresh.
+    function wpCmWatchBatch(batch, label) {
+        if (!batch || !Array.isArray(batch.orderedItems)) return;
+        const total = batch.orderedItems.length;
+        const startedAt = Date.now();
+        const timer = window.setInterval(function() {
+            let finished = 0;
+            for (let i = 0; i < total; i++) { try { if (localStorage.getItem('wp_batch_result_v1_' + batch.batchId + '_' + i)) finished++; } catch (_) {} }
+            if (finished >= total) { clearInterval(timer); wpCmReloadWhenIdle(label); }
+            else if (Date.now() - startedAt > 30 * 60000) clearInterval(timer);
+        }, 2000);
+    }
+    // 1.7.346: Ops Hub price changes are remembered per transfer (2 h), so the
+    // note after a Hub broadcast says what was done: "raised +10% DC/ sent to BC, Group".
+    var wpHubPriceMem = {};
+    function wpHubRememberPrice(ids, price) {
+        if (!price) return;
+        (ids || []).forEach(function(id) { wpHubPriceMem[String(id)] = { price: price, at: Date.now() }; });
+    }
+    function wpHubDoneNote(ids) {
+        let price = null;
+        (ids || []).some(function(id) { const mem = wpHubPriceMem[String(id)]; if (mem && Date.now() - mem.at < 2 * 3600000) { price = mem.price; return true; } return false; });
+        return wpHubPriceNote(price);
+    }
+    // 1.7.347: the note for a price (or none): % / + € / set to €, then "sent to BC, Group"
+    function wpHubPriceNote(price) {
+        const did = price ? (price.mode === 'pct' ? 'raised +' + price.value + '% DC' : price.mode === 'add' ? 'raised +€' + price.value + ' DC' : 'DC set to €' + price.value) + '/ ' : '';
+        return did + 'sent to BC, Group';
+    }
+    // 1.7.346: a Hub Broadcast that went through (PC or phone): the note on each
+    // of these transfers, the image of only these to the city group, then a refresh.
+    function wpCmAfterHubBroadcast(chosen, ids, tabName, label) {
+        if (!chosen || !chosen.length) return '';
+        const note = wpHubDoneNote(ids);
+        const batch = wpCreateCityBatch(chosen, tabName);
+        if (batch) {
+            batch.broadcastMode = '';
+            batch.noteOnly = true;
+            wpOpenCityBatchTransfers(batch, null, note, '');
+            wpCmWatchBatch(batch, label);
+        }
+        wpGenerateTransfersImage(chosen, tabName, '', true).catch(function() {});
+        return note;
     }
 
     function wpOpenCityBatchTransfers(batch, openAllButton, taskMessage, priceIncreaseValue) {
@@ -19020,8 +20346,73 @@ async function wpTransferAssistantExtensionEnabled() {
         return copied;
     }
 
+    // 1.7.354: the pickup day of a stored transfer: the CRM's day text before
+    // the time ("Wed 04 Nov, 14:10" → "Wed 04 Nov"); '' when there is none.
+    function wpBatchItemDay(batchId, index) {
+        try {
+            const stored = JSON.parse(localStorage.getItem(WP_BATCH_COPY_PREFIX + batchId + '_' + index) || 'null');
+            const parsed = stored && stored.details ? wpParseCRMClipboardText(stored.details) : null;
+            return String(parsed && parsed.dateTime || '').replace(/\b\d{1,2}:\d{2}\b[\s\S]*$/, '').replace(/[\s,]+$/, '').trim();
+        } catch (_) { return ''; }
+    }
+    // 1.7.354: transfers on more than one day (e.g. the 2-4 days page) → one
+    // batch per day, in the order they come, each with its own stored details
+    // (copied under a new batch id). One day or less: [batch] as it is.
+    function wpSplitBatchByDay(batch) {
+        const days = [];
+        const groups = {};
+        batch.orderedItems.forEach(function(item, index) {
+            const day = wpBatchItemDay(batch.batchId, index);
+            if (!day) return;
+            const key = day.toLowerCase();
+            if (!groups[key]) { groups[key] = { day: day, indexes: [] }; days.push(key); }
+            groups[key].indexes.push(index);
+        });
+        // one day on a later-days page: the message names that day, not "the next 2-4 days"
+        if (days.length === 1 && batch.period && !batch.dayText) batch.dayText = groups[days[0]].day;
+        if (days.length < 2) return [batch];
+        return days.map(function(key, n) {
+            const group = groups[key];
+            const part = Object.assign({}, batch, {
+                batchId: batch.batchId + '_d' + n,
+                orderedItems: group.indexes.map(function(index) { return batch.orderedItems[index]; }),
+                dayText: group.day,
+                dayIndex: n, // 1.7.355: first / middle / last day, for the message
+                dayCount: days.length,
+                _wpDayPart: true,
+                _wpImageShown: true
+            });
+            group.indexes.forEach(function(from, to) {
+                try {
+                    const stored = JSON.parse(localStorage.getItem(WP_BATCH_COPY_PREFIX + batch.batchId + '_' + from) || 'null');
+                    if (stored) { stored.index = to; localStorage.setItem(WP_BATCH_COPY_PREFIX + part.batchId + '_' + to, JSON.stringify(stored)); }
+                    const dc = localStorage.getItem(WP_BATCH_COPY_PREFIX + batch.batchId + '_' + from + '_dc');
+                    if (dc) localStorage.setItem(WP_BATCH_COPY_PREFIX + part.batchId + '_' + to + '_dc', dc);
+                } catch (_) {}
+            });
+            return part;
+        });
+    }
+    // 1.7.354: "Wed 04 Nov" → "Wednesday 04 Nov"; "Today" / "Tomorrow" in lower case (for the message).
+    function wpBatchDayWords(day) {
+        const text = String(day || '').trim();
+        if (/^(today|tomorrow)$/i.test(text)) return text.toLowerCase();
+        const names = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
+        return text.replace(/^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?(?=\s|,|$)/i, function(word, short) { return names[short.toLowerCase()]; });
+    }
+
     function wpShowCityTransfersImage(batch) {
         if (!batch || !Array.isArray(batch.orderedItems)) return;
+        // 1.7.411: no limit on how many transfers go to WhatsApp (the 1.7.355 rule of 20 is gone)
+        // 1.7.354: more than one pickup day: one image + message per day
+        if (!batch._wpDayPart) {
+            const parts = wpSplitBatchByDay(batch);
+            if (parts.length > 1) {
+                wpDashLog('City Manager' + (batch.city ? ' ' + batch.city : '') + ': transfers on ' + parts.length + ' days (' + parts.map(function(part) { return part.dayText + ' · ' + part.orderedItems.length; }).join(', ') + ') — one image per day');
+                parts.forEach(function(part, n) { window.setTimeout(function() { wpShowCityTransfersImage(part); }, n * 400); });
+                return;
+            }
+        }
 
         const records = [];
 
@@ -19116,7 +20507,8 @@ async function wpTransferAssistantExtensionEnabled() {
         const dayTitle =
             batch.tabName === 'tomorrow'
                 ? "Tomorrow's Transfers"
-                : "Today's Transfers";
+                : batch.dayText ? 'Transfers on ' + wpBatchDayWords(batch.dayText) // 1.7.354
+                : batch.period ? 'Transfers in ' + batch.period : "Today's Transfers";
         const title = city + ' — ' + dayTitle + ' (' + records.length + ')';
 
         // ---- Table layout (1.7.221) ------------------------------------------
@@ -19365,9 +20757,15 @@ async function wpTransferAssistantExtensionEnabled() {
         // opened through the existing background-tab helper, so this tab is
         // never redirected. The WhatsApp button copies the driver message plus
         // the formatted transfer details; the image keeps its own Copy button.
+        // 1.7.355: split by day: the first day as before, then "These ones for …",
+        // the last one "And these ones for …"
+        // 1.7.356: a day with one transfer: "this transfer" / "This one for …" / "And this one for …"
+        // (sent as text only, no image, like any single transfer)
+        const oneOfDay = batch.dayCount > 1 && batch.orderedItems.length === 1;
         const introText =
-            'Hello everyone we have these transfers available on broadcast for ' +
-            (batch.tabName === 'tomorrow' ? 'tomorrow' : 'today') + ':';
+            batch.dayCount > 1 && batch.dayIndex > 0
+                ? (batch.dayIndex === batch.dayCount - 1 ? 'And ' + (oneOfDay ? 'this one' : 'these ones') + ' for ' : (oneOfDay ? 'This one' : 'These ones') + ' for ') + wpCityBatchDayWord(batch) + ':'
+                : 'Hello everyone we have ' + (oneOfDay ? 'this transfer' : 'these transfers') + ' available on broadcast for ' + wpCityBatchDayWord(batch) + ':';
         const batchCities = [];
         batch.orderedItems.forEach(function(item) {
             const name = String(item && item.city || '').trim();
@@ -19425,7 +20823,7 @@ async function wpTransferAssistantExtensionEnabled() {
         }
 
         function buildDetailsText() {
-            return wpBuildBroadcastWhatsAppText(batch.broadcastMode, readBatchEntries(true).entries, introText);
+            return wpBuildBroadcastWhatsAppText(batch.broadcastMode, readBatchEntries(true).entries, introText, batch.dayCount > 1);
         }
 
         const detailsText = buildDetailsText();
@@ -19523,8 +20921,10 @@ async function wpTransferAssistantExtensionEnabled() {
         // to WhatsApp: copy the details text and open the group automatically.
         // 1.7.318: Generate image sends too (only with WhatsApp auto-send on;
         // off = the image window opens as before).
-        const sendNow = Boolean(batch._wpSendNow) && wpWhatsAppAutoSendOn();
-        if (hasWhatsApp && (batch.broadcastMode === 'send' || batch.broadcastMode === 'final' || sendNow)) {
+        const sendNow = Boolean(batch._wpSendNow) && wpWhatsAppAutoSendOn() && !batch._wpNoSend;
+        if (batch._wpNoSend) {
+            // 1.7.355: more than 20 transfers: not sent (said once in the Terminal above)
+        } else if (hasWhatsApp && (batch.broadcastMode === 'send' || batch.broadcastMode === 'final' || sendNow)) {
             window.setTimeout(copyDetailsWhenPricesReady, 150);
         } else if (batch._wpSendNow && sendNow) {
             wpDashLog(logName + ': ' + (batchCities.length > 1 ? 'several cities' : 'no WhatsApp group for this city') + ' — image not sent; open it from the Terminal', 'warn');
@@ -19549,7 +20949,7 @@ async function wpTransferAssistantExtensionEnabled() {
                         const cityEntries = entries.filter(function(entry) {
                             return wpNormalizeCityKey(entry.city) === wpNormalizeCityKey(city);
                         });
-                        const cityText = wpBuildBroadcastWhatsAppText(batch.broadcastMode, cityEntries, introText);
+                        const cityText = wpBuildBroadcastWhatsAppText(batch.broadcastMode, cityEntries, introText, batch.dayCount > 1);
                         const cityLabel = 'City Manager ' + city;
                         if (!cityText) {
                             wpDashLog(cityLabel + ': no transfer details collected — nothing to send', 'warn');
@@ -19589,8 +20989,16 @@ async function wpTransferAssistantExtensionEnabled() {
         // 1.7.318: the image window no longer pops up over the CRM (the
         // image and text are sent by themselves); it opens from the Terminal.
         const openModal = function() { image.style.display = 'block'; if (!modal.isConnected) document.body.appendChild(modal); };
-        if (batch._wpSendNow && !sendNow) openModal();
+        if (batch._wpSendNow && !sendNow && !batch._wpNoSend) openModal();
         wpDashLog(logName + ': click here to view / copy the transfers image', '', openModal);
+    }
+
+    // 1.7.352: "tomorrow" / "the next 2-4 days" / "today" for the WhatsApp intro (was "today" on the 2-4 days page).
+    function wpCityBatchDayWord(batch) {
+        if (batch.dayText) return wpBatchDayWords(batch.dayText); // 1.7.354: one day of a split batch
+        if (batch.tabName === 'tomorrow') return 'tomorrow';
+        const period = batch.period !== undefined ? batch.period : wpEmPeriod();
+        return period ? 'the next ' + period : 'today';
     }
 
     function wpUpdateCityBatchBroadcastDisplay(batch, textarea, statusElement) {
@@ -19598,7 +21006,7 @@ async function wpTransferAssistantExtensionEnabled() {
 
         // The textarea is now only the WhatsApp intro message. We send the
         // generated transfer image instead of the long text payload.
-        const dayWord = batch.tabName === 'tomorrow' ? 'tomorrow' : 'today';
+        const dayWord = wpCityBatchDayWord(batch);
         textarea.value =
             'Hello everyone we have these transfers available on broadcast for ' +
             dayWord + ':';
@@ -19881,7 +21289,9 @@ async function wpTransferAssistantExtensionEnabled() {
             !windowBox.classList.contains('is-closed')
         );
 
-        if (isOpen) {
+        let letRefresh = false;
+        try { letRefresh = wpCmAutoLetsRefresh(); } catch (_) {}
+        if (isOpen && !letRefresh) {
             wpPauseAutoRefreshForTransferOverview();
         } else {
             wpResumeAutoRefreshAfterTransferOverview();
@@ -19960,12 +21370,78 @@ async function wpTransferAssistantExtensionEnabled() {
         return value;
     }
 
+    // 1.7.369: auto-refresh watchdog (every 30 s). The refresh is held while a
+    // quickbar, the City Manager window, a wlcm card, an expanded row or a
+    // WhatsApp hand-off is open. A hold whose thing is gone (a quickbar or the
+    // City Manager window removed without closing) is let go; a countdown that
+    // stopped with nothing holding it is started again; a hold of 20 min with
+    // nothing visibly busy is cleared. Each time the Terminal says so.
+    var wpRefreshHeldSince = 0;
+    var wpRefreshHeldSaid = false;
+    function wpAutoRefreshWatchdog() {
+        try {
+            if (window.top !== window || wpIsTransferDetailPage() || !wpIsAutoRefreshEnabled() || /[?&]wpAutoRefresh=off/.test(location.search)) { wpRefreshHeldSince = 0; return; }
+            if (wpOrderQuickActionOpen) {
+                const shown = Array.from(document.querySelectorAll('.wp-order-quick-popout, .wp-order-quick-actions')).some(function(bar) {
+                    return bar.isConnected && bar.style.display !== 'none' && bar.getClientRects().length > 0;
+                });
+                if (!shown) { wpDashLog('Auto-refresh: held by a quickbar that is no longer on screen — started again', 'warn'); wpSetOrderQuickActionOpen(false); }
+            }
+            if (wpAutoRefreshPausedByTransferOverview) {
+                const box = document.getElementById('wp-today-city-window');
+                if (!box || box.classList.contains('is-closed')) { wpDashLog('Auto-refresh: held by a City Manager window that is gone — started again', 'warn'); wpResumeAutoRefreshAfterTransferOverview(); }
+            }
+            const held = wpOrderQuickActionOpen || wpAutoRefreshPausedByTransferOverview || wpDashBusyCount > 0;
+            if (!held) {
+                wpRefreshHeldSince = 0;
+                wpRefreshHeldSaid = false;
+                if (wpAutoRefreshInterval === null && wpAutoRefreshCountdownInterval === null) {
+                    wpDashLog('Auto-refresh had stopped with nothing holding it — started again', 'warn');
+                    wpStartAutoRefresh();
+                }
+                return;
+            }
+            const now = Date.now();
+            if (!wpRefreshHeldSince) wpRefreshHeldSince = now;
+            const minutes = (now - wpRefreshHeldSince) / 60000;
+            const why = wpOrderQuickActionOpen ? 'a quickbar is open' : wpAutoRefreshPausedByTransferOverview ? 'the City Manager window is open' :
+                wpAutoPopupOpen ? 'a wlcm card is waiting for your answer' : wpRxHoldingRefresh ? 'an expanded row is open' : 'busy (' + wpDashBusyCount + ')';
+            if (minutes >= 10 && !wpRefreshHeldSaid) { wpRefreshHeldSaid = true; wpDashLog('Auto-refresh paused for 10 min: ' + why, 'warn'); }
+            // nothing visibly busy for 20 min: a hold that was never released
+            const visiblyBusy = wpOrderQuickActionOpen || wpAutoRefreshPausedByTransferOverview || wpAutoPopupOpen || wpRxHoldingRefresh || wpCmdBusy || wpAutoTicking || wpCmAutoRunning || wpCmImagePending > 0;
+            if (minutes >= 20 && wpDashBusyCount > 0 && !visiblyBusy) {
+                wpDashLog('Auto-refresh: a hold was never let go (' + wpDashBusyCount + ') — cleared, refresh started again', 'warn');
+                wpRefreshHeldSince = 0;
+                wpRefreshHeldSaid = false;
+                wpDashBusyCount = 1;
+                wpDashSetBusy(false);
+            }
+        } catch (_) {}
+    }
+    try { window.setInterval(wpAutoRefreshWatchdog, 30000); } catch (_) {}
+
+    // 1.7.419: the background asks before each reload; a page loaded with the refresh off clears any leftover timer
+    try {
+        if (window.top === window && !wpIsTransferDetailPage()) {
+            chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
+                if (!message || message.type !== 'WP_AUTO_REFRESH_ASK') return false;
+                let enabled = false;
+                try { enabled = wpIsAutoRefreshEnabled() && !/[?&]wpAutoRefresh=off/.test(location.search); } catch (_) {}
+                const held = Boolean(wpOrderQuickActionOpen || wpAutoRefreshPausedByTransferOverview || wpDashBusyCount > 0 || wpAutoTicking);
+                sendResponse({ enabled: enabled, held: held });
+                return false;
+            });
+            window.setTimeout(function() {
+                try { if (!wpIsAutoRefreshEnabled()) chrome.runtime.sendMessage({ type: 'WP_AUTO_REFRESH_SET', enabled: false }); } catch (_) {}
+            }, 1500);
+        }
+    } catch (_) {}
     function wpSyncBackgroundAutoRefresh(enabled) {
         try {
             const isDashboard = !wpIsTransferDetailPage();
             chrome.runtime.sendMessage({
                 type: 'WP_AUTO_REFRESH_SET',
-                enabled: Boolean(enabled) && isDashboard && !wpAutoRefreshPausedByTransferOverview && !wpOrderQuickActionOpen && !(wpDashBusyCount > 0),
+                enabled: Boolean(enabled) && isDashboard && !wpAutoRefreshPausedByTransferOverview && !wpOrderQuickActionOpen && !(wpDashBusyCount > 0) && !wpAutoTicking, // 1.7.372: never mid-round
                 intervalSeconds: wpGetAutoRefreshIntervalSeconds()
             });
         } catch (_) {}
@@ -20127,8 +21603,20 @@ async function wpTransferAssistantExtensionEnabled() {
                         countdown.textContent =
                             '↻ Refreshing…';
 
-                        wpAutoRefreshInterval =
-                            setTimeout(
+                        // 1.7.372: a wlcm round no longer stops the countdown;
+                        // the reload waits here for the round to end (at most 5 min).
+                        const wpWaitForRound = function() {
+                            const roundAge = Date.now() - wpAutoTickStartedAt;
+                            if (wpAutoTicking && roundAge < 5 * 60000) {
+                                countdown.textContent = '↻ Refresh after wlcm check (' + Math.round(roundAge / 1000) + 's)';
+                                wpAutoRefreshInterval = setTimeout(wpWaitForRound, 1000);
+                                return;
+                            }
+                            if (wpAutoTicking) { try { wpDashLog('wlcm: the check round took over 5 min — refreshing anyway', 'warn'); } catch (_) {} }
+                            countdown.textContent = '↻ Refreshing…';
+                            wpAutoRefreshInterval = setTimeout(wpReloadNow, 100);
+                        };
+                        const wpReloadNow =
                                 function() {
 
                                     // Never reload a /transfers/<id>/null address (1.7.171).
@@ -20136,9 +21624,9 @@ async function wpTransferAssistantExtensionEnabled() {
                                     if (bad) window.location.replace(bad[1] + '/details_v3' + location.search);
                                     else window.location.reload();
 
-                                },
-                                100
-                            );
+                                };
+                        wpAutoRefreshInterval =
+                            setTimeout(wpWaitForRound, 100);
 
                         return;
 
@@ -21868,6 +23356,48 @@ async function wpTransferAssistantExtensionEnabled() {
             return Array.isArray(list) ? list.filter(function(entry) { return entry && entry.id && Number(entry.at) >= from; }) : [];
         } catch (_) { return []; }
     }
+    // 1.7.338: after an auto-cancel the History button turns red (with the
+    // number of new ones) until you open History, so you can check whether
+    // anything is left to do on that transfer.
+    const WP_AUTOCANCEL_SEEN_KEY = 'wp_autocancel_seen_v1';
+    function wpAutoCancelUnseen() {
+        let seen = 0;
+        try {
+            seen = Number(localStorage.getItem(WP_AUTOCANCEL_SEEN_KEY)) || 0;
+            if (!seen) { seen = Date.now(); localStorage.setItem(WP_AUTOCANCEL_SEEN_KEY, String(seen)); }
+        } catch (_) {}
+        return wpAutoCancelledList().filter(function(entry) { return Number(entry.at) > seen; }).length;
+    }
+    function wpAutoCancelMarkSeen() {
+        try { localStorage.setItem(WP_AUTOCANCEL_SEEN_KEY, String(Date.now())); } catch (_) {}
+        wpHistoryAlertPaint();
+    }
+    function wpHistoryAlertPaint() {
+        const unseen = wpAutoCancelUnseen();
+        const launcher = document.getElementById('wp-transfer-history-launcher');
+        const label = document.querySelector('#wp-transfer-history-panel .wp-transfer-history-title > span:first-child');
+        [launcher, label].forEach(function(node) {
+            if (!node) return;
+            if (unseen) {
+                node.style.setProperty('color', '#ffffff', 'important');
+                if (node === launcher) {
+                    node.style.setProperty('background', 'rgba(198,40,40,0.85)', 'important');
+                    node.style.setProperty('border-color', '#ff6b6b', 'important');
+                    node.style.setProperty('box-shadow', '0 0 12px rgba(255,80,80,0.55)', 'important');
+                } else {
+                    node.style.setProperty('background', 'rgba(198,40,40,0.85)', 'important');
+                    node.style.setProperty('border-radius', '6px', 'important');
+                    node.style.setProperty('padding', '0 6px', 'important');
+                }
+            } else {
+                ['color', 'background', 'border-color', 'box-shadow', 'border-radius', 'padding'].forEach(function(prop) { node.style.removeProperty(prop); });
+            }
+        });
+        if (launcher) {
+            launcher.textContent = unseen ? 'History · ' + unseen + ' auto-cancelled' : 'History';
+            launcher.title = unseen ? unseen + ' transfer' + (unseen === 1 ? ' was' : 's were') + ' auto-cancelled — open History to check them' : 'Open transfer history';
+        }
+    }
     function wpRenderAutoCancelled(panel) {
         const list = wpAutoCancelledList();
         const box = document.createElement('div');
@@ -21985,6 +23515,12 @@ async function wpTransferAssistantExtensionEnabled() {
 
         // 1.7.265: first, what our auto-cancel cancelled
         if (!closed) { try { wpRenderAutoCancelled(panel); } catch (_) {} }
+        // 1.7.338: red until you open History (or click in it)
+        try { wpHistoryAlertPaint(); } catch (_) {}
+        if (!panel.dataset.wpSeenHook) {
+            panel.dataset.wpSeenHook = '1';
+            panel.addEventListener('click', function() { if (!wpGetPanelClosed(WP_TRANSFER_HISTORY_CLOSED_KEY)) wpAutoCancelMarkSeen(); }, true);
+        }
 
         if (!history.length) {
             const empty = document.createElement('div');
@@ -22494,7 +24030,8 @@ async function wpTransferAssistantExtensionEnabled() {
         const session = wpTodayLoad();
         const now = Date.now();
         const visible = new Set();
-        table.querySelectorAll(':scope > tbody > tr').forEach(function(row) {
+        // 1.7.407: today's pickups from every list (else the Today list as before)
+        (wpDayRows('today') || Array.from(table.querySelectorAll(':scope > tbody > tr'))).forEach(function(row) {
             if (row.classList.contains('wp-rx-detail')) return;
             const id = wpOutcomeId(row.dataset.wpCrmPath || wpRowCrmPath(row));
             if (!id || !row.querySelector(':scope > td')) return;
@@ -22664,7 +24201,7 @@ async function wpTransferAssistantExtensionEnabled() {
             height: Math.max(150, counters.offsetHeight) + 'px', width: Math.max(560, Math.min(900, host.clientWidth - (counters.offsetLeft + counters.offsetWidth + 60))) + 'px',
             display: 'flex', flexDirection: 'column', boxSizing: 'border-box', overflow: 'hidden',
             background: stripes[0], color: '#dfe4e6', border: '1px solid rgba(143,255,213,0.35)', borderRadius: '8px',
-            boxShadow: '0 10px 28px rgba(0,0,0,.5)', font: '12px/1.45 Consolas, monospace', textAlign: 'left', fontWeight: '400', zIndex: '5'
+            boxShadow: '0 10px 28px rgba(0,0,0,.5)', font: '12px/1.45 Segoe UI,system-ui,sans-serif', textAlign: 'left', fontWeight: '400', zIndex: '5'
         });
         wpTodayRenderAt = Date.now();
         const stats = wpTodayStats();
@@ -22966,6 +24503,8 @@ async function wpTransferAssistantExtensionEnabled() {
             // 1.7.273: an exception to one of mod's built-in rules
             if (kind === 'except') return /^(toprule|autocancel|booking|airbnb|dctc|nofinal|min5|noted|afterfinal|finaltime|acoff|acon|tickbox|heroes|fullauto)$/.test(String(rule.of || '')) &&
                 (rule.mode === 'usual' || rule.mode === 'off' || (rule.mode === 'pct' && Number(rule.percent) >= 1 && Number(rule.percent) <= 50) || (rule.mode === 'minutes' && Number(rule.minutes) >= 30 && Number(rule.minutes) <= 720));
+            // 1.7.367: a built-in raise switched to gradual (Booking.com / Airbnb / EM Project %)
+            if (kind === 'gradual') return /^(booking|airbnb|em)$/.test(String(rule.of || ''));
             return kind === 'skip' || kind === 'nosurge';
         });
         // A rule with a time limit (1.7.228: "only for today") is dropped
@@ -23069,6 +24608,29 @@ async function wpTransferAssistantExtensionEnabled() {
     }
     // Who the rule is for: "Booking.com in Rome", "Airbnb in every city
     // except Athens", "Rome", "Every transfer".
+    // ---- Gradual raises (1.7.367) ----
+    // A raise switched to "gradual" in the Rules window goes up 5% every half
+    // hour and reaches its full % at Final BC: with 1:30 to Final BC → full − 15%,
+    // 1:00 → − 10%, 0:30 → − 5%, at Final BC the full %. Nothing (or less than
+    // 0) left → no raise yet. Your own rules carry rule.gradual; the built-in
+    // ones (Booking.com, Airbnb, the city's EM Project %) a rule of kind
+    // "gradual", so the switch travels to your other PC with the rules.
+    const WP_GRADUAL_NAMES = { booking: 'Booking.com +20%', airbnb: 'Airbnb +10%', em: 'the city\'s EM Project %' };
+    function wpGradualBuiltIn(of) {
+        return wpRulesLoad().some(function(rule) { return rule.kind === 'gradual' && rule.of === of; });
+    }
+    function wpGradualSetBuiltIn(of, on) {
+        const rest = wpRulesLoad().filter(function(rule) { return !(rule.kind === 'gradual' && rule.of === of); });
+        wpRulesSave(on ? rest.concat([{ kind: 'gradual', of: of, all: true, at: Date.now(), text: '' }]) : rest);
+    }
+    // The % allowed now for a gradual raise of `percent` (extra: tbo / finalDue in minutes).
+    function wpGradualPct(percent, extra) {
+        if (!(percent > 0) || !extra || extra.finalMode) return percent;
+        if (extra.tbo === null || extra.tbo === undefined || extra.finalDue === null || extra.finalDue === undefined) return percent;
+        const left = Number(extra.tbo) - Number(extra.finalDue);
+        if (!Number.isFinite(left) || left <= 0) return percent;
+        return Math.max(0, Math.round((percent - 5 * Math.ceil(left / 30)) * 10) / 10);
+    }
     function wpRuleLabel(rule) {
         const partner = rule.partner === 'booking' ? 'Booking.com' : rule.partner === 'airbnb' ? 'Airbnb' : '';
         const city = rule.cityName || rule.city || '';
@@ -23107,6 +24669,7 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpRuleDoes(rule) {
         const kind = String(rule.kind || '');
         if (kind === 'except') return 'exception: ' + wpRuleExceptionText(rule);
+        if (kind === 'gradual') return 'gradual raise: ' + (WP_GRADUAL_NAMES[rule.of] || rule.of) + ', 5% every half hour, full at Final BC';
         if (kind === 'cap') return 'never above +' + Number(rule.limit) + '% in total';
         if (kind === 'floor') return Number(rule.limit) > 0 ? 'keep at least ' + Number(rule.limit) + '% margin' : 'never above DC = TC';
         if (kind === 'nosurge') return rule.what === 'extra' ? 'no extra when the DC has a surge' : 'no raise when the DC has a surge';
@@ -23129,7 +24692,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // 'pct' (+X% instead), 'minutes' (another Final BC time).
     const WP_RULE_EXCEPT_OF = {
         toprule: { name: 'Booking.com never unassigned under 2:00 (Final BC by 3:00)', off: 'no 3:00 limit here — Final BC at its usual time', modes: ['off'] },
-        autocancel: { name: 'Auto-cancel "No Available driver"', off: 'never auto-cancelled here (mod only warns)', modes: ['off'] },
+        autocancel: { name: 'Auto-cancel "No Available driver"', off: 'never auto-cancelled here (wlcm only warns)', modes: ['off'] },
         booking: { name: 'Booking.com +20%', off: 'no Booking.com raise here — the city\'s EM Project %', modes: ['off', 'pct'] },
         airbnb: { name: 'Airbnb +10%', off: 'no Airbnb raise here — the city\'s EM Project %', modes: ['off', 'pct'] },
         dctc: { name: 'Booking.com: DC = TC from 1 hour before Final BC', off: 'the usual Booking.com raise (no DC = TC)', modes: ['off', 'pct'] },
@@ -23141,7 +24704,7 @@ async function wpTransferAssistantExtensionEnabled() {
         acoff: { name: 'A/C off', off: 'A/C is never turned off here', modes: ['off'] },
         acon: { name: 'A/C back on', off: 'A/C is never turned back on here', modes: ['off'] },
         tickbox: { name: 'Wheelchair / bulky luggage', off: 'the boxes are never ticked here', modes: ['off'] },
-        heroes: { name: 'Send to heroes 1 hour before Final BC', off: 'never sent to the heroes by itself here', modes: ['off'] },
+        heroes: { name: 'Send to heroes 2 hours before Final BC', off: 'never sent to the heroes by itself here', modes: ['off'] },
         fullauto: { name: 'Full auto', off: 'Full auto leaves this city\'s cards for you', modes: ['off'] }
     };    function wpRuleExceptions(of) {
         return wpRulesLoad().filter(function(rule) { return rule && rule.kind === 'except' && rule.of === of; });
@@ -23150,7 +24713,17 @@ async function wpTransferAssistantExtensionEnabled() {
     try { if (window.wpRuleExceptionFor !== wpRuleExceptionFor) window.wpRuleExceptionFor = wpRuleExceptionFor; } catch (_) {}
     function wpRuleExceptionFor(of, city) {
         const key = wpNormalizeCityKey(String(city || ''));
-        return wpRuleExceptions(of).filter(function(rule) { return rule.city === key; })[0] || null;
+        const list = wpRuleExceptions(of);
+        // 1.7.368: a built-in rule switched OFF in the Rules window = an "off" exception for every city (city '*')
+        return list.filter(function(rule) { return rule.city === key; })[0] || list.filter(function(rule) { return rule.city === '*' && rule.mode === 'off'; })[0] || null;
+    }
+    // 1.7.368: switch a built-in rule on / off everywhere
+    function wpRuleBuiltInOn(of) {
+        return !wpRuleExceptions(of).some(function(rule) { return rule.city === '*' && rule.mode === 'off'; });
+    }
+    function wpRuleBuiltInSet(of, on) {
+        const rest = wpRulesLoad().filter(function(rule) { return !(rule.kind === 'except' && rule.of === of && rule.city === '*'); });
+        wpRulesSave(on ? rest : rest.concat([{ kind: 'except', of: of, city: '*', cityName: 'Every city', mode: 'off', all: true, at: Date.now(), text: 'switched off in the Rules window' }]));
     }
     function wpRuleExceptionText(rule) {
         const meta = WP_RULE_EXCEPT_OF[rule.of] || { off: 'the rule does not count here' };
@@ -23167,36 +24740,48 @@ async function wpTransferAssistantExtensionEnabled() {
         const style = document.createElement('style');
         style.id = 'wp-rules-window-style';
         style.textContent = [
-            '#wp-rules-window{position:fixed;right:18px;top:60px;bottom:60px;z-index:2147483645;width:min(520px,calc(100vw - 24px));display:flex;flex-direction:column;box-sizing:border-box;background:rgba(17,20,22,0.97);color:#dfe4e6;border:1px solid rgba(143,255,213,0.35);border-radius:14px;box-shadow:0 14px 40px rgba(0,0,0,.5);font:13px/1.45 Consolas,"Cascadia Mono","Courier New",monospace}',
-            '#wp-rules-window .wpr-head{display:flex;align-items:center;gap:12px;padding:10px 12px 8px;color:#8fffd5;font-weight:700;border-bottom:1px solid rgba(143,255,213,0.2)}',
+            // 1.7.379: the look of the suggestion card (Segoe UI, dark card, clear names, pill switches)
+            '#wp-rules-window{position:fixed;right:18px;top:50px;bottom:50px;z-index:2147483645;width:min(560px,calc(100vw - 24px));display:flex;flex-direction:column;box-sizing:border-box;background:#1f2529;color:#e8ecee;border:1px solid rgba(255,255,255,.09);border-radius:18px;box-shadow:0 18px 48px rgba(0,0,0,.6);font:14px/1.4 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;animation:wpRwIn .2s ease-out}',
+            '@keyframes wpRwIn{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:none}}',
+            '#wp-rules-window *{box-sizing:border-box;font-family:inherit}',
+            '#wp-rules-window .wpr-head{display:flex;align-items:center;gap:12px;padding:14px 16px 10px;font-size:18px;font-weight:650;color:#e8ecee;border-bottom:1px solid rgba(255,255,255,.07)}',
             '#wp-rules-window .wpr-title{flex:1 1 auto}',
-            '#wp-rules-window .wpr-x{color:#8b979e;font-size:17px;line-height:1;cursor:pointer}',
-            '#wp-rules-window .wpr-x:hover{color:#ff8a80}',
-            '#wp-rules-window .wpr-body{flex:1 1 auto;overflow-y:auto;padding:2px 12px 12px;scrollbar-width:thin}',
-            '#wp-rules-window .wpr-group{color:#8b979e;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:12px 0 3px}',
-            '#wp-rules-window .wpr-row{padding:7px 0 7px 10px;border-left:3px solid rgba(143,255,213,0.35);margin:4px 0;background:rgba(255,255,255,0.03);border-radius:0 9px 9px 0}',
-            '#wp-rules-window .wpr-row.is-top{border-left-color:#ff8a80}',
-            '#wp-rules-window .wpr-row.is-mine{border-left-color:#c9a3ff}',
-            '#wp-rules-window .wpr-name{display:flex;align-items:baseline;gap:8px;font-weight:700;color:#fff;padding-right:10px}',
+            '#wp-rules-window .wpr-x{color:#7d8a90;font-size:20px;line-height:1;cursor:pointer;padding:0 2px}',
+            '#wp-rules-window .wpr-x:hover{color:#e8ecee}',
+            '#wp-rules-window .wpr-body{flex:1 1 auto;overflow-y:auto;padding:4px 16px 16px;scrollbar-width:thin;scrollbar-color:#4c5358 transparent}',
+            '#wp-rules-window .wpr-group{color:#8b979e;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:16px 2px 6px}',
+            '#wp-rules-window .wpr-row{padding:10px 12px;margin:0 0 6px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);border-radius:12px}',
+            '#wp-rules-window .wpr-row:hover{background:rgba(255,255,255,.06)}',
+            '#wp-rules-window .wpr-row.is-top{box-shadow:inset 3px 0 0 #ff8a80}',
+            '#wp-rules-window .wpr-row.is-mine{box-shadow:inset 3px 0 0 #c9a3ff}',
+            '#wp-rules-window .wpr-name{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;font-size:15px;font-weight:650;color:#e8ecee}',
             '#wp-rules-window .wpr-name > span:first-child{flex:1 1 auto;min-width:0}',
-            '#wp-rules-window .wpr-what{color:#aab3ba;margin-top:2px;padding-right:10px}',
-            '#wp-rules-window .wpr-state{flex:0 0 auto;font-size:11px;font-weight:700;padding:0 7px;border-radius:8px;background:rgba(255,255,255,0.08);color:#cfd6da}',
-            '#wp-rules-window .wpr-state.is-on{background:rgba(111,209,111,0.16);color:#6fd16f}',
-            '#wp-rules-window .wpr-state.is-off{background:rgba(255,138,128,0.14);color:#ff8a80}',
-            '#wp-rules-window .wpr-link{flex:0 0 auto;color:#8fffd5;font-weight:700;cursor:pointer;font-size:12px}',
-            '#wp-rules-window .wpr-link:hover{text-decoration:underline}',
-            '#wp-rules-window .wpr-forget{flex:0 0 auto;color:#8b979e;cursor:pointer;font-size:15px;line-height:1}',
+            '#wp-rules-window .wpr-what{color:#9aa6ad;font-size:12.5px;margin-top:4px;line-height:1.4}',
+            '#wp-rules-window .wpr-state{flex:0 0 auto;font-size:12px;font-weight:700;padding:3px 12px;border-radius:999px;background:#3a4247;color:#cfd6da;letter-spacing:.03em;user-select:none}',
+            '#wp-rules-window .wpr-state.is-on{background:#8fffd5;color:#04261a}',
+            '#wp-rules-window .wpr-state.is-off{background:#3a4247;color:#9aa6ad}',
+            '#wp-rules-window .wpr-link{flex:0 0 auto;padding:2px 10px;border-radius:999px;background:rgba(255,255,255,.07);color:#cfd6da;font-weight:600;cursor:pointer;font-size:12px;white-space:nowrap;user-select:none}',
+            '#wp-rules-window .wpr-link:hover{background:rgba(143,255,213,.16);color:#8fffd5}',
+            '#wp-rules-window .wpr-hours,#wp-rules-window .wpr-pick{height:26px;border-radius:999px !important;padding:0 10px !important;border:1px solid rgba(255,255,255,.14) !important;background:rgba(255,255,255,.07) !important;color:#e8ecee !important;font:600 12.5px "Segoe UI",system-ui,sans-serif !important}',
+            '#wp-rules-window .wpr-hours{width:62px !important;text-align:right}',
+            '#wp-rules-window .wpr-forget{flex:0 0 auto;color:#7d8a90;cursor:pointer;font-size:17px;line-height:1}',
             '#wp-rules-window .wpr-forget:hover{color:#ff8a80}',
-            '#wp-rules-window .wpr-exc{margin:7px 10px 2px 0;padding:8px 10px;border-radius:9px;background:rgba(201,163,255,0.08);border:1px solid rgba(201,163,255,0.25)}',
+            // the ON / OFF switch always on the right, the × after it
+            '#wp-rules-window .wpr-name > .wpr-link{order:5}',
+            '#wp-rules-window .wpr-name > .wpr-hours,#wp-rules-window .wpr-name > .wpr-pick{order:6}',
+            '#wp-rules-window .wpr-name > .wpr-hours-h{order:7;color:#9aa6ad;font-size:12.5px;font-weight:600}',
+            '#wp-rules-window .wpr-name > .wpr-state{order:10}',
+            '#wp-rules-window .wpr-name > .wpr-forget{order:11}',
+            '#wp-rules-window .wpr-exc{margin:9px 0 2px;padding:9px 11px;border-radius:10px;background:rgba(201,163,255,.08);border:1px solid rgba(201,163,255,.22);font-size:13px}',
             '#wp-rules-window .wpr-exc-line{display:flex;align-items:baseline;gap:8px;padding:2px 0;color:#e7dcff}',
             '#wp-rules-window .wpr-exc-line > span:first-child{flex:1 1 auto}',
-            '#wp-rules-window .wpr-exc-none{color:#8b979e}',
-            '#wp-rules-window .wpr-exc-add{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}',
-            '#wp-rules-window .wpr-exc-add input,#wp-rules-window .wpr-exc-add select{height:28px;box-sizing:border-box;background:rgba(255,255,255,0.08);color:#dfe4e6;border:1px solid rgba(143,255,213,0.32);border-radius:9px;padding:0 8px;font:inherit;font-size:12px}',
+            '#wp-rules-window .wpr-exc-none{color:#9aa6ad}',
+            '#wp-rules-window .wpr-exc-add{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}',
+            '#wp-rules-window .wpr-exc-add input,#wp-rules-window .wpr-exc-add select{height:30px;background:rgba(255,255,255,.07);color:#e8ecee;border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:0 12px;font:inherit;font-size:12.5px}',
             '#wp-rules-window .wpr-exc-add input{flex:1 1 130px;min-width:0}',
-            '#wp-rules-window .wpr-exc-add button{height:28px;padding:0 12px;border-radius:9px;border:1px solid rgba(143,255,213,0.45);background:rgba(143,255,213,0.12);color:#8fffd5;font:inherit;font-size:12px;font-weight:700;cursor:pointer}',
-            '#wp-rules-window .wpr-exc-msg{color:#ff8a80;font-size:12px;margin-top:4px}',
-            '#wp-rules-window .wpr-hint{color:#8b979e;margin-top:6px}'
+            '#wp-rules-window .wpr-exc-add button{height:30px;padding:0 14px;border-radius:999px;border:0;background:#8fffd5;color:#04261a;font:inherit;font-size:12.5px;font-weight:700;cursor:pointer}',
+            '#wp-rules-window .wpr-exc-msg{color:#ff9d94;font-size:12px;margin-top:4px}',
+            '#wp-rules-window .wpr-hint{color:#9aa6ad;font-size:12.5px;margin-top:8px}'
         ].join('\n');
         (document.head || document.documentElement).appendChild(style);
     }
@@ -23212,6 +24797,10 @@ async function wpTransferAssistantExtensionEnabled() {
             ['mousedown', 'click', 'keydown'].forEach(function(type) { box.addEventListener(type, function(event) { event.stopPropagation(); }); });
             (document.body || document.documentElement).appendChild(box);
         }
+        // 1.7.378: one settings window — keeps its scroll place when it redraws
+        let keepScroll = 0;
+        try { keepScroll = (box.querySelector('.wpr-body') || {}).scrollTop || 0; } catch (_) {}
+        try { wpDashPaintSwitches(); } catch (_) {}
         box.textContent = '';
         const add = function(tag, cls, text, parent) {
             const node = document.createElement(tag);
@@ -23221,8 +24810,19 @@ async function wpTransferAssistantExtensionEnabled() {
             return node;
         };
         const hm = function(minutes) { const value = Math.max(0, Math.round(Number(minutes) || 0)); return Math.floor(value / 60) + ':' + String(value % 60).padStart(2, '0'); };
+        // 1.7.378: the Controls switches, shown and switched here (the same actions as before)
+        const control = function(act) {
+            const row = document.querySelector('#wp-dash-controls .wpdt-row[data-act="' + act + '"]');
+            const knob = row && row.querySelector('.wpdt-sw');
+            return { on: Boolean(knob && (knob.classList.contains('is-on') || knob.classList.contains('is-warn'))), text: row ? String((row.querySelector('.wpdt-state') || {}).textContent || '') : '' };
+        };
+        const runAct = function(act) {
+            const node = document.querySelector('#wp-dash-controls [data-act="' + act + '"]');
+            if (node) node.click();
+            window.setTimeout(function() { try { wpDashPaintSwitches(); } catch (_) {} if (document.getElementById('wp-rules-window')) wpRulesWindow(true); }, 250);
+        };
         const head = add('div', 'wpr-head');
-        add('span', 'wpr-title', 'Rules mod runs', head);
+        add('span', 'wpr-title', 'wlcm settings', head);
         const close = add('span', 'wpr-x', '×', head);
         close.addEventListener('click', function() { box.remove(); });
         const body = add('div', 'wpr-body');
@@ -23232,11 +24832,63 @@ async function wpTransferAssistantExtensionEnabled() {
             const node = add('div', 'wpr-row' + (opts.top ? ' is-top' : '') + (opts.mine ? ' is-mine' : ''), null, body);
             const top = add('div', 'wpr-name', null, node);
             add('span', null, name, top);
-            if (opts.state !== undefined) add('span', 'wpr-state ' + (opts.state ? 'is-on' : 'is-off'), opts.state ? 'ON' : 'OFF', top);
+            if (opts.state !== undefined) {
+                const stateChip = add('span', 'wpr-state ' + (opts.state ? 'is-on' : 'is-off'), opts.state ? 'ON' : 'OFF', top);
+                // 1.7.368: the same switch as in Controls, clickable here too
+                if (opts.stateKey) {
+                    stateChip.style.cursor = 'pointer';
+                    stateChip.title = opts.state ? 'Switch off' : 'Switch on';
+                    stateChip.addEventListener('click', function() {
+                        if (opts.stateKey === 'full') { try { wpAutoFullSet(!opts.state, 'Rules window'); } catch (_) {} }
+                        else { try { localStorage.setItem(opts.stateKey, opts.state ? '0' : '1'); } catch (_) {} }
+                        try { wpDashPaintSwitches(); } catch (_) {}
+                        if (opts.stateKey !== 'full') wpDashLog(name + ': ' + (opts.state ? 'OFF' : 'ON') + ' (Rules window)');
+                        wpRulesWindow(true);
+                    });
+                }
+            }
             if (opts.exceptOf) {
                 const count = wpRuleExceptions(opts.exceptOf).length;
                 const link = add('span', 'wpr-link', 'Exceptions' + (count ? ' (' + count + ')' : ''), top);
                 link.addEventListener('click', function() { wpRulesWindowOpenExc[opts.exceptOf] = !wpRulesWindowOpenExc[opts.exceptOf]; wpRulesWindow(true); });
+            }
+            // 1.7.378: a Controls switch (opts.toggle = its data-act)
+            if (opts.toggle) {
+                const now = control(opts.toggle);
+                const sw = add('span', 'wpr-state ' + (now.on ? 'is-on' : 'is-off'), now.on ? 'ON' : 'OFF', top);
+                sw.style.cursor = 'pointer';
+                sw.title = now.on ? 'Switch off' : 'Switch on';
+                sw.addEventListener('click', function() { runAct(opts.toggle); });
+                if (now.text && !what) what = now.text;
+            }
+            if (opts.extra) { try { opts.extra(top); } catch (_) {} }
+            (opts.buttons || []).forEach(function(pair) {
+                const link = add('span', 'wpr-link', pair[0], top);
+                link.addEventListener('click', function() { if (typeof pair[1] === 'function') pair[1](); else runAct(pair[1]); });
+            });
+            // 1.7.368: the rule itself on / off
+            if (opts.onoff) {
+                const isOn = Boolean(opts.onoff.on);
+                const sw = add('span', 'wpr-state ' + (isOn ? 'is-on' : 'is-off'), isOn ? 'ON' : 'OFF', top);
+                sw.style.cursor = 'pointer';
+                sw.title = isOn ? 'Switch this rule off' : 'Switch this rule on';
+                sw.addEventListener('click', function() {
+                    opts.onoff.set(!isOn);
+                    wpDashLog('📘 Rule switched ' + (isOn ? 'OFF' : 'ON') + ': ' + name);
+                    wpRulesWindow(true);
+                });
+            }
+            // 1.7.367: Gradual on / off for a raise
+            if (opts.gradual) {
+                const on = Boolean(opts.gradual.on);
+                const chip = add('span', 'wpr-link', 'Gradual: ' + (on ? 'ON' : 'OFF'), top);
+                chip.title = '5% every half hour before Final BC, the full % at Final BC';
+                if (on) chip.style.color = '#8fffd5';
+                chip.addEventListener('click', function() {
+                    opts.gradual.set(!on);
+                    wpDashLog('📘 Gradual ' + (on ? 'off' : 'on') + ': ' + name);
+                    wpRulesWindow(true);
+                });
             }
             if (opts.forget) {
                 const forget = add('span', 'wpr-forget', '×', top);
@@ -23311,37 +24963,78 @@ async function wpTransferAssistantExtensionEnabled() {
         try { heroesOn = wpAutoHeroesOn(); } catch (_) {}
         try { full = wpAutoFullOn(); } catch (_) {}
 
-        group('Above every other rule');
-        row('Booking.com is never left unassigned under 2:00 to pickup', 'Final BC from ' + hm(180) + ' at the latest, whatever another rule says.', { top: true, exceptOf: 'toprule' });
-        row('Auto-cancel "No Available driver"', 'Still unassigned at its limit → EM tag if missing, note "cancelled as NAD", Auto Cancel. Booking.com at 2:02 · drop-offs (to an airport / port / station) at 1:10 · pickups at 0:40. One that appears already under its limit (grey) keeps the existing late-arrival exception: cancelled at 1:00 if it appeared at 1:01–1:59, at 0:30 if it appeared under 1:00. Off: mod only warns.', { top: true, state: autoCancel, exceptOf: 'autocancel' });
+        // 1.7.378: everything in one place, in the order wlcm works
+        if (!WP_NO_AUTO) {
+        group('wlcm');
+        row('wlcm', 'Watches Em Hailing - Today; its suggestions pop up.', { toggle: 'autopilot', buttons: [['Start again', 'autopilot-restart'], ['Queue', 'queue'], ['History', 'history'], ['Comments', 'comments']] });
 
-        group('Raises');
-        row('Booking.com +20%', 'Instead of the city\'s EM Project %; it wins over a city NO (a city where EM Project says never to raise stays a no). Every other transfer: the city\'s EM Project %.', { exceptOf: 'booking' });
-        row('Airbnb +10%', 'Instead of the city\'s EM Project %, the same way.', { exceptOf: 'airbnb' });
-        row(WP_RULE_EXCEPT_OF.dctc.name, 'From ' + hm(240) + ' to pickup (1 hour before Final BC) the driver cost goes up to the traveler cost, and stays there through Final BC.', { exceptOf: 'dctc' });
-        row(WP_RULE_EXCEPT_OF.nofinal.name, 'A city with NO in EM Project gets no raise at a normal BC, and +10% at Final BC.', { exceptOf: 'nofinal' });
-        row('No raises under 5%', 'When less than +5% is left to reach the level, nothing is raised. Your own Edit is not held back.', { exceptOf: 'min5' });
-        row('What is already raised counts', 'The notes ("raised to +10% DC"…) and raises by hand in the price history: only the difference is raised.', { exceptOf: 'noted' });
-        row('Your raise after Final BC', 'Writes one note only: "raised a bit more to save" (mod\'s own raises keep their notes).', { exceptOf: 'afterfinal' });
-
-        group('Timing');
-        row(WP_RULE_EXCEPT_OF.heroes.name, 'Still unassigned at ' + hm(240) + ' (Booking.com) / 1 hour before its Final BC time → sent to the city\'s heroes whose car type fits the booked car (no car type written = sent too), note "sent to heroes". Once per transfer.', { state: heroesOn, exceptOf: 'heroes' });
+        group('Steps, in order');
+        row('Send to suggested', 'Only while Full auto is on. Top 5 suggested drivers (rotating), grouped per city; note "sent to suggested". Box: only up to that many hours before pickup (empty = no limit).', { toggle: 'suggested', extra: function(top) {
+            const box = add('input', 'wpr-hours', null, top);
+            box.type = 'number'; box.min = '0'; box.max = '72'; box.step = '0.5'; box.placeholder = '∞';
+            box.title = 'Only up to this many hours before pickup (empty = no limit)';
+            box.value = wpAutoSuggestedHours() || '';
+            Object.assign(box.style, { width: '46px', padding: '1px 4px', borderRadius: '6px', border: '1px solid rgba(143,255,213,.35)', background: 'rgba(0,0,0,.35)', color: '#8fffd5', font: '12px Segoe UI,system-ui,sans-serif', textAlign: 'right' });
+            box.addEventListener('keydown', function(event) { if (event.key === 'Enter') box.blur(); });
+            box.addEventListener('change', function() { box.value = wpAutoSuggestedHoursSet(box.value, 'settings') || ''; });
+            add('span', 'wpr-hours-h', 'h', top);
+        } });
+        row(WP_RULE_EXCEPT_OF.heroes.name, 'Only while Full auto is on. Still unassigned at ' + hm(240) + ' (Booking.com) / 2 hours before its Final BC time (the city\'s other open transfers go in the same message) → sent to the city\'s heroes whose car type fits the booked car (no car type written = sent too), note "sent to heroes". Once per transfer.', { state: heroesOn, stateKey: 'wp_auto_heroes_v1', exceptOf: 'heroes' });
         row('Final BC time', 'Booking.com from ' + hm(180) + ' · others from ' + hm(NORMAL_FLASH_END + 10) + ' · drop-offs to an airport / port / station from ' + hm(NORMAL_FLASH_END + 10 + SPECIAL_NORMAL_SHIFT) + ' (your "Final BC at …" rules can change it, not later than 3:00 for Booking.com).', { exceptOf: 'finaltime' });
+        row('Booking.com is never left unassigned under 2:00 to pickup', 'Final BC from ' + hm(180) + ' at the latest, whatever another rule says.', { top: true, exceptOf: 'toprule', onoff: { on: wpRuleBuiltInOn('toprule'), set: function(on) { wpRuleBuiltInSet('toprule', on); } } });
+        row('Auto-cancel "No Available driver"', 'Still unassigned at its limit → EM tag if missing, note "cancelled as NAD", Auto Cancel. Booking.com at 2:02 · drop-offs (to an airport / port / station) at 1:10 · pickups at 0:40. One that appears already under its limit (grey) keeps the existing late-arrival exception: cancelled at 1:00 if it appeared at 1:01–1:59, at 0:30 if it appeared under 1:00. Off: wlcm only warns.', { top: true, state: autoCancel, stateKey: 'wp_booking_autocancel_v1', exceptOf: 'autocancel' });
+        row('A/C off', 'AutoCancel under 60 min, not at Final BC time, TBO not orange / red → AutoCancel off, on the A/C Off list. Ticked back on by someone → off the list, asked again.', { exceptOf: 'acoff', onoff: { on: wpRuleBuiltInOn('acoff'), set: function(on) { wpRuleBuiltInSet('acoff', on); } } });
+        row('A/C back on', '2 minutes after its timer on the A/C Off list ends, unless the TBO is orange / red.', { exceptOf: 'acon', onoff: { on: wpRuleBuiltInOn('acon'), set: function(on) { wpRuleBuiltInSet('acon', on); } } });
+        row('Wheelchair / bulky luggage', 'Named in the notes → the box is ticked and saved.', { state: tick, stateKey: 'wp_tick_boxes_v1', exceptOf: 'tickbox' });
 
-        group('A/C');
-        row('A/C off', 'AutoCancel under 60 min, not at Final BC time, TBO not orange / red → AutoCancel off, on the A/C Off list. Ticked back on by someone → off the list, asked again.', { exceptOf: 'acoff' });
-        row('A/C back on', '2 minutes after its timer on the A/C Off list ends, unless the TBO is orange / red.', { exceptOf: 'acon' });
+        }
+        group('Raises');
+        row('Quickbar suggests the raise', 'The quickbar opens with Raise already set to the city\'s EM Project %. Off: it opens empty and you choose.', { onoff: { on: wpQuickbarSuggestOn(), set: wpQuickbarSuggestSet } });
+        row('Booking.com +20%', 'Instead of the city\'s EM Project %; it wins over a city NO (a city where EM Project says never to raise stays a no). Every other transfer: the city\'s EM Project %.', { exceptOf: 'booking', onoff: { on: wpRuleBuiltInOn('booking'), set: function(on) { wpRuleBuiltInSet('booking', on); } }, gradual: { on: wpGradualBuiltIn('booking'), set: function(on) { wpGradualSetBuiltIn('booking', on); } } });
+        row('Airbnb +10%', 'Instead of the city\'s EM Project %, the same way.', { exceptOf: 'airbnb', onoff: { on: wpRuleBuiltInOn('airbnb'), set: function(on) { wpRuleBuiltInSet('airbnb', on); } }, gradual: { on: wpGradualBuiltIn('airbnb'), set: function(on) { wpGradualSetBuiltIn('airbnb', on); } } });
+        row('The city\'s EM Project %', 'Every transfer without a partner raise or a rule of yours.', { gradual: { on: wpGradualBuiltIn('em'), set: function(on) { wpGradualSetBuiltIn('em', on); } } });
+        row(WP_RULE_EXCEPT_OF.dctc.name, 'From ' + hm(240) + ' to pickup (1 hour before Final BC) the driver cost goes up to the traveler cost, and stays there through Final BC.', { exceptOf: 'dctc', onoff: { on: wpRuleBuiltInOn('dctc'), set: function(on) { wpRuleBuiltInSet('dctc', on); } } });
+        row(WP_RULE_EXCEPT_OF.nofinal.name, 'A city with NO in EM Project gets no raise at a normal BC, and +10% at Final BC.', { exceptOf: 'nofinal', onoff: { on: wpRuleBuiltInOn('nofinal'), set: function(on) { wpRuleBuiltInSet('nofinal', on); } } });
+        row('No raises under 5%', 'When less than +5% is left to reach the level, nothing is raised. Your own Edit is not held back.', { exceptOf: 'min5', onoff: { on: wpRuleBuiltInOn('min5'), set: function(on) { wpRuleBuiltInSet('min5', on); } } });
+        row('What is already raised counts', 'The notes ("raised to +10% DC"…) and raises by hand in the price history: only the difference is raised.', { exceptOf: 'noted', onoff: { on: wpRuleBuiltInOn('noted'), set: function(on) { wpRuleBuiltInSet('noted', on); } } });
+        row('Your raise after Final BC', 'Writes one note only: "raised a bit more to save" (wlcm\'s own raises keep their notes).', { exceptOf: 'afterfinal', onoff: { on: wpRuleBuiltInOn('afterfinal'), set: function(on) { wpRuleBuiltInSet('afterfinal', on); } } });
 
-        group('Other');
-        row('Wheelchair / bulky luggage', 'Named in the notes → the box is ticked and saved.', { state: tick, exceptOf: 'tickbox' });
-        row('Full auto', 'Answers its own suggestions, silently (no card, no sound, nothing to the phone); written in the Terminal and the history.', { state: full, exceptOf: 'fullauto' });
+        group('WhatsApp');
+        row('WhatsApp auto-send', 'BC / Final BC / Custom raise go through WhatsApp Web. OFF: copied, and the group opens.', { toggle: 'wa', buttons: [['Open panel', 'wapanel']] });
+        row('@all in city groups', 'Pings everyone where you are an admin. Smart = only a message with more than one transfer, or a Final BC.', { extra: function(top) {
+            const pick = add('select', 'wpr-pick', null, top);
+            [['smart', 'Smart'], ['always', 'Always'], ['off', 'Off']].forEach(function(pair) { const option = add('option', null, pair[1], pick); option.value = pair[0]; });
+            pick.value = wpAtAllMode();
+            Object.assign(pick.style, { background: 'rgba(0,0,0,.35)', color: '#8fffd5', border: '1px solid rgba(143,255,213,.35)', borderRadius: '6px', font: '12px Segoe UI,system-ui,sans-serif', padding: '1px 4px' });
+            pick.addEventListener('change', function() { try { localStorage.setItem(WP_AT_ALL_MODE_KEY, pick.value); } catch (_) {} wpDashLog('@all in city groups: ' + pick.options[pick.selectedIndex].text); });
+        } });
 
+        if (!WP_NO_AUTO) {
+        group('Phone');
+        row('Phone app', 'Suggestions on your phone, answered with a tap.', { toggle: 'phone', buttons: [['Settings', 'phone-settings']] });
+        row('Phone notifications', 'A notification for each new suggestion.', { toggle: 'pnotify' });
+        if (false) row('Full auto', 'Kept down here so it is not switched on by mistake. Answers its own suggestions, silently (no card, no sound, nothing to the phone); written in the Terminal and the history.', { state: full, stateKey: 'full', exceptOf: 'fullauto' });
+
+        }
         group('Your rules');
-        const mine = wpRulesLoad().filter(function(rule) { return rule && rule.kind !== 'except'; });
+        const mine = wpRulesLoad().filter(function(rule) { return rule && rule.kind !== 'except' && rule.kind !== 'gradual'; });
         if (!mine.length) add('div', 'wpr-hint', 'None yet. Type one in the Terminal, e.g. "new york for booking.com is 10%", "treat rome like NO", "never above 30% in total".', body);
         mine.forEach(function(rule) {
+            const raises = String(rule.kind || '') === '' && wpRulePct(rule) > 0 && !rule.onlyFinal; // 1.7.367
             row(wpRuleText(rule), rule.text ? '“' + String(rule.text).slice(0, 160) + '”' : '', {
                 mine: true,
+                onoff: { on: !rule.off, set: function(on) {
+                    wpRulesSave(wpRulesLoad().map(function(other) {
+                        if (other.at === rule.at && other.kind === rule.kind && other.city === rule.city && other.partner === rule.partner) { const copy = Object.assign({}, other); if (on) delete copy.off; else copy.off = true; return copy; }
+                        return other;
+                    }));
+                } },
+                gradual: raises ? { on: Boolean(rule.gradual), set: function(on) {
+                    wpRulesSave(wpRulesLoad().map(function(other) {
+                        if (other.at === rule.at && other.kind === rule.kind && other.city === rule.city && other.partner === rule.partner) { const copy = Object.assign({}, other); if (on) copy.gradual = true; else delete copy.gradual; return copy; }
+                        return other;
+                    }));
+                } } : null,
                 forget: function() {
                     wpRulesSave(wpRulesLoad().filter(function(other) { return other !== rule && !(other.at === rule.at && other.kind === rule.kind && other.city === rule.city && other.partner === rule.partner); }));
                     wpDashLog('📘 Forgotten: ' + wpRuleText(rule));
@@ -23350,13 +25043,14 @@ async function wpTransferAssistantExtensionEnabled() {
             });
         });
         add('div', 'wpr-hint', 'Type a new rule in the Terminal; it shows up here.', body);
+        if (keepScroll) body.scrollTop = keepScroll; // 1.7.378
     }
 
     function wpRuleText(rule) {
         const when = wpRuleWhen(rule);
         const conds = wpRuleConds(rule);
         return wpRuleLabel(rule) + ' → ' + wpRuleDoes(rule) + (conds.length ? ' · ' + conds.join(' · ') : '') +
-            (rule.section === 'today' ? ' · Today section only' : '') + (rule.when === 'final' && !rule.onlyFinal ? ' · at Final BC' : rule.when === 'normal' ? ' · at normal BC' : '') + (when ? ' · ' + when : '');
+            (rule.off ? ' · switched OFF' : '') + (rule.section === 'today' ? ' · Today section only' : '') + (rule.when === 'final' && !rule.onlyFinal ? ' · at Final BC' : rule.when === 'normal' ? ' · at normal BC' : '') + (when ? ' · ' + when : '');
     }
     // What the rules are checked against: the transfer's city, partner,
     // whether it is Final BC time, and what was read from its CRM page.
@@ -23438,6 +25132,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 Object.keys(rule.cond || {}).length * 10 + (Array.isArray(rule.days) && rule.days.length ? 5 : 0);
         };
         return wpRulesLoad().filter(function(rule) {
+            if (rule.off) return false; // 1.7.368: switched off in the Rules window
             if (String(rule.kind || '') !== kind) return false;
             if (price && (mode === 'extra') !== (rule.mode === 'extra')) return false;
             return wpRuleFits(rule, ctx, price);
@@ -23497,6 +25192,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // city where EM Project says never to raise are left as they are.
         // 1.7.273: your exceptions — another % for that city, or its usual raise
         let wpForcedRaise = null;
+        let gradualMain = false; // 1.7.367
         const dcTcHour = Boolean(!edited && partnerBase && partnerBase.name === 'Booking.com' && extra && Number.isFinite(Number(extra.tbo)) && Number.isFinite(Number(extra.finalDue)) && Number(extra.tbo) <= Number(extra.finalDue) + 60);
         const dcTcException = dcTcHour ? wpRuleExceptionFor('dctc', city) : null;
         if (dcTcException && dcTcException.mode === 'pct') wpForcedRaise = { kind: 'pct', percent: Number(dcTcException.percent), text: 'Exception for ' + (dcTcException.cityName || city) + ': +' + Number(dcTcException.percent) + '% instead of DC = TC (1 hour before Final BC)' };
@@ -23562,23 +25258,6 @@ async function wpTransferAssistantExtensionEnabled() {
             }
         }
         if (wpForcedRaise) suggestion = Object.assign({}, wpForcedRaise);
-        // Local AI reader (1.7.204): what it read in the notes changes the
-        // suggestion — only towards doing less (no raise / a smaller raise),
-        // never more. Your own Edit is not touched.
-        const ai = !edited && extra && extra.ai ? extra.ai : null;
-        const aiDid = [];
-        if (ai && suggestion.kind !== 'none') {
-            if (ai.doNotRaise) {
-                return { skip: 'AI read the notes: a note says not to raise' + (ai.instruction ? ' ("' + ai.instruction + '")' : ''), suggestion: suggestion, aiDid: ['No raise — a note says not to raise'] };
-            }
-            if (suggestion.check && ai.condition === 'no' && suggestion.check.indexOf(' · ') < 0) {
-                return { skip: 'AI read: the EM Project condition does not apply here (' + suggestion.check + ')', suggestion: suggestion, aiDid: ['No raise — the EM Project condition does not apply to this transfer'] };
-            }
-            if (suggestion.check && ai.condition === 'yes') {
-                aiDid.push('Checked the EM Project condition (' + suggestion.check + '): it applies');
-                suggestion.check = '';
-            }
-        }
         const prices = data && data.prices || {};
         const dc = Number(prices.dc);
         const tc = Number(prices.tc);
@@ -23594,13 +25273,23 @@ async function wpTransferAssistantExtensionEnabled() {
                 suggestion.percent = same;
                 suggestion.text += ' = +' + same + '% DC';
             }
+            // 1.7.367: gradual — 5% every half hour, the full % at Final BC
+            const gradualFrom = partnerRule ? (partnerRule.mine || null) : mine;
+            gradualMain = suggestion.kind === 'pct' && !wpForcedRaise && !(extra && extra.finalMode) &&
+                (gradualFrom ? Boolean(gradualFrom.gradual) : wpGradualBuiltIn(partnerRule ? (partnerRule.name === 'Booking.com' ? 'booking' : 'airbnb') : 'em'));
+            if (gradualMain) {
+                const full = suggestion.percent;
+                const now = wpGradualPct(full, extra);
+                if (now !== full) suggestion = Object.assign({}, suggestion, { percent: now, gradualFull: full, text: suggestion.text + ' · gradual: +' + now + '% now, +' + full + '% at Final BC' });
+            }
             let add = 0;
             const parts = [];
             // A surge on the driver cost and your rule about it: no extras, or no raise at all.
             const surgeRule = ruleCtx.surge ? (wpRulesFor(ruleCtx, 'nosurge')[0] || null) : null;
             if (surgeRule && surgeRule.what !== 'extra') return { skip: 'your rule: ' + wpRuleText(surgeRule), suggestion: suggestion, rule: surgeRule };
             (surgeRule ? [] : wpRulesFor(ruleCtx, '', 'extra').filter(function(rule) { return wpRulePct(rule) > 0; })).forEach(function(rule) {
-                const percent = wpRulePct(rule);
+                const percent = rule.gradual ? wpGradualPct(wpRulePct(rule), extra) : wpRulePct(rule); // 1.7.367
+                if (!(percent > 0)) { parts.push(wpRuleText(rule) + ' (gradual: not yet)'); return; }
                 const worth = rule.base === 'tc' ? ofTc(percent) : percent;
                 if (worth === null) { parts.push(wpRuleText(rule) + ' (NOT counted: the traveler cost was not read)'); return; }
                 add += worth;
@@ -23615,6 +25304,12 @@ async function wpTransferAssistantExtensionEnabled() {
             }
         }
         if (suggestion.kind === 'none') return { skip: 'EM Project: ' + suggestion.text, suggestion: suggestion };
+        // 1.7.367: a gradual raise with nothing due yet
+        if (gradualMain && suggestion.kind === 'pct' && !(suggestion.percent > 0)) {
+            const fullPct = Number(suggestion.gradualFull) || 0;
+            const firstAt = Number(extra.finalDue) + 30 * Math.max(0, Math.ceil(fullPct / 5) - 1);
+            return { skip: 'gradual raise (+' + fullPct + '% at Final BC): first step at ' + Math.floor(firstAt / 60) + ':' + String(Math.round(firstAt % 60)).padStart(2, '0') + ' to pickup', suggestion: suggestion };
+        }
         if (suggestion.kind === 'pct' && !(suggestion.percent > 0)) return { skip: 'no valid percentage', suggestion: suggestion };
         if (suggestion.kind === 'dctc') {
             if (Number.isFinite(tc) && dc >= tc - 0.05) return { skip: 'DC already = TC', suggestion: suggestion };
@@ -23638,17 +25333,14 @@ async function wpTransferAssistantExtensionEnabled() {
         // so one raise written in a note is not counted twice (1.7.176).
         const fromNotes = wpDirectorNoteRaised(data);
         const byHand = wpManualRaisePercent(data, extra && extra.path);
-        // A raise the model found in free text that the note patterns missed.
-        const fromAi = ai && Number.isFinite(ai.raised) && ai.raised > 0 && ai.raised <= 60 ? ai.raised : 0;
         // 1.7.274: your exception — earlier raises not counted in this city
-        const noted = wpRuleExceptionFor('noted', city) ? 0 : Math.max(fromNotes, byHand, fromAi);
-        if (fromAi > Math.max(fromNotes, byHand) + 0.5) aiDid.push('Counted +' + fromAi + '% already raised from the notes (the rules had found +' + Math.max(fromNotes, byHand) + '%)');
+        const noted = wpRuleExceptionFor('noted', city) ? 0 : Math.max(fromNotes, byHand);
         // A raise in the notes ("raised to +10%", "DC+10%") counts: skip when
         // it is already there, otherwise raise only the difference (note +10%,
         // rule +20% = +10% more on the current DC, 1.7.170). Surges do not
         // count. Your own edit is the % to add now.
         if (!edited && noted >= target - 0.5) {
-            return { skip: 'already raised DC +' + noted + '% (notes +' + fromNotes + '%, by hand in price history +' + byHand + '%' + (fromAi ? ', AI read +' + fromAi + '%' : '') + ') — EM Project +' + target + '%', suggestion: suggestion, noted: noted, aiDid: aiDid };
+            return { skip: 'already raised DC +' + noted + '% (notes +' + fromNotes + '%, by hand in price history +' + byHand + '%) — EM Project +' + target + '%', suggestion: suggestion, noted: noted };
         }
         let add = !edited && noted > 0 ? Math.round((target - noted) * 10) / 10 : target;
         // Your margin floor (1.7.233): "keep at least 5% margin", "never
@@ -23661,7 +25353,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (costAt(add) > maxDc + 0.001) {
                 let room = Math.floor((maxDc / dc - 1) * 1000) / 10;
                 while (room > 0 && costAt(room) > maxDc + 0.001) room = Math.round((room - 0.1) * 10) / 10;
-                if (!(room >= 0.1)) return { skip: 'your rule: ' + wpRuleText(floorRule) + ' — DC ' + round1(dc) + '€ against TC ' + round1(tc) + '€ leaves no room for a raise', suggestion: suggestion, rule: floorRule, noted: noted, aiDid: aiDid };
+                if (!(room >= 0.1)) return { skip: 'your rule: ' + wpRuleText(floorRule) + ' — DC ' + round1(dc) + '€ against TC ' + round1(tc) + '€ leaves no room for a raise', suggestion: suggestion, rule: floorRule, noted: noted };
                 suggestion = Object.assign({}, suggestion, { text: suggestion.text + ' — made smaller by your rule (' + wpRuleText(floorRule) + ')' });
                 target = round1(noted + room);
                 add = room;
@@ -23670,10 +25362,10 @@ async function wpTransferAssistantExtensionEnabled() {
         // 1.7.265: no small raises — under 5% (a +1% or +2% left to reach
         // the level) nothing is raised. Your own Edit is not held back.
         if (!edited && add < 5 && !wpRuleExceptionFor('min5', city)) {
-            return { skip: 'only +' + add + '% left to raise (to +' + target + '% in total) — raises under 5% are not done', suggestion: suggestion, noted: noted, aiDid: aiDid };
+            return { skip: 'only +' + add + '% left to raise (to +' + target + '% in total) — raises under 5% are not done', suggestion: suggestion, noted: noted };
         }
         return {
-            value: 'pct:' + add + ':' + target, add: add, target: target, noted: !edited ? noted : 0, fromNotes: fromNotes, byHand: byHand, aiDid: aiDid,
+            value: 'pct:' + add + ':' + target, add: add, target: target, noted: !edited ? noted : 0, fromNotes: fromNotes, byHand: byHand,
             totalText: add !== target ? '+' + add + '% more → +' + target + '% total' : '+' + target + '%',
             dc: dc, newDc: Math.ceil(dc * (1 + add / 100) - 1e-9), tc: tc, suggestion: suggestion,
             // Always the level it is at now: "raised to +20% DC" (1.7.184).
@@ -23702,17 +25394,18 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpDirectorPlanBase(city, data, override, extra) {
         const plan = wpDirectorRaisePlan(city, data, override, extra);
         // Final BC time (1.7.177): EM tag if missing, the raise if due, then
-        // Final BC with the note "sent to suggested / final BC" (1.7.275). Already sent to Final: skip.
+        // Final BC with the note "final BC" (1.7.275; 1.7.332: was "sent to
+        // suggested / final BC" — sending to suggested is its own step now). Already sent to Final: skip.
         if (extra && extra.finalMode) {
             if (extra.finalSent) return { skip: 'already sent to Final BC (' + extra.finalSent + ')', suggestion: plan.suggestion };
             const prices = data && data.prices || {};
             const base = plan.skip
-                ? { value: '', note: '', noRaise: plan.skip, suggestion: plan.suggestion, dc: Number(prices.dc), tc: Number(prices.tc), totalText: 'no raise', aiDid: plan.aiDid || [] }
+                ? { value: '', note: '', noRaise: plan.skip, suggestion: plan.suggestion, dc: Number(prices.dc), tc: Number(prices.tc), totalText: 'no raise' }
                 : plan;
             base.final = true;
             base.broadcastMode = 'final';
             base.needsEm = Boolean(extra.untagged);
-            base.customMessage = 'sent to suggested / final BC';
+            base.customMessage = 'final BC';
             base.tagOnly = false;
             return base;
         }
@@ -23721,45 +25414,15 @@ async function wpTransferAssistantExtensionEnabled() {
             const prices = data && data.prices || {};
             return {
                 tagOnly: true, needsEm: true, value: '', note: '', customMessage: 'sent to BC and Group',
-                noRaise: plan.skip, suggestion: plan.suggestion, dc: Number(prices.dc), tc: Number(prices.tc), totalText: 'no raise', aiDid: plan.aiDid || []
+                noRaise: plan.skip, suggestion: plan.suggestion, dc: Number(prices.dc), tc: Number(prices.tc), totalText: 'no raise'
             };
         }
         plan.needsEm = true;
         return plan;
     }
 
-    // ============================================================
-    // LOCAL AI READER (1.7.202) — optional, off by default
-    // ============================================================
-    // A model running on this PC (LM Studio / Ollama, OpenAI-compatible
-    // server on localhost) reads a transfer's notes and the city's EM
-    // Project text and answers fixed questions. It only ADDS a box to the
-    // mod's card ("AI read"); the plan is still made by the rules and
-    // nothing is done without your Yes. Nothing leaves this computer: the
-    // request goes from the extension's background script to localhost.
-    // Off, unreachable or slow → the card simply has no AI box.
-    const WP_AI_CFG_KEY = 'wp_ai_cfg_v1';
-    var wpAiCache = new Map();
-
-    function wpAiConfig() {
-        let cfg = null;
-        try { cfg = JSON.parse(localStorage.getItem(WP_AI_CFG_KEY) || 'null'); } catch (_) {}
-        cfg = cfg && typeof cfg === 'object' ? cfg : {};
-        return {
-            on: cfg.on === true,
-            url: String(cfg.url || 'http://localhost:11434').replace(/\/+$/, ''),
-            model: String(cfg.model || '')
-        };
-    }
-    function wpAiSaveConfig(cfg) {
-        try { localStorage.setItem(WP_AI_CFG_KEY, JSON.stringify(cfg)); } catch (_) {}
-        wpAiSetButton();
-    }
-    function wpAiSetButton() {
-        const cfg = wpAiConfig();
-        wpDashSwitch('ai', cfg.on, cfg.on ? cfg.model : (cfg.model ? '' : 'not set up'), '');
-    }
-    function wpAiSend(message) {
+    // A message to the extension's background script.
+    function wpExtSend(message) {
         return new Promise(function(resolve) {
             try {
                 chrome.runtime.sendMessage(message, function(response) {
@@ -23769,150 +25432,6 @@ async function wpTransferAssistantExtensionEnabled() {
             } catch (error) { resolve({ ok: false, error: String(error && error.message || error) }); }
         });
     }
-
-    // Reads the first JSON object out of a model answer (thinking text and
-    // code fences around it are ignored).
-    function wpAiParse(text) {
-        const clean = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?/gi, '');
-        const start = clean.indexOf('{');
-        const end = clean.lastIndexOf('}');
-        if (start < 0 || end <= start) return null;
-        let raw = null;
-        try { raw = JSON.parse(clean.slice(start, end + 1)); } catch (_) { return null; }
-        if (!raw || typeof raw !== 'object') return null;
-        const num = Number(raw.already_raised_percent);
-        const tri = function(value) { return value === true || value === 'true' || value === 'yes' ? true : value === false || value === 'false' || value === 'no' ? false : null; };
-        return {
-            raised: Number.isFinite(num) && raw.already_raised_percent !== null && num >= 0 && num <= 100 ? num : null,
-            final: tri(raw.sent_to_final),
-            doNotRaise: tri(raw.do_not_raise) === true,
-            instruction: String(raw.special_instruction || '').replace(/\s+/g, ' ').trim().slice(0, 140),
-            condition: /^(yes|no)$/i.test(String(raw.condition_applies || '')) ? String(raw.condition_applies).toLowerCase() : 'unknown',
-            summary: String(raw.summary || '').replace(/\s+/g, ' ').trim().slice(0, 220)
-        };
-    }
-
-    // One read per transfer + notes + rule (cached); resolves to
-    // { ok, read, ms } or { ok:false, error }.
-    function wpAiRead(path, city, data, extra) {
-        const cfg = wpAiConfig();
-        if (!cfg.on) return Promise.resolve(null);
-        let pricing = null;
-        try { pricing = getCityPricingData(city); } catch (_) {}
-        let details = null;
-        try { details = data.emDetails ? wpParseCRMClipboardText(data.emDetails) : null; } catch (_) {}
-        const notes = (data.tasks || []).slice(0, 12).map(function(task, index) { return (index + 1) + '. ' + String(task.note || '').slice(0, 300); });
-        const rule = pricing ? [pricing.howMuch || pricing.raise || '', pricing.sku || '', pricing.notes || ''].join(' | ') : '';
-        const key = path + '|' + notes.join('¦') + '|' + rule;
-        if (wpAiCache.has(key)) return wpAiCache.get(key);
-        const user = [
-            'City: ' + city,
-            'Partner: ' + (extra && extra.partner || 'unknown'),
-            'Car: ' + (data.carType || 'unknown'),
-            'Pickup: ' + (details && details.dateTime || 'unknown'),
-            'Route: ' + (details && details.route || 'unknown'),
-            'City price rule (EM Project): ' + (pricing ? (pricing.howMuch || pricing.raise || 'none') : 'none'),
-            'Rule condition: ' + (pricing && pricing.sku ? String(pricing.sku).replace(/\s+/g, ' ') : 'none'),
-            'Rule notes: ' + (pricing && pricing.notes ? String(pricing.notes).replace(/\s+/g, ' ').slice(0, 400) : 'none'),
-            'Dispatcher notes on this transfer, newest first:',
-            notes.length ? notes.join('\n') : '(no notes)',
-            '',
-            'Answer with one JSON object and nothing else:',
-            '{"already_raised_percent": number or null (total driver-cost raise the notes say was already made; null if they do not say),',
-            ' "sent_to_final": true/false (true ONLY if a note contains the word "final"; "sent to BC" alone is false),',
-            ' "do_not_raise": true/false (does any note tell dispatchers not to raise the price),',
-            ' "special_instruction": "any instruction or important fact in the notes, max 15 words, empty if none",',
-            ' "condition_applies": "yes"/"no"/"unknown" (compare the rule condition with the Route, Pickup and Car above: e.g. a rule for train stations is "no" when the route has only an airport and a hotel; "unknown" if the facts cannot tell),',
-            ' "summary": "what the notes say, max 25 words"}'
-        ].join('\n');
-        const job = wpAiSend({
-            type: 'WP_AI_ASK', url: cfg.url, model: cfg.model,
-            messages: [
-                { role: 'system', content: 'You read short dispatcher notes for an airport-transfer company. DC means driver cost, TC traveler cost, BC broadcast, EM emergency hailing. A normal broadcast ("sent to BC", "BC & Group", "BC and Group") is NOT the final broadcast: only a note containing the word "final" means it was sent to final. Be literal: only report what the notes or facts actually say; use null or "unknown" when they do not. Reply with JSON only.' },
-                { role: 'user', content: user }
-            ]
-        }).then(function(response) {
-            if (!response || !response.ok) return { ok: false, error: response && response.error || 'no answer' };
-            const read = wpAiParse(response.text);
-            return read ? { ok: true, read: read, ms: response.ms } : { ok: false, error: 'the model did not answer in the expected form' };
-        });
-        wpAiCache.set(key, job);
-        job.then(function(result) { if (!result || !result.ok) wpAiCache.delete(key); });
-        return job;
-    }
-
-    // The read used for a plan. Nothing to read (no notes and no condition
-    // the rules could not check) → no call. Waits at most 12 s.
-    async function wpAiFor(path, city, data, extra) {
-        if (!extra) return null;
-        delete extra.ai;
-        delete extra.aiError;
-        delete extra.aiMs;
-        if (!wpAiConfig().on) return null;
-        let conditions = {};
-        try { conditions = wpDirectorConditions(city, data, extra.finalMode) || {}; } catch (_) {}
-        if (!(data.tasks || []).length && !conditions.check) return null;
-        const result = await Promise.race([
-            wpAiRead(path, city, data, extra),
-            new Promise(function(resolve) { setTimeout(function() { resolve({ ok: false, error: 'timed out' }); }, 12000); })
-        ]);
-        if (result && result.ok) { extra.ai = result.read; extra.aiMs = result.ms; return result.read; }
-        extra.aiError = result && result.error || 'no answer';
-        return null;
-    }
-
-    // ---- AI explains (1.7.225) ----
-    // The second half of the card's WHY: the local model says, in its own
-    // words, why this is suggested. It gets only what mod saw and
-    // what it will do, and is told to add nothing. Cached per set of facts;
-    // resolves to { ok, text, ms } or { ok:false, error }.
-    var wpAiExplainCache = new Map();
-    function wpAiExplain(id, facts) {
-        const cfg = wpAiConfig();
-        if (!cfg.on) return Promise.resolve({ ok: false, error: 'AI is off' });
-        const user = [
-            'City: ' + (facts.city || 'unknown'),
-            'Partner: ' + (facts.partner || 'none'),
-            'Car: ' + (facts.car || 'unknown'),
-            'Suggested action: ' + facts.action,
-            'Traveler pays: ' + (facts.tc || 'unknown') + (facts.margin ? ' · margin after the action: ' + facts.margin : ''),
-            'What the assistant saw:',
-            (facts.saw || []).map(function(line) { return '- ' + line; }).join('\n') || '- nothing special',
-            'Latest dispatcher notes, newest first:',
-            (facts.notes || []).map(function(line) { return '- ' + line; }).join('\n') || '- none',
-            facts.read ? 'What the notes say, in short: ' + facts.read : '',
-            '',
-            'Explain to the dispatcher why this action is suggested for this transfer. Two short sentences, at most 45 words, plain English.'
-        ].filter(function(line, index, list) { return line || index === list.length - 2; }).join('\n');
-        const key = String(id) + '|' + cfg.model + '|' + user;
-        if (wpAiExplainCache.has(key)) return wpAiExplainCache.get(key);
-        if (wpAiExplainCache.size > 60) wpAiExplainCache.clear();
-        const job = wpAiSend({
-            type: 'WP_AI_ASK', url: cfg.url, model: cfg.model,
-            messages: [
-                { role: 'system', content: 'You explain an assistant\'s suggestion to a dispatcher of an airport-transfer company. DC means driver cost, TC traveler cost, BC broadcast to drivers, Final BC the last broadcast before pickup, EM emergency hailing. Use ONLY the facts given: never add a number, a rule, a name or a reason that is not in them, and do not give advice of your own. Reply with the explanation only: plain text, no lists, no JSON, no greeting.' },
-                { role: 'user', content: user }
-            ]
-        }).then(function(response) {
-            if (!response || !response.ok) return { ok: false, error: response && response.error || 'no answer' };
-            let text = String(response.text || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```[a-z]*/gi, '').replace(/[*_#]{1,3}/g, '').replace(/\s+/g, ' ').trim().replace(/^["“]|["”]$/g, '');
-            if (text.length > 340) text = text.slice(0, 338).replace(/\s+\S*$/, '') + '…';
-            return text ? { ok: true, text: text, ms: response.ms } : { ok: false, error: 'empty answer' };
-        });
-        wpAiExplainCache.set(key, job);
-        job.then(function(result) { if (!result || !result.ok) wpAiExplainCache.delete(key); });
-        return job;
-    }
-
-    // ---- Booking check (1.7.208) ----
-    // The passenger's note, the driver note and the pickup instructions
-    // against what was booked (pax, kids, luggage, child seats). The model
-    // only pulls facts out of the notes (who travels, ages, seats, bags); the
-    // comparison with the booking is done here, by fixed rules. Suggestions
-    // only: the extension never edits the booking.
-    const WP_BOOKING_AI_KEY = 'wp_ai_booking_v2';
-    var wpBookingCache = new Map();
-    var wpBookingFailedAt = {};
 
     function wpBookingNotes(data) {
         const booking = data && data.booking;
@@ -23930,237 +25449,518 @@ async function wpTransferAssistantExtensionEnabled() {
             .map(function(seat) { return booking[seat[0]] + ' ' + seat[1]; });
         return 'Booked: ' + show(booking.pax) + ' pax · ' + show(booking.kids) + ' kids · ' + show(booking.luggage) + ' bags · seats: ' + (seats.length ? seats.join(', ') : 'none');
     }
-    function wpBookingHash(text) {
-        let hash = 5381;
-        for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) >>> 0;
-        return hash.toString(36) + text.length.toString(36);
-    }
-    // The model's answer → checked facts (anything odd is dropped).
-    function wpBookingParse(text) {
-        const clean = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?/gi, '');
-        const start = clean.indexOf('{');
-        const end = clean.lastIndexOf('}');
-        if (start < 0 || end <= start) return null;
-        let raw = null;
-        try { raw = JSON.parse(clean.slice(start, end + 1)); } catch (_) { return null; }
-        if (!raw || typeof raw !== 'object') return null;
-        const count = function(value) {
-            const number = Number(value);
-            return value !== null && value !== undefined && value !== '' && Number.isInteger(number) && number >= 0 && number <= 60 ? number : null;
-        };
-        const yes = function(value) { return value === true || value === 'true' || value === 'yes'; };
-        const other = String(raw.other_request || '').replace(/\s+/g, ' ').trim();
-        const words = function(value) {
-            const text = String(value === true ? '' : value || '').replace(/\s+/g, ' ').trim();
-            return /^(null|none|no|n\/a|false|empty)$/i.test(text) ? '' : text.slice(0, 60);
-        };
-        return {
-            wheelchairWords: words(raw.wheelchair_words),
-            bulkyWords: words(raw.bulky_words),
-            people: count(raw.people_total) || null,
-            adults: count(raw.adults),
-            ages: (Array.isArray(raw.children_ages) ? raw.children_ages : []).slice(0, 8).map(Number)
-                .filter(function(age) { return Number.isFinite(age) && age >= -1 && age <= 17; }),
-            wantsSeat: yes(raw.wants_child_seat),
-            ownSeat: yes(raw.brings_own_seat),
-            bags: count(raw.bags_total),
-            other: /^(null|none|no|n\/a)$/i.test(other) ? '' : other.slice(0, 120)
-        };
-    }
-    // Facts from the notes vs the booking → what to change. Seat by age:
-    // under 1 = infant carrier, 1–3 = child seat, 4–11 = booster.
-    function wpBookingSuggest(read, booking) {
-        const changes = [];
-        const number = function(value) { return Number.isFinite(Number(value)) && value !== null ? Number(value) : 0; };
-        const kidsSaid = read.ages.length;
-        const kidsBooked = number(booking.kids);
-        const paxBooked = booking.pax === null || booking.pax === undefined ? null : Number(booking.pax);
-        const plural = function(count, word) { return count + ' ' + word + (count === 1 ? '' : (word === 'child' ? 'ren' : 's')); };
-        let total = read.people;
-        if (read.adults !== null && (total === null || read.adults + kidsSaid > total)) total = read.adults + kidsSaid;
-        if (paxBooked !== null) {
-            if (total !== null && total >= 1 && total !== paxBooked) {
-                changes.push({ text: 'Pax ' + paxBooked + ' → ' + total, why: 'the note counts ' + plural(total, 'person').replace('persons', 'people') });
-            } else if (total === null && kidsSaid > kidsBooked) {
-                changes.push({ text: 'Pax ' + paxBooked + ' → ' + (paxBooked + kidsSaid - kidsBooked), why: plural(kidsSaid, 'child') + ' in the note, ' + kidsBooked + ' booked as Kids — probably not counted', soft: true });
-            }
-        }
-        if (kidsSaid > kidsBooked) changes.push({ text: 'Kids ' + kidsBooked + ' → ' + kidsSaid, why: '' });
-        if (!read.ownSeat) {
-            const need = { infant: 0, child: 0, booster: 0 };
-            const ageOf = { infant: [], child: [], booster: [] };
-            let anyType = 0;
-            read.ages.forEach(function(age) {
-                const type = age < 0 ? '' : age < 1 ? 'infant' : age <= 3 ? 'child' : age <= 11 ? 'booster' : 'none';
-                if (!type) anyType += 1;
-                else if (type !== 'none') { need[type] += 1; ageOf[type].push(age < 1 ? 'baby' : age + 'y'); }
-            });
-            if (read.wantsSeat && !kidsSaid) anyType = 1;
-            const names = { infant: 'Infant carrier', child: 'Child seat', booster: 'Booster' };
-            const bookedSeats = number(booking.infant) + number(booking.child) + number(booking.booster);
-            const neededSeats = need.infant + need.child + need.booster + anyType;
-            if (read.wantsSeat) {
-                let spare = 0;
-                Object.keys(names).forEach(function(type) {
-                    const have = number(booking[type]);
-                    if (need[type] > have) changes.push({ text: names[type] + ' ' + have + ' → ' + need[type], why: 'age ' + ageOf[type].join(', ') + (bookedSeats >= neededSeats ? ' — another seat type is booked' : ''), soft: bookedSeats >= neededSeats });
-                    else spare += have - need[type];
-                });
-                if (anyType > spare) changes.push({ text: 'Add ' + plural(anyType - spare, 'child seat'), why: 'asked for in the note, age not given — pick infant carrier / child seat / booster' });
-            } else if (neededSeats > bookedSeats) {
-                changes.push({ text: 'Child seat needed', why: plural(neededSeats, 'child') + ' in the note, ' + (bookedSeats ? 'only ' + bookedSeats : 'no') + ' seat booked and none asked for — check', soft: true });
-            }
-        }
-        if (read.bags !== null && booking.luggage !== null && booking.luggage !== undefined && read.bags !== Number(booking.luggage)) {
-            changes.push({ text: 'Luggage ' + booking.luggage + ' → ' + read.bags, why: 'the note counts ' + plural(read.bags, 'bag') });
-        }
-        const signature = changes.map(function(change) { return change.text; }).join('|') + '|' + read.other;
-        return { changes: changes, other: read.other, key: changes.length || read.other ? wpBookingHash(signature) : '' };
-    }
-
-    // One read per set of notes (kept across page refreshes, without the
-    // note text); resolves to { ok, read, ms } or { ok:false, error }.
-    function wpBookingRead(data) {
-        const cfg = wpAiConfig();
-        const notes = wpBookingNotes(data);
-        if (!cfg.on || !notes.length) return Promise.resolve(null);
-        const text = notes.map(function(note) { return note.label + ': ' + note.text.slice(0, 600); }).join('\n');
-        const key = wpBookingHash(text);
-        if (wpBookingCache.has(key)) return wpBookingCache.get(key);
+    // ---- Comments review (1.7.357) ----
+    // The transfers of the Em Hailing lists that have a traveller comment come
+    // up one at a time, as a card in the middle of the screen: when, route,
+    // flight, passengers, luggage, seats, car, partner, tags, the notes
+    // and the transfer's last task notes. You do what it needs, then Next. The
+    // same cards are on the phone's Comments tab (swiped). Done ones are kept
+    // 3 days in this browser. The user chose (2026-11-01) to have these cards,
+    // comment text included, on the phone, so they go through the relay.
+    // 1.7.358: the card looks like wlcm's suggestion card and has actions:
+    // Wheelchair / Bulky luggage, checked / hand luggage and the three child
+    // seats, a task note (all saved on the transfer by one tab of it, like the
+    // wheelchair tick), and Copy details (the CRM's "Copy details for EM").
+    const WP_COMMENT_DONE_KEY = 'wp_comment_done_v1';
+    const WP_COMMENT_MAX = 40;
+    var wpCommentCards = new Map();      // id → { card, at }
+    var wpCommentPumping = false;
+    var wpCommentHistory = [];           // ids marked done from the window, newest last (for Back)
+    var wpCommentPhoneSig = '';
+    var wpCommentPhonePut = 0;
+    var wpCommentEdits = {};             // 1.7.358: id → { at, state: 'saving' | 'done' | 'failed', text }
+    var wpCommentDraft = {};             // 1.7.358: id → what is typed / changed on the PC card, not saved yet
+    // 1.7.359: id → { at, l, c, w, d, t, en } — when it was done and a short picture of the card (History)
+    function wpCommentDoneLoad() {
         let store = {};
-        try { store = JSON.parse(localStorage.getItem(WP_BOOKING_AI_KEY) || '{}') || {}; } catch (_) {}
-        if (store[key] && store[key].read) {
-            const kept = Promise.resolve({ ok: true, read: store[key].read });
-            wpBookingCache.set(key, kept);
-            return kept;
-        }
-        // An unreachable model is not asked again for a minute.
-        if (wpBookingFailedAt[key] && Date.now() - wpBookingFailedAt[key] < 60000) return Promise.resolve({ ok: false, error: 'no answer a moment ago' });
-        const user = [
-            text,
-            '',
-            'Answer with one JSON object and nothing else:',
-            '{"people_total": the total number of people travelling, ONLY if the notes state it as a number (number or null),',
-            ' "adults": the number of adults, ONLY if the notes state it (number or null),',
-            ' "children_ages": one entry per child or baby the notes mention: the age in years, 0 for a baby under 1 year, -1 when the age is not given. Empty list if no child or baby is mentioned,',
-            ' "wants_child_seat": true if the notes ask for a baby seat / child seat / car seat / booster, else false,',
-            ' "brings_own_seat": true if the notes say they bring their own seat or need none, else false,',
-            ' "bags_total": the total number of bags or suitcases, ONLY if the notes state numbers (number or null),',
-            ' "wheelchair_words": "the exact words COPIED from the notes that say a traveller uses or brings a wheelchair; empty when the notes do not say so or say none is needed. A walker, cane, crutches or stroller is NOT a wheelchair",',
-            ' "bulky_words": "the exact words COPIED from the notes that name bulky or oversized luggage (skis, snowboard, surfboard, bicycle, golf bag, large box, big musical instrument); empty if none. Normal suitcases, bags, strollers and wheelchairs are NOT bulky luggage",',
-            ' "other_request": "any other request that changes the service (wheelchair, pet, extra stop, skis, surfboard, bike, golf bag, stroller), max 12 words, empty if none"}'
-        ].join('\n');
-        const job = wpAiSend({
-            type: 'WP_AI_ASK', url: cfg.url, model: cfg.model,
-            messages: [
-                { role: 'system', content: 'You read the free-text notes of an airport-transfer booking (any language) and extract facts about who travels. Be literal: only report what the notes actually say; use null, false or an empty list when they do not say. Reply with JSON only.' },
-                { role: 'user', content: user }
-            ]
-        }).then(function(response) {
-            if (!response || !response.ok) return { ok: false, error: response && response.error || 'no answer' };
-            const read = wpBookingParse(response.text);
-            if (!read) return { ok: false, error: 'the model did not answer in the expected form' };
+        try { store = JSON.parse(localStorage.getItem(WP_COMMENT_DONE_KEY) || '{}') || {}; } catch (_) {}
+        const now = Date.now();
+        Object.keys(store).forEach(function(id) {
+            if (typeof store[id] === 'number') store[id] = { at: store[id] };
+            if (!store[id] || now - Number(store[id].at) > 3 * 24 * 3600000) delete store[id];
+        });
+        return store;
+    }
+    function wpCommentDoneSet(id, on) {
+        const store = wpCommentDoneLoad();
+        id = String(id);
+        if (on) {
+            const kept = wpCommentCards.get(id);
+            const card = kept ? kept.card : null;
+            const note = card && card.notes && card.notes[0];
+            store[id] = { at: Date.now(), l: card ? card.l : '#' + id, c: card ? card.c : '', w: card ? (card.dt || card.w) : '', d: card ? card.d : '', t: note ? note.t.slice(0, 160) : '', en: note && note.en ? note.en.slice(0, 160) : '' };
+        } else delete store[id];
+        try { localStorage.setItem(WP_COMMENT_DONE_KEY, JSON.stringify(store)); } catch (_) {}
+    }
+    // 1.7.359: Skip — the next card without marking this one seen; a skipped
+    // one goes to the end of the queue (kept 2 h).
+    const WP_COMMENT_SKIP_KEY = 'wp_comment_skip_v1';
+    function wpCommentSkipLoad() {
+        let store = {};
+        try { store = JSON.parse(localStorage.getItem(WP_COMMENT_SKIP_KEY) || '{}') || {}; } catch (_) {}
+        Object.keys(store).forEach(function(id) { if (Date.now() - Number(store[id]) > 2 * 3600000) delete store[id]; });
+        return store;
+    }
+    function wpCommentSkip(id, by) {
+        const store = wpCommentSkipLoad();
+        store[String(id)] = Date.now();
+        try { localStorage.setItem(WP_COMMENT_SKIP_KEY, JSON.stringify(store)); } catch (_) {}
+        wpCommentPhoneSig = '';
+        wpCommentPaint();
+        try { wpRemoteLoop().catch(function() {}); } catch (_) {}
+        if (by) wpDashLog('Comments: #' + id + ' skipped for now (' + by + ')');
+    }
+    // History, newest first.
+    function wpCommentHistoryList() {
+        const store = wpCommentDoneLoad();
+        return Object.keys(store).map(function(id) { return Object.assign({ id: id }, store[id]); })
+            .sort(function(a, b) { return Number(b.at) - Number(a.at); }).slice(0, 60);
+    }
+    // Every transfer of the lists on this page: today (or the later-days page), tomorrow.
+    function wpCommentRows() {
+        const out = [];
+        const seen = new Set();
+        const add = function(row, day) {
+            const link = row && row.querySelector('a[href*="/admin/transfers/"]');
+            const id = wpOutcomeId(link ? link.getAttribute('href') : '') || wpOutcomeId(wpRowCrmPath(row));
+            if (!id || seen.has(id)) return;
+            seen.add(id);
+            out.push({ row: row, day: day, id: id, url: link ? link.href : location.origin + '/admin/transfers/' + id + '/details_v3' });
+        };
+        try { (wpAutoRows() || []).forEach(function(row) { add(row, wpEmPeriod() || 'today'); }); } catch (_) {}
+        try { wpRemoteTomorrowRows().forEach(function(row) { add(row, 'tomorrow'); }); } catch (_) {}
+        try { wpRemotePeriodRows().forEach(function(row) { add(row, wpEmPeriod()); }); } catch (_) {}
+        return out;
+    }
+    // The traveller comments known so far (read for the city hover), by transfer id.
+    function wpCommentKnown() {
+        const byId = {};
+        const store = wpTravelerNoteLoad();
+        Object.keys(store).forEach(function(path) {
+            const id = wpOutcomeId(path);
+            if (id && store[path]) byId[id] = String(store[path].t || '');
+        });
+        return byId;
+    }
+    // Waiting cards (with a comment, not done), in list order; how many are not read yet.
+    function wpCommentQueue() {
+        const known = wpCommentKnown();
+        const done = wpCommentDoneLoad();
+        const rows = wpCommentRows();
+        const skips = wpCommentSkipLoad();
+        const queue = rows.filter(function(entry) { return known[entry.id] && !done[entry.id]; })
+            .map(function(entry, index) { return { entry: entry, index: index, skip: Number(skips[entry.id]) || 0 }; })
+            .sort(function(a, b) { return (a.skip - b.skip) || (a.index - b.index); })
+            .map(function(item) { return item.entry; });
+        return { queue: queue, unread: rows.filter(function(entry) { return !(entry.id in known); }).length, done: rows.filter(function(entry) { return known[entry.id] && done[entry.id]; }).length };
+    }
+    // One card: the row's own cells + the transfer page (read like everywhere else in mod).
+    async function wpCommentCard(entry, fresh) {
+        const kept = wpCommentCards.get(entry.id);
+        if (kept && !fresh && Date.now() - kept.at < 10 * 60000) return kept.card;
+        const row = entry.row;
+        const clean = function(node, max) { const text = String(node ? node.textContent : '').replace(/\s+/g, ' ').trim(); return text.length > max ? text.slice(0, max - 1) + '…' : text; };
+        const link = row.querySelector('a[href*="/admin/transfers/"]');
+        const card = { id: entry.id, d: entry.day, url: entry.url, l: clean(link, 24) || '#' + entry.id, c: '', p: '', w: '', g: '', m: null, a: null, car: '', dt: '', r: '', px: '', price: '', em: '', bk: null, notes: [], tasks: [], ready: false };
+        try { card.c = clean(getCityCell(row), 40); } catch (_) {}
+        try { card.p = clean(getPartnerCell(row), 30); } catch (_) {}
+        try { const cell = getTBOCell(row); const minutes = cell ? parseTBO(cell.textContent) : null; if (Number.isFinite(minutes)) card.m = minutes; } catch (_) {}
+        try { const cell = getAutoCancelCell(row); const minutes = cell ? parseAutoCancelMinutes(cell.textContent || '') : null; if (minutes !== null && Number.isFinite(minutes)) card.a = minutes; } catch (_) {}
+        card.w = clean(row.querySelector(':scope > td.date'), 40).replace(/\s*\(\d+h\)\s*$/, '');
+        card.g = Array.from(row.querySelectorAll('td.wp-transfer-tags .wp-transfer-tag')).map(function(tag) { return clean(tag, 18); }).filter(Boolean).slice(0, 5).join(' · ');
+        let data = null;
+        try { data = await wpFetchTransferCrmDetails(entry.url, Boolean(fresh)); } catch (_) {}
+        if (data) {
+            card.car = String(data.carType || '').slice(0, 30);
+            card.em = String(data.emDetails || '').slice(0, 1500); // 1.7.358: for Copy details
             try {
-                const latest = JSON.parse(localStorage.getItem(WP_BOOKING_AI_KEY) || '{}') || {};
-                latest[key] = { read: read, at: Date.now() };
-                const keys = Object.keys(latest);
-                if (keys.length > 400) keys.sort(function(a, b) { return latest[a].at - latest[b].at; }).slice(0, keys.length - 400).forEach(function(old) { delete latest[old]; });
-                localStorage.setItem(WP_BOOKING_AI_KEY, JSON.stringify(latest));
+                const parsed = data.emDetails ? wpParseCRMClipboardText(data.emDetails) : null;
+                if (parsed) { card.dt = String(parsed.dateTime || '').slice(0, 40); card.r = String(parsed.route || '').replace(/\s+/g, ' ').slice(0, 300); card.px = String(parsed.paxLug || '').slice(0, 30); card.price = String(parsed.price || '').slice(0, 30); }
             } catch (_) {}
-            return { ok: true, read: read, ms: response.ms };
-        });
-        wpBookingCache.set(key, job);
-        job.then(function(result) { if (!result || !result.ok) { wpBookingCache.delete(key); wpBookingFailedAt[key] = Date.now(); } });
-        return job;
-    }
-
-    // The booking check of a transfer → extra.booking { changes, other, key }.
-    // No notes or AI off → nothing. Waits at most 12 s.
-    async function wpBookingFor(data, extra) {
-        if (!extra) return null;
-        delete extra.booking;
-        delete extra.bookingError;
-        delete extra.bookingRead;
-        if (!wpAiConfig().on || !wpBookingNotes(data).length) return null;
-        const result = await Promise.race([
-            wpBookingRead(data),
-            new Promise(function(resolve) { setTimeout(function() { resolve({ ok: false, error: 'timed out' }); }, 12000); })
-        ]);
-        if (result && result.ok) {
-            extra.booking = wpBookingSuggest(result.read, data.booking);
-            extra.bookingRead = result.read;
-            extra.booking.ms = result.ms;
-            return extra.booking;
+            const b = data.booking || {};
+            card.bk = { pax: b.pax, kids: b.kids, lug: b.luggage, chk: b.checked, hand: b.hand, inf: b.infant, child: b.child, boost: b.booster, wc: b.wheelchair, bulky: b.bulky };
+            [['Traveller comment', b.travelerNote], ['Driver note', b.driverNote], ['Pickup instructions', b.pickupNote]].forEach(function(pair) {
+                const text = String(pair[1] || '').trim();
+                if (text) card.notes.push({ k: pair[0], t: text.slice(0, 900), en: '' });
+            });
+            card.tasks = (data.tasks || []).slice(-5).map(function(task) { return { k: String(task.label || '').slice(0, 30), t: String(task.note || '').slice(0, 200) }; });
+            card.ready = true;
         }
-        extra.bookingError = result && result.error || 'no answer';
-        return null;
+        if (!card.notes.length) {
+            const known = wpCommentKnown()[entry.id];
+            if (known) card.notes.push({ k: 'Traveller comment', t: known.slice(0, 900), en: '' });
+        }
+        wpCommentCards.set(entry.id, { card: card, at: Date.now() });
+        if (wpCommentCards.size > 200) wpCommentCards.delete(wpCommentCards.keys().next().value);
+        return card;
     }
-    function wpBookingSummary(check) {
-        return check.changes.map(function(change) { return change.text; }).concat(check.other ? ['also asks: ' + check.other] : []).join(' · ');
+    // Cards for the first ones waiting are made ahead (for the window and the phone).
+    async function wpCommentPump() {
+        if (wpCommentPumping) return;
+        wpCommentPumping = true;
+        try {
+            const queue = wpCommentQueue().queue.slice(0, WP_COMMENT_MAX);
+            for (const entry of queue) {
+                const kept = wpCommentCards.get(entry.id);
+                if (kept && Date.now() - kept.at < 10 * 60000) continue;
+                await wpCommentCard(entry, false);
+                wpCommentPaint();
+            }
+        } finally {
+            wpCommentPumping = false;
+        }
+    }
+    setInterval(function() { if (wpCommentQueue().queue.length) wpCommentPump().catch(function() {}); }, 30000);
+    // For the phone: the waiting cards that are made, and the counts.
+    function wpCommentPhone() {
+        const state = wpCommentQueue();
+        const cards = [];
+        state.queue.slice(0, WP_COMMENT_MAX).forEach(function(entry) {
+            const kept = wpCommentCards.get(entry.id);
+            if (kept) cards.push(Object.assign({}, kept.card, { d: entry.day, edit: wpCommentEdits[entry.id] || null }));
+        });
+        return { cards: cards, left: state.queue.length, unread: state.unread, done: state.done, making: Math.max(0, Math.min(WP_COMMENT_MAX, state.queue.length) - cards.length), history: wpCommentHistoryList().slice(0, 40) };
+    }
+    function wpCommentMark(id, done, by) {
+        wpCommentDoneSet(id, done);
+        if (done) { wpCommentHistory = wpCommentHistory.filter(function(x) { return x !== String(id); }); wpCommentHistory.push(String(id)); }
+        else wpCommentHistory = wpCommentHistory.filter(function(x) { return x !== String(id); });
+        wpCommentPhoneSig = '';
+        wpCommentPaint();
+        wpCommentPump().catch(function() {});
+        try { wpRemoteLoop().catch(function() {}); } catch (_) {}
+        if (done) { const skips = wpCommentSkipLoad(); if (skips[String(id)]) { delete skips[String(id)]; try { localStorage.setItem(WP_COMMENT_SKIP_KEY, JSON.stringify(skips)); } catch (_) {} } }
+        if (by) wpDashLog('Comments: #' + id + (done ? ' done — in History' : ' back in the queue') + ' (' + by + ')');
     }
 
-    // ---- Notes in English (1.7.260) ----
-    // The local AI translates a passenger / driver / pickup note that is not
-    // written in English. Shown under the note (the transfer's opened row
-    // on the dashboard, and under the note's field on the transfer page);
-    // the note itself is never changed, and neither the note nor its
-    // translation is stored or sent anywhere but the model on this PC.
-    // English notes, and anything the model cannot answer, show nothing.
-    var wpTranslateCache = new Map();
-    function wpTranslateNote(text) {
-        const cfg = wpAiConfig();
-        const note = String(text || '').replace(/\s+/g, ' ').trim();
-        if (!cfg.on || note.length < 4 || !/\p{L}{3}/u.test(note)) return Promise.resolve('');
-        const key = wpBookingHash(note);
-        if (wpTranslateCache.has(key)) return wpTranslateCache.get(key);
-        if (wpTranslateCache.size > 300) wpTranslateCache.clear();
-        const job = Promise.resolve(wpAiSend({
-            type: 'WP_AI_ASK', url: cfg.url, model: cfg.model,
-            messages: [
-                { role: 'system', content: 'You translate the free-text notes of airport-transfer bookings into English. If the note is already written in English, reply with exactly the single word SAME. Otherwise reply with only the English translation: no introduction, no quotes, no explanation. Keep names, numbers, times, flight codes, phone numbers and addresses exactly as they are.' },
-                { role: 'user', content: note.slice(0, 900) }
-            ]
-        })).then(function(response) {
-            if (!response || !response.ok) { wpTranslateCache.delete(key); return ''; }
-            const answer = String(response.text || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/\s+/g, ' ').trim().replace(/^["'“”]+|["'“”]+$/g, '').trim();
-            if (!answer || /^same[.!]?$/i.test(answer) || answer.toLowerCase() === note.toLowerCase()) return '';
-            return answer.slice(0, 900);
-        }, function() { wpTranslateCache.delete(key); return ''; });
-        wpTranslateCache.set(key, job);
-        return job;
+    // ---- Changes from a card (1.7.358) ----
+    // edit: { wc, bulky (true / false), chk, hand, inf, child, boost (0-20), note }.
+    // Only what differs from the transfer goes; a tab of the transfer opens in
+    // the background and does it (note → boxes / numbers → Save and Autocheck →
+    // read back). Its answer comes in wp_cardedit_result_v1_<id>.
+    const WP_COMMENT_NUMBERS = { chk: 'Checked', hand: 'Hand', inf: 'Infant carrier', child: 'Child seat', boost: 'Booster' };
+    function wpCommentEditText(want) {
+        const parts = [];
+        if ('wc' in want) parts.push('Wheelchair ' + (want.wc ? 'on' : 'off'));
+        if ('bulky' in want) parts.push('Bulky luggage ' + (want.bulky ? 'on' : 'off'));
+        Object.keys(WP_COMMENT_NUMBERS).forEach(function(key) { if (key in want) parts.push(WP_COMMENT_NUMBERS[key] + ' ' + want[key]); });
+        if (want.note) parts.push('note "' + want.note + '"');
+        return parts.join(' · ');
     }
-    // Transfer page: the translation under each of the three note fields.
-    function wpTranslateTransferPage() {
-        if (!wpIsTransferDetailPage() || !wpAiConfig().on) return;
-        [['transfer_traveler_comment', 'Traveler comment'], ['transfer_driver_note', 'Driver note'], ['transfer_key_pickup_instructions', 'Pickup instructions']].forEach(function(pair) {
-            const box = document.getElementById(pair[0]);
-            const text = box ? String(box.value || box.textContent || '').trim() : '';
-            if (!text) return;
-            wpTranslateNote(text).then(function(english) {
-                const old = document.getElementById('wp-en-' + pair[0]);
-                if (old) old.remove();
-                if (!english || !box.isConnected) return;
-                const line = document.createElement('div');
-                line.id = 'wp-en-' + pair[0];
-                line.title = pair[1] + ' — translated by the local AI on this PC. The note itself is not changed.';
-                line.textContent = 'EN: ' + english;
-                Object.assign(line.style, { margin: '3px 0 2px', padding: '4px 8px', borderLeft: '3px solid #b388ff', background: 'rgba(179,136,255,0.14)', color: '#b388ff', font: '12px/1.4 Consolas, "Cascadia Mono", monospace', whiteSpace: 'normal', maxWidth: '640px', borderRadius: '4px' });
-                box.insertAdjacentElement('afterend', line);
-            }, function() {});
+    function wpCommentEditWant(card, edit) {
+        const want = {};
+        const bk = card.bk || {};
+        ['wc', 'bulky'].forEach(function(key) { if (typeof edit[key] === 'boolean' && typeof bk[key] === 'boolean' && edit[key] !== bk[key]) want[key] = edit[key]; });
+        Object.keys(WP_COMMENT_NUMBERS).forEach(function(key) {
+            if (edit[key] === undefined || edit[key] === null || edit[key] === '') return;
+            const value = Number(edit[key]);
+            if (Number.isInteger(value) && value >= 0 && value <= 20 && bk[key] !== null && bk[key] !== undefined && value !== Number(bk[key])) want[key] = value;
         });
+        const note = String(edit.note || '').replace(/\s+/g, ' ').trim().slice(0, 280);
+        if (note) want.note = note;
+        return want;
+    }
+    function wpCommentEdit(id, edit, by) {
+        id = String(id);
+        const kept = wpCommentCards.get(id);
+        const card = kept && kept.card;
+        if (!card || !card.url || !card.ready) { wpDashLog('Comments: #' + id + ' — the card is not read yet, nothing changed', 'warn'); return false; }
+        const busy = wpCommentEdits[id];
+        if (busy && busy.state === 'saving' && Date.now() - busy.at < 120000) { wpDashLog('Comments: #' + id + ' — the last change is still being saved, wait for it', 'warn'); return false; }
+        const want = wpCommentEditWant(card, edit || {});
+        if (!Object.keys(want).length) { wpCommentEdits[id] = { at: Date.now(), state: 'failed', text: 'Nothing to change' }; wpCommentPhoneSig = ''; wpCommentPaint(); return false; }
+        try {
+            const url = new URL(card.url, location.href);
+            url.searchParams.set('wpCardEdit', JSON.stringify(want));
+            url.searchParams.set('wpCardLabel', String(card.l || ''));
+            url.searchParams.set('wpCardCity', String(card.c || ''));
+            url.searchParams.set('wpAutoRefresh', 'off');
+            try { localStorage.removeItem('wp_cardedit_result_v1_' + id); } catch (_) {}
+            wpExtensionOpenInTab(url.toString(), { active: false, insert: true, setParent: true });
+        } catch (error) {
+            wpCommentEdits[id] = { at: Date.now(), state: 'failed', text: 'The transfer could not be opened: ' + String(error && error.message || error) };
+            wpCommentPaint();
+            return false;
+        }
+        const text = wpCommentEditText(want);
+        wpCommentEdits[id] = { at: Date.now(), state: 'saving', text: text + ' — saving…' };
+        wpDashLog('Comments: ' + card.l + ' (' + card.c + ') — ' + text + (by ? ' (' + by + ')' : '') + ' — saving on the transfer…');
+        wpCommentPhoneSig = '';
+        wpCommentPaint();
+        try { wpRemoteLoop().catch(function() {}); } catch (_) {}
+        return true;
+    }
+    // What the transfer tabs reported back: the card is read again.
+    setInterval(function() {
+        Object.keys(wpCommentEdits).forEach(function(id) {
+            const edit = wpCommentEdits[id];
+            if (!edit || edit.state !== 'saving') return;
+            let result = null;
+            try { result = JSON.parse(localStorage.getItem('wp_cardedit_result_v1_' + id) || 'null'); } catch (_) {}
+            if (!result && Date.now() - edit.at > 180000) result = { status: 'failed', reason: 'no answer from the transfer tab in 3 min — look at its tab', at: Date.now() };
+            if (!result || Number(result.at) < edit.at) return;
+            const ok = result.status === 'done';
+            edit.state = ok ? 'done' : 'failed';
+            edit.text = ok ? '✓ ' + String(result.text || 'saved') : '✗ Not saved: ' + String(result.reason || '?');
+            edit.at = Date.now();
+            if (ok) delete wpCommentDraft[id];
+            const entry = wpCommentRows().find(function(row) { return row.id === id; });
+            const repaint = function() { wpCommentPhoneSig = ''; wpCommentShown = ''; wpCommentPaint(); try { wpRemoteLoop().catch(function() {}); } catch (_) {} };
+            if (entry) wpCommentCard(entry, true).then(repaint, repaint); else repaint();
+        });
+    }, 2000);
+
+    // The window: one card in the middle of the screen, in the suggestion card's look.
+    function wpCommentEsc(value) { return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function wpCommentHtml(card, position) {
+        const e = wpCommentEsc;
+        const bk = card.bk || {};
+        const count = function(n, word) { return Number(n) > 0 ? n + ' ' + word : ''; };
+        const minutes = function(m) { return m === null || m === undefined ? '' : (m < 0 ? '-' : '') + Math.floor(Math.abs(m) / 60) + ':' + String(Math.abs(m) % 60).padStart(2, '0'); };
+        const people = [count(bk.pax, 'pax'), count(bk.kids, 'kids')].filter(Boolean).join(' · ') || String(card.px || '').replace(/^Pax\/Lug:\s*/i, '');
+        const line = function(label, value) { return value ? '<span class="dc-l">' + e(label) + '</span><span class="dc-v">' + e(value) + '</span>' : ''; };
+        const partner = /booking/i.test(card.p) ? ' is-booking' : /airbnb/i.test(card.p) ? ' is-airbnb' : '';
+        const when = [card.dt || card.w, card.d && card.d !== 'today' && String(card.dt || '').toLowerCase().indexOf(card.d) < 0 ? card.d : ''].filter(Boolean).join(' · ');
+        let html = '<div class="dc-top"><span class="dc-city">' + e(card.c || '?') + '</span><span>' + e(card.l) + '</span>' +
+            (card.p ? '<span class="dc-chip dc-partner' + partner + '">' + e(card.p) + '</span>' : '') +
+            (card.m !== null && card.m !== undefined ? '<span class="dc-chip' + (card.m < 60 ? ' is-hot' : '') + '">' + e(minutes(card.m)) + ' to pickup</span>' : '') +
+            '<span class="dc-pos">' + e(position) + '</span><span class="dc-x" data-act="close" title="Close (Esc)">×</span></div>';
+        // 1.7.360: luggage (checked · hand, and the total the CRM has), seats and the two boxes, as on the phone
+        const luggage = [count(bk.chk, 'checked'), count(bk.hand, 'hand')].filter(Boolean).join(' · ');
+        const bags = luggage ? luggage + (Number(bk.lug) > 0 && Number(bk.lug) !== Number(bk.chk || 0) + Number(bk.hand || 0) ? ' (' + bk.lug + ' in all)' : '') : (count(bk.lug, 'bags') || String(card.px || '').replace(/^Pax\/Lug:\s*\d+\s*\/\s*/i, '') + (card.px ? ' bags' : ''));
+        const seats = [count(bk.inf, 'infant carrier'), count(bk.child, 'child seat'), count(bk.boost, 'booster')].filter(Boolean).join(' · ');
+        const also = [bk.wc ? 'wheelchair' : '', bk.bulky ? 'bulky luggage' : ''].filter(Boolean).join(' · ');
+        html += '<div class="dc-info">' + line('Pickup', when) + line('Route', card.r) + line('Car', card.car) + line('People', people) + line('Luggage', bags) + line('Seats', seats) + line('Also', also) +
+            line('Tags', card.g) + line('Price', card.price) + line('Auto-cancel', minutes(card.a)) + '</div>';
+        card.notes.forEach(function(note) {
+            html += '<div class="dc-box dc-notesbox"><div class="dc-cap">' + e(note.k.toUpperCase()) + '</div><div class="dc-ntext">' + e(note.t) + '</div>' +
+                '</div>';
+        });
+        // the actions: booked luggage, seats, boxes, a note
+        if (card.ready) {
+            const draft = wpCommentDraft[card.id] || {};
+            const value = function(key) { return key in draft ? draft[key] : bk[key]; };
+            const stepper = function(key) {
+                if (bk[key] === null || bk[key] === undefined) return '';
+                const v = Number(value(key) || 0);
+                const changed = key in draft && Number(draft[key]) !== Number(bk[key] || 0);
+                return '<div class="dc-step-row' + (changed ? ' is-changed' : '') + '"><span class="dc-l">' + e(WP_COMMENT_NUMBERS[key]) + '</span>' +
+                    '<button class="dc-mini" data-act="dec" data-key="' + key + '"' + (v <= 0 ? ' disabled' : '') + '>−</button><b>' + v + '</b><button class="dc-mini" data-act="inc" data-key="' + key + '"' + (v >= 20 ? ' disabled' : '') + '>+</button></div>';
+            };
+            const toggle = function(key, label) {
+                if (typeof bk[key] !== 'boolean') return '';
+                const on = Boolean(value(key));
+                return '<button class="dc-toggle' + (on ? ' is-on' : '') + (on !== bk[key] ? ' is-changed' : '') + '" data-act="toggle" data-key="' + key + '">' + e(label) + (on ? ': yes' : ': no') + '</button>';
+            };
+            const want = wpCommentEditWant(card, Object.assign({}, draft, { note: '' }));
+            const edit = wpCommentEdits[card.id];
+            html += '<div class="dc-box dc-bookbox"><div class="dc-cap">BOOKING</div>' +
+                '<div class="dc-toggles">' + toggle('wc', 'Wheelchair') + toggle('bulky', 'Bulky luggage') + '</div>' +
+                '<div class="dc-steps">' + ['chk', 'hand', 'inf', 'child', 'boost'].map(stepper).join('') + '</div>' +
+                '<div class="dc-noterow"><input class="dc-edit dc-noteinput" maxlength="280" placeholder="Task note (optional)" value="' + e(draft.note || '') + '">' +
+                '<button class="dc-btn dc-save" data-act="save"' + (Object.keys(want).length || String(draft.note || '').trim() ? '' : ' disabled') + '>Save</button></div>' +
+                (edit && Date.now() - edit.at < 10 * 60000 ? '<div class="dc-why dc-editstate is-' + e(edit.state) + '">' + e(edit.text) + '</div>' : '') +
+                '</div>';
+        }
+        if (card.tasks.length) {
+            html += '<div class="dc-box dc-whybox"><div class="dc-cap">LAST NOTES</div>' + card.tasks.map(function(task) { return '<div class="dc-note"><span class="dc-dot">•</span><span>' + e(task.t) + '</span></div>'; }).join('') + '</div>';
+        }
+        if (!card.ready) html += '<div class="dc-why">The transfer page could not be read — only the list row and the comment are shown, no changes possible.</div>';
+        return html;
+    }
+    function wpCommentStyle() {
+        if (document.getElementById('wp-comment-review-style')) return;
+        // the suggestion card's look: its styles, copied for this card's own id
+        // (the suggestion card keeps #wp-director-card for itself)
+        try { wpDirectorCardStyles(); } catch (_) {}
+        const base = document.getElementById('wp-director-card-style');
+        const style = document.createElement('style');
+        style.id = 'wp-comment-review-style';
+        const card = '#wp-comment-review #wp-comment-card';
+        style.textContent = (base ? base.textContent.split('#wp-director-card').join('#wp-comment-card') : '') +
+            '#wp-comment-review{position:fixed;inset:0;z-index:2147483600;background:rgba(6,9,11,.5)}' +
+            card + '{right:auto;left:50%;transform:translate(-50%,-50%);animation:none;width:min(560px,calc(100vw - 24px));padding-bottom:4px}' +
+            card + ' .dc-pos{margin-left:auto;font-size:12px;color:#9aa6ad}' + card + ' .dc-pos + .dc-x{margin-left:10px}' +
+            card + ' .dc-info{grid-template-columns:80px 1fr}' +
+            card + ' .dc-ntext{white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px}' +
+            card + ' .dc-toggles{display:flex;gap:8px;flex-wrap:wrap;margin:2px 0 8px}' +
+            card + ' .dc-toggle{border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#cfd6da;border-radius:999px;padding:5px 13px;font-size:13px;font-weight:650;cursor:pointer}' +
+            card + ' .dc-toggle.is-on{background:#7fd0ff;color:#04192b;border-color:#7fd0ff}' +
+            card + ' .dc-toggle.is-changed,' + card + ' .dc-step-row.is-changed b{box-shadow:0 0 0 2px #ffd27a}' +
+            card + ' .dc-steps{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}' +
+            card + ' .dc-step-row{display:grid;grid-template-columns:1fr 26px 30px 26px;align-items:center;gap:4px}' +
+            card + ' .dc-step-row b{text-align:center;font-size:15px;border-radius:6px}' +
+            card + ' .dc-mini{width:26px;height:26px;border-radius:50%;border:0;background:rgba(255,255,255,.10);color:#e8ecee;font-size:16px;line-height:1;cursor:pointer}' +
+            card + ' .dc-mini:disabled{opacity:.35;cursor:default}' +
+            card + ' .dc-noterow{display:flex;gap:8px;margin-top:10px}' + card + ' input.dc-noteinput{flex:1 1 auto;width:auto}' +
+            card + ' .dc-save{flex:0 0 auto;padding:6px 18px;font-size:14px;background:#7fd0ff;color:#04192b}' + card + ' .dc-btn:disabled{opacity:.4;cursor:default;filter:none;transform:none}' +
+            card + ' .dc-editstate{margin-top:8px}' + card + ' .dc-editstate.is-done{color:#6fd16f}' + card + ' .dc-editstate.is-failed{color:#ff9d94}' + card + ' .dc-editstate.is-saving{color:#ffd27a}' +
+            card + ' .dc-empty{padding:18px 4px;text-align:center;color:#9aa6ad}' +
+            card + ' .dc-histrow{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}' +
+            card + ' .dc-histtop{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;font-size:13.5px}' + card + ' .dc-histtop span{color:#9aa6ad}' +
+            card + ' .dc-histwhen{margin-left:auto;font-size:12px}' +
+            card + ' .dc-histtext{margin-top:4px;font-size:13px;color:#e8ecee;overflow-wrap:anywhere}' + card + ' .dc-histen{margin-top:2px;font-size:12.5px;color:#c9a3ff;overflow-wrap:anywhere}' +
+            card + ' .dc-histbtns{display:flex;gap:8px;margin-top:7px}' + card + ' .dc-small{flex:0 0 auto;padding:5px 14px;font-size:12.5px}';
+        (document.head || document.documentElement).appendChild(style);
+    }
+    var wpCommentShown = '';
+    var wpCommentView = 'queue';          // 1.7.359: 'queue' or 'history'
+    function wpCommentHistoryHtml() {
+        const e = wpCommentEsc;
+        const list = wpCommentHistoryList();
+        const when = function(at) { const date = new Date(Number(at)); return date.toLocaleDateString([], { day: '2-digit', month: 'short' }) + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); };
+        return '<div class="dc-top"><span class="dc-city">History</span><span>' + list.length + ' seen (kept 3 days)</span><span class="dc-pos"></span><span class="dc-x" data-act="close" title="Close (Esc)">×</span></div>' +
+            (list.length ? list.map(function(item) {
+                return '<div class="dc-box dc-histrow"><div class="dc-histtop"><b>' + e(item.c || '?') + '</b> <span>' + e(item.l || '#' + item.id) + '</span>' + (item.w ? ' <span>· ' + e(item.w) + '</span>' : '') +
+                    '<span class="dc-histwhen">seen ' + e(when(item.at)) + '</span></div>' +
+                    (item.t ? '<div class="dc-histtext">' + e(item.t) + '</div>' : '') + (item.en ? '<div class="dc-histen">' + e(item.en) + '</div>' : '') +
+                    '<div class="dc-histbtns"><button class="dc-btn dc-no dc-small" data-act="hist-open" data-id="' + e(item.id) + '">Open transfer</button><button class="dc-btn dc-no dc-small" data-act="hist-back" data-id="' + e(item.id) + '">Put back</button></div></div>';
+            }).join('') : '<div class="dc-empty">Nothing seen yet — Next puts a card here.</div>') +
+            '<div class="dc-buttons"><button class="dc-btn dc-yes" data-act="queue">Back to the cards</button></div><div class="dc-links"></div>';
+    }
+    async function wpCommentPaint() {
+        const host = document.getElementById('wp-comment-review');
+        if (!host) return;
+        const box = host.querySelector('#wp-comment-card');
+        // not while you type a note
+        if (document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('dc-noteinput') && box.contains(document.activeElement)) return;
+        if (wpCommentView === 'history') {
+            const html = wpCommentHistoryHtml();
+            if (html === wpCommentShown) return;
+            wpCommentShown = html;
+            box.innerHTML = html;
+            delete box.dataset.id;
+            return;
+        }
+        const state = wpCommentQueue();
+        const entry = state.queue[0];
+        const kept = entry ? wpCommentCards.get(entry.id) : null;
+        const seen = wpCommentHistoryList().length;
+        const footer = '<div class="dc-buttons"><button class="dc-btn dc-no" data-act="back"' + (wpCommentHistory.length ? '' : ' disabled') + ' title="The last one you marked seen comes back (Left arrow)">Back</button>' +
+            (entry ? '<button class="dc-btn dc-no" data-act="skip" title="The next one, without marking this one seen — it comes back at the end (Down arrow)">Skip</button>' +
+                '<button class="dc-btn dc-yes" data-act="next" title="Seen — into History, and the next one (Right arrow)">Next</button>' : '') + '</div>' +
+            '<div class="dc-links">' + (entry ? '<span class="dc-link" data-act="copy" title="Copy the transfer (the CRM\'s Copy details for EM)">' + (kept && kept.card.em ? 'Copy details' : '') + '</span><span class="dc-link" data-act="open" title="Open the transfer page in a new tab">Open transfer</span>' : '') +
+            '<span class="dc-link" data-act="history" title="The ones you marked seen (Next)">History (' + seen + ')</span></div>';
+        if (!entry) {
+            const sig = 'empty:' + state.unread + ':' + state.done + ':' + wpCommentHistory.length + ':' + seen;
+            if (sig === wpCommentShown) return;
+            wpCommentShown = sig;
+            box.innerHTML = '<div class="dc-top"><span class="dc-city">Comments</span><span class="dc-x" data-act="close">×</span></div>' +
+                '<div class="dc-empty">No transfer with a comment is waiting.' + (state.done ? '<br>' + state.done + ' done.' : '') + (state.unread ? '<br>' + state.unread + ' transfer' + (state.unread === 1 ? '' : 's') + ' not read yet — they come in as the list is read.' : '') + '</div>' + footer;
+            delete box.dataset.id;
+            return;
+        }
+        const position = (wpCommentSkipLoad()[entry.id] ? 'skipped before · ' : '') + (state.done + 1) + ' / ' + (state.done + state.queue.length) + (state.unread ? ' · ' + state.unread + ' not read' : '');
+        if (!kept) {
+            const sig = 'wait:' + entry.id;
+            if (sig !== wpCommentShown) {
+                wpCommentShown = sig;
+                box.innerHTML = '<div class="dc-top"><span class="dc-city">Comments</span><span class="dc-pos">' + wpCommentEsc(position) + '</span><span class="dc-x" data-act="close">×</span></div><div class="dc-empty">Reading ' + wpCommentEsc(entry.id) + '…</div>' + footer;
+                box.dataset.id = entry.id;
+            }
+            wpCommentCard(entry, false).then(function() { wpCommentPaint(); }, function() {});
+            return;
+        }
+        const edit = wpCommentEdits[entry.id];
+        const sig = JSON.stringify([kept.card, position, wpCommentHistory.length, wpCommentDraft[entry.id] || null, edit || null, seen, Boolean(wpCommentSkipLoad()[entry.id])]);
+        if (sig === wpCommentShown) return;
+        wpCommentShown = sig;
+        box.innerHTML = wpCommentHtml(kept.card, position) + footer;
+        box.dataset.id = entry.id;
+        box.dataset.url = kept.card.url;
+    }
+    function wpCommentWindow() {
+        if (document.getElementById('wp-comment-review')) return;
+        wpCommentStyle();
+        const host = document.createElement('div');
+        host.id = 'wp-comment-review';
+        const box = document.createElement('div');
+        box.id = 'wp-comment-card';
+        host.appendChild(box);
+        document.body.appendChild(host);
+        wpCommentShown = '';
+        wpCommentView = 'queue';
+        const close = function() { host.remove(); document.removeEventListener('keydown', keys, true); clearInterval(timer); };
+        const draftOf = function(id) { wpCommentDraft[id] = wpCommentDraft[id] || {}; return wpCommentDraft[id]; };
+        const act = function(name, node) {
+            const id = box.dataset.id;
+            const kept = id ? wpCommentCards.get(id) : null;
+            const card = kept && kept.card;
+            if (name === 'close') close();
+            else if (name === 'next' && id) wpCommentMark(id, true, '');
+            else if (name === 'skip' && id) wpCommentSkip(id, '');
+            else if (name === 'history') { wpCommentView = 'history'; wpCommentShown = ''; wpCommentPaint(); }
+            else if (name === 'queue') { wpCommentView = 'queue'; wpCommentShown = ''; wpCommentPaint(); }
+            else if (name === 'hist-back') { wpCommentMark(node.getAttribute('data-id'), false, ''); wpCommentView = 'queue'; wpCommentShown = ''; wpCommentPaint(); }
+            else if (name === 'hist-open') window.open(location.origin + '/admin/transfers/' + encodeURIComponent(node.getAttribute('data-id')) + '/details_v3', '_blank');
+            else if (name === 'open' && box.dataset.url) window.open(box.dataset.url, '_blank');
+            else if (name === 'back' && wpCommentHistory.length) wpCommentMark(wpCommentHistory[wpCommentHistory.length - 1], false, '');
+            else if (name === 'copy' && card && card.em) {
+                Promise.resolve(wpWriteClipboardText(card.em)).then(function(ok) {
+                    node.textContent = ok ? 'Copied' : 'Copy failed';
+                    window.setTimeout(function() { if (node.isConnected) node.textContent = 'Copy details'; }, 1800);
+                }, function() { node.textContent = 'Copy failed'; });
+            } else if ((name === 'inc' || name === 'dec') && card) {
+                const key = node.getAttribute('data-key');
+                const draft = draftOf(id);
+                const now = Number(key in draft ? draft[key] : (card.bk || {})[key]) || 0;
+                draft[key] = Math.max(0, Math.min(20, now + (name === 'inc' ? 1 : -1)));
+                wpCommentPaint();
+            } else if (name === 'toggle' && card) {
+                const key = node.getAttribute('data-key');
+                const draft = draftOf(id);
+                draft[key] = !(key in draft ? draft[key] : (card.bk || {})[key]);
+                wpCommentPaint();
+            } else if (name === 'save' && card) {
+                const input = box.querySelector('.dc-noteinput');
+                const draft = draftOf(id);
+                draft.note = input ? input.value : '';
+                if (wpCommentEdit(id, draft, '')) { draft.note = ''; }
+                try { if (input) input.blur(); } catch (_) {}
+                wpCommentShown = '';
+                wpCommentPaint();
+            }
+        };
+        const keys = function(event) {
+            if (!host.isConnected) return;
+            const typing = event.target && /input|textarea|select/i.test(event.target.tagName || '');
+            if (typing) {
+                if (event.key === 'Enter' && event.target.classList.contains('dc-noteinput')) { event.preventDefault(); act('save'); }
+                event.stopPropagation();
+                return;
+            }
+            const name = event.key === 'Escape' ? 'close' : wpCommentView === 'history' ? '' : event.key === 'ArrowRight' ? 'next' : event.key === 'ArrowLeft' ? 'back' : event.key === 'ArrowDown' ? 'skip' : '';
+            if (!name) return;
+            event.preventDefault();
+            event.stopPropagation();
+            act(name);
+        };
+        document.addEventListener('keydown', keys, true);
+        box.addEventListener('input', function(event) {
+            if (event.target && event.target.classList.contains('dc-noteinput') && box.dataset.id) {
+                const draft = draftOf(box.dataset.id);
+                draft.note = event.target.value;
+                const save = box.querySelector('.dc-save');
+                if (save) save.disabled = false;
+            }
+        });
+        host.addEventListener('click', function(event) {
+            if (event.target === host) { close(); return; }
+            const node = event.target && event.target.closest && event.target.closest('[data-act]');
+            if (node && !node.disabled) { event.preventDefault(); event.stopPropagation(); act(node.getAttribute('data-act'), node); }
+        });
+        ['mousedown', 'keyup', 'keypress'].forEach(function(type) { host.addEventListener(type, function(event) { event.stopPropagation(); }); });
+        const timer = setInterval(function() { if (!host.isConnected) { clearInterval(timer); return; } wpCommentPaint(); }, 3000);
+        wpCommentPaint();
+        wpCommentPump().catch(function() {});
     }
 
     // ---- Wheelchair / Bulky luggage boxes (1.7.258) ----
     // When the passenger / driver / pickup notes of a transfer mention a
     // wheelchair or bulky luggage and the transfer's own box ("Wheelchair",
     // "Bulky luggage") is not ticked, mod ticks it on the transfer page
-    // and saves. Found two ways: by the plain words (works without the local
-    // AI) — those are ticked. The local AI is also asked and must copy the
-    // words from the notes (words that are not really there are not
-    // believed); but it mistakes a walker for a wheelchair, so what only the
-    // AI found is told in the Terminal for you to check, not ticked. A "no
-    // wheelchair" is not a wheelchair. Switch: Controls, "Tick wheelchair /
-    // bulky".
+    // and saves. Found by the plain words. A "no wheelchair" is not a wheelchair.
+    // Switch: Controls, "Tick wheelchair / bulky".
     const WP_BOX_NAMES = { wheelchair: 'Wheelchair', bulky: 'Bulky luggage' };
     const WP_BOX_WORDS = {
         wheelchair: /wheel\s?-?chair|rollstuhl|fauteuil\s+roulant|chaise\s+roulante|silla\s+de\s+ruedas|sedia\s+a\s+rotelle|cadeira\s+de\s+rodas|rolstoel|αναπηρικ[οό]\s+(αμαξ|καρ[οό]τσ)|αμαξ[ιί]διο|инвалидн\S*\s+(коляск|кресл)|tekerlekli\s+sandalye/i,
@@ -24168,16 +25968,20 @@ async function wpTransferAssistantExtensionEnabled() {
     };
     const WP_BOX_NOT = /(?:^|[\s,.;:(])(no|not|non|without|w\/o|don'?t|doesn'?t|do not|does not|sin|sans|pas de|ohne|kein\w*|senza|sem|χωρ[ιί]ς|δεν|нет|без)\s+(?:\S+\s+){0,3}$/i;
     function wpTickBoxesOn() {
+        if (WP_NO_AUTO) return false;
         try { return localStorage.getItem('wp_tick_boxes_v1') !== '0'; } catch (_) { return true; }
     }
     // The boxes to tick for this transfer: [{ box, by }] — only boxes that
     // are on the page and not ticked yet.
-    function wpBookingBoxes(data, read) {
+    function wpBookingBoxes(data) {
         const booking = data && data.booking;
         if (!booking) return [];
-        const text = wpBookingNotes(data).map(function(note) { return note.text; }).join(' \n ');
-        if (!text) return [];
-        const lower = text.toLowerCase();
+        // 1.7.426: partners now put empty form labels in the passenger note
+        // ("Bulky luggage:", "Baby stoller: Bulky luggage:"). The label itself
+        // is not bulky luggage: it is taken out and only what the passenger
+        // wrote after it counts.
+        const text = wpBookingNotes(data).map(function(note) { return note.text; }).join(' \n ').replace(/bulky\s+luggage\s*:/gi, ' ').replace(/wheel\s?-?chair\s*:/gi, ' ');
+        if (!text.trim()) return [];
         const found = [];
         ['wheelchair', 'bulky'].forEach(function(box) {
             if (booking[box] !== false) return;
@@ -24186,11 +25990,6 @@ async function wpTransferAssistantExtensionEnabled() {
             let match;
             while (!by && (match = pattern.exec(text))) {
                 if (!WP_BOX_NOT.test(text.slice(Math.max(0, match.index - 40), match.index))) by = 'the word';
-            }
-            const quote = String(read && read[box + 'Words'] || '').toLowerCase();
-            if (!by && quote.length >= 3) {
-                const at = lower.indexOf(quote);
-                if (at >= 0 && !WP_BOX_NOT.test(text.slice(Math.max(0, at - 40), at)) && !WP_BOX_NOT.test(quote + ' ')) by = 'the AI';
             }
             if (by) found.push({ box: box, by: by });
         });
@@ -24201,18 +26000,7 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpAutoBoxCheck(state, item, data, extra) {
         if (!wpTickBoxesOn() || !item || !data || wpRuleExceptionFor('tickbox', item.city)) return false;
         if (item.status === 'inflight' || item.status === 'approved') return false;
-        const all = wpBookingBoxes(data, extra && extra.bookingRead);
-        // only the AI saw it: said once, for you to check
-        const unsure = all.filter(function(entry) { return entry.by !== 'the word'; });
-        if (unsure.length) {
-            state.boxTold = state.boxTold || {};
-            const told = unsure.map(function(entry) { return entry.box; }).join(',');
-            if (state.boxTold[item.id] !== told) {
-                state.boxTold[item.id] = told;
-                wpDashLog('🧠 AI: ' + item.label + ' (' + item.city + ') — the notes may mention ' + unsure.map(function(entry) { return entry.box === 'wheelchair' ? 'a wheelchair' : 'bulky luggage'; }).join(' and ') + ' (not in words I know) — check, and tick ' + unsure.map(function(entry) { return WP_BOX_NAMES[entry.box]; }).join(' / ') + ' by hand if so', 'warn');
-            }
-        }
-        const boxes = all.filter(function(entry) { return entry.by === 'the word'; });
+        const boxes = wpBookingBoxes(data);
         if (!boxes.length) return false;
         const sig = boxes.map(function(entry) { return entry.box; }).join(',');
         state.boxTick = state.boxTick || {};
@@ -24229,7 +26017,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (typeof wpRememberTransferCity === 'function') wpRememberTransferCity(item.path, item.city);
             wpExtensionOpenInTab(url.toString(), { active: false, insert: true, setParent: true });
         } catch (_) { return false; }
-        wpDashLog('mod: ' + item.label + ' (' + item.city + ') — the notes mention ' + boxes.map(function(entry) { return entry.box === 'wheelchair' ? 'a wheelchair' : 'bulky luggage'; }).join(' and ') + ' → ticking ' + names + ' on the transfer page');
+        wpDashLog('wlcm: ' + item.label + ' (' + item.city + ') — the notes mention ' + boxes.map(function(entry) { return entry.box === 'wheelchair' ? 'a wheelchair' : 'bulky luggage'; }).join(' and ') + ' → ticking ' + names + ' on the transfer page');
         try { wpSuggestAdd({ id: item.id, label: item.label, city: item.city, partner: '', what: 'tick ' + names + ' (from the notes)', answer: 'Yes', by: 'notes', final: false, result: '' }); } catch (_) {}
         return true;
     }
@@ -24250,7 +26038,7 @@ async function wpTransferAssistantExtensionEnabled() {
             } else if (now - Number(sent.at) > 3 * 60000) {
                 sent.result = 'failed';
                 try { wpSuggestResult(id, 'failed — no result from the transfer tab in 3 min'); } catch (_) {}
-                wpDashLog('mod: ' + (sent.label || '#' + id) + ' — ticking ' + (sent.names || 'the box') + ' gave no result in 3 min: tick it by hand', 'warn');
+                wpDashLog('wlcm: ' + (sent.label || '#' + id) + ' — ticking ' + (sent.names || 'the box') + ' gave no result in 3 min: tick it by hand', 'warn');
             }
         });
     }
@@ -24262,6 +26050,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // is written. Once per transfer; not when the note is already there.
     const WP_AUTO_HEROES_SENT_KEY = 'wp_auto_heroes_sent_v1';
     function wpAutoHeroesOn() {
+        if (WP_NO_AUTO) return false;
         try { return localStorage.getItem('wp_auto_heroes_v1') !== '0'; } catch (_) { return true; }
     }
     // The car classes a hero's "Car Types" names: 1 sedan / SUV / VTC, 2 minivan, 3 minibus. [] = not said.
@@ -24364,23 +26153,26 @@ async function wpTransferAssistantExtensionEnabled() {
     // heroes together, in one message per hero ("these 2"). Each hero gets
     // the ones whose car fits them. True = started now.
     function wpAutoHeroesSendGroup(state, list) {
-        if (!wpAutoHeroesOn() || wpHeroRunActive) return false;
+        if (!wpAutoHeroesActive() || wpHeroRunActive) return false;
         const hm = function(minutes) { const value = Math.max(0, Math.round(Number(minutes) || 0)); return Math.floor(value / 60) + ':' + String(value % 60).padStart(2, '0'); };
         const sentMap = wpAutoHeroesSent();
         const ready = [];
         (list || []).forEach(function(one) {
             const item = one.item, data = one.data, extra = one.extra;
-            if (!item || !data || !extra || extra.finalMode) return;
+            if (!item || !data || !extra) return;
             const tbo = Number(extra.tbo), due = Number(extra.finalDue);
-            if (!Number.isFinite(tbo) || !Number.isFinite(due) || tbo > due + 60) return;
+            if (!Number.isFinite(tbo) || !Number.isFinite(due) || tbo > due + 120) return; // 1.7.378: 2 h
             if (sentMap[item.id]) return;
             if (wpRuleExceptionFor('heroes', item.city)) {
                 wpAutoHeroesMark(item.id, 'exception');
-                wpDashLog('mod: ' + item.label + ' (' + item.city + ') — 1 hour before Final BC: not sent to heroes (your exception for ' + item.city + ')');
+                wpDashLog('wlcm: ' + item.label + ' (' + item.city + ') — 2 hours before Final BC: not sent to heroes (your exception for ' + item.city + ')');
                 return;
             }
             const tasks = Array.isArray(data.tasks) ? data.tasks : [];
             if (tasks.some(function(task) { return /sent to heroes/i.test(String(task && task.note || '')); })) { wpAutoHeroesMark(item.id, 'note already there'); return; }
+            // 1.7.338: not after a Final BC; not before "sent to suggested"
+            if (tasks.some(function(task) { try { const tag = wpDetectTransferTag(task && task.note || ''); return tag && tag.type === 'final'; } catch (_) { return false; } })) { wpAutoHeroesMark(item.id, 'after Final BC'); return; }
+            if (!wpAutoSuggestedDone(state, item.id, tasks.map(function(task) { return String(task && task.note || ''); }).join('\n'))) return;
             // a raise of mod's running on it: next look
             if (item.status === 'inflight' || item.status === 'approved') return;
             if (!wpHeroDetailsText(data, item.city)) return;
@@ -24401,7 +26193,7 @@ async function wpTransferAssistantExtensionEnabled() {
             }).filter(function(person) { return person.phone; });
             if (!fit.length) {
                 wpAutoHeroesMark(item.id, 'no hero');
-                wpDashLog('mod: ' + item.label + ' (' + item.city + ') — 1 hour before Final BC: ' + (all.length ? 'no hero with a ' + (carType || 'matching car') + ' (' + all.length + ' hero' + (all.length === 1 ? '' : 'es') + ' in ' + item.city + ')' : 'no heroes in ' + item.city) + ' — not sent');
+                wpDashLog('wlcm: ' + item.label + ' (' + item.city + ') — 2 hours before Final BC: ' + (all.length ? 'no hero with a ' + (carType || 'matching car') + ' (' + all.length + ' hero' + (all.length === 1 ? '' : 'es') + ' in ' + item.city + ')' : 'no heroes in ' + item.city) + ' — not sent');
                 return;
             }
             fit.forEach(function(person) {
@@ -24434,8 +26226,8 @@ async function wpTransferAssistantExtensionEnabled() {
                 }
             } catch (_) {}
             try { wpOutcomeTrack(item.path, { city: item.city, action: 'heroes' }); } catch (_) {}
-            wpDashLog('mod: ' + item.label + ' (' + item.city + ') — ' + hm(one.extra.tbo) + ' to pickup, 1 hour before Final BC (' + hm(one.extra.finalDue) + ') → sent to ' + fit.length + ' hero' + (fit.length === 1 ? '' : 'es') + (carType ? ' for a ' + carType : '') + ': ' + fit.map(function(person) { return person.name; }).join(', ') + ' · note "sent to heroes"' + (going.length > 1 ? ' (together with ' + (going.length - 1) + ' more of ' + item.city + ')' : ''));
-            try { wpSuggestAdd({ id: item.id, label: item.label, city: item.city, partner: '', what: 'sent to ' + fit.length + ' hero' + (fit.length === 1 ? '' : 'es') + ' (1 hour before Final BC)', answer: 'Yes', by: 'mod', final: false, result: 'done' }); } catch (_) {}
+            wpDashLog('wlcm: ' + item.label + ' (' + item.city + ') — ' + hm(one.extra.tbo) + ' to pickup, 2 hours before Final BC (' + hm(one.extra.finalDue) + ') → sent to ' + fit.length + ' hero' + (fit.length === 1 ? '' : 'es') + (carType ? ' for a ' + carType : '') + ': ' + fit.map(function(person) { return person.name; }).join(', ') + ' · note "sent to heroes"' + (going.length > 1 ? ' (together with ' + (going.length - 1) + ' more of ' + item.city + ')' : ''));
+            try { wpSuggestAdd({ id: item.id, label: item.label, city: item.city, partner: '', what: 'sent to ' + fit.length + ' hero' + (fit.length === 1 ? '' : 'es') + ' (2 hours before Final BC)', answer: 'Yes', by: 'wlcm', final: false, result: 'done' }); } catch (_) {}
         });
         const people = Object.keys(byPhone).map(function(phone) {
             const entry = byPhone[phone];
@@ -24452,7 +26244,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // due within the next 10 minutes) are read too and go in the same
     // message — up to 5.
     async function wpAutoHeroesSweep(state, entries) {
-        if (!wpAutoHeroesOn() || wpHeroRunActive) return;
+        if (!wpAutoHeroesActive() || wpHeroRunActive) return;
         const now = Date.now();
         const sent = wpAutoHeroesSent();
         state.heroTry = state.heroTry || {};
@@ -24462,15 +26254,19 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!item || sent[item.id] || ['closed', 'inflight', 'approved', 'gone'].indexOf(item.status) >= 0) return false;
             if (now - Number(state.heroTry[item.id] || 0) < 2 * 60000) return false;
             if (!item.city || !wpLooksLikeCityName(item.city)) return false;
-            return Number.isFinite(timing.tbo) && Number.isFinite(timing.finalDue) && !timing.finalMode && timing.tbo <= timing.finalDue + 60 + extraMinutes;
+            // 1.7.338: at Final BC time too, once it was sent to suggested
+            if (!wpAutoSuggestedDone(state, item.id, '')) return false;
+            // 1.7.378: 2 hours before Final BC (was 1 hour)
+            return Number.isFinite(timing.tbo) && Number.isFinite(timing.finalDue) && timing.tbo <= timing.finalDue + 120 + extraMinutes;
         };
         const due = entries.filter(function(entry) { return dueWithin(entry, 0); }).sort(function(a, b) { return a.timing.tbo - b.timing.tbo; });
         const first = due[0];
         if (!first) return;
         const cityKey = wpNormalizeCityKey(first.item.city);
         const group = [first].concat(entries.filter(function(entry) {
-            return entry !== first && entry.item && wpNormalizeCityKey(entry.item.city) === cityKey && dueWithin(entry, 10);
-        }).sort(function(a, b) { return a.timing.tbo - b.timing.tbo; })).slice(0, 5);
+            // 1.7.378: all of the city's open transfers go in the same message (not only the next 10 min), so heroes get one message, not many
+            return entry !== first && entry.item && wpNormalizeCityKey(entry.item.city) === cityKey && dueWithin(entry, 24 * 60);
+        }).sort(function(a, b) { return a.timing.tbo - b.timing.tbo; })).slice(0, 8);
         const list = [];
         for (const entry of group) {
             state.heroTry[entry.item.id] = now;
@@ -24478,132 +26274,236 @@ async function wpTransferAssistantExtensionEnabled() {
             try { data = await wpFetchTransferCrmDetails(entry.item.path, true); } catch (_) {}
             if (!data) continue;
             if (data.cancelled || data.assigned) { wpAutoHeroesMark(entry.item.id, data.cancelled ? 'cancelled' : 'assigned'); continue; }
-            list.push({ row: entry.row, item: entry.item, data: data, extra: { tbo: entry.timing.tbo, finalDue: entry.timing.finalDue, finalMode: false } });
+            list.push({ row: entry.row, item: entry.item, data: data, extra: { tbo: entry.timing.tbo, finalDue: entry.timing.finalDue, finalMode: Boolean(entry.timing.finalMode) } });
         }
         // the ones read early (due within 10 min) count as due now
-        list.forEach(function(one) { if (one.extra.tbo > one.extra.finalDue + 60) one.extra.tbo = one.extra.finalDue + 60; });
+        list.forEach(function(one) { if (one.extra.tbo > one.extra.finalDue + 120) one.extra.tbo = one.extra.finalDue + 120; });
         if (list.length) wpAutoHeroesSendGroup(state, list);
     }
 
-    // Settings card (Terminal header: 🧠 AI).
-    function wpAiSettings() {
-        wpDirectorCardStyles();
-        const old = document.getElementById('wp-ai-settings');
-        if (old) { old.remove(); return; }
-        const cfg = wpAiConfig();
-        const box = document.createElement('div');
-        box.id = 'wp-ai-settings';
-        Object.assign(box.style, {
-            position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', zIndex: '2147483647', width: 'min(460px, calc(100vw - 24px))',
-            background: '#1f2529', color: '#e8ecee', border: '1px solid rgba(201,163,255,.45)', borderRadius: '16px', boxShadow: '0 18px 48px rgba(0,0,0,.6)',
-            padding: '14px 16px', font: '13px/1.45 "Segoe UI",system-ui,sans-serif'
-        });
-        const add = function(tag, text, style, parent) {
-            const node = document.createElement(tag);
-            if (text !== undefined && text !== null) node.textContent = text;
-            if (style) Object.assign(node.style, style);
-            (parent || box).appendChild(node);
-            return node;
-        };
-        add('div', '🧠 Local AI reader', { fontSize: '16px', fontWeight: '700' });
-        add('div', 'A model on this PC (LM Studio / Ollama) reads the dispatcher notes for mod, and the passenger / driver notes to suggest booking changes (pax, kids, child seats, luggage). It never edits a booking. Nothing leaves this computer.', { color: '#9aa6ad', margin: '4px 0 10px' });
-        const field = function(label, value, placeholder) {
-            add('div', label, { color: '#7d8a90', fontSize: '12px', marginTop: '6px' });
-            const input = add('input');
-            input.type = 'text';
-            input.value = value;
-            input.placeholder = placeholder;
-            Object.assign(input.style, { width: '100%', boxSizing: 'border-box', background: '#161a1d', color: '#e8ecee', border: '1px solid #4c5358', borderRadius: '8px', padding: '6px 9px', font: 'inherit' });
-            ['keydown', 'click', 'mousedown'].forEach(function(type) { input.addEventListener(type, function(event) { event.stopPropagation(); }); });
-            return input;
-        };
-        const urlInput = field('Server address', cfg.url, 'http://localhost:11434 (Ollama) or http://localhost:1234 (LM Studio)');
-        const modelInput = field('Model (Test fills in the first one the server offers)', cfg.model, 'e.g. qwen3.5:4b');
-        const status = add('div', cfg.on ? 'On.' : 'Off.', { marginTop: '9px', minHeight: '18px', color: '#cfd6da' });
-        const buttons = add('div', null, { display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' });
-        const button = function(label, color, onClick) {
-            const node = add('button', label, { padding: '6px 13px', borderRadius: '999px', cursor: 'pointer', font: 'inherit', fontWeight: '700', background: 'transparent', color: color, border: '1px solid ' + color }, buttons);
-            node.type = 'button';
-            node.addEventListener('click', function(event) { event.preventDefault(); event.stopPropagation(); onClick(); });
-        };
-        const test = async function() {
-            status.textContent = 'Testing…';
-            status.style.color = '#cfd6da';
-            const url = String(urlInput.value || '').trim().replace(/\/+$/, '');
-            const list = await wpAiSend({ type: 'WP_AI_MODELS', url: url });
-            if (!list.ok) { status.textContent = '✗ Could not reach the server: ' + list.error; status.style.color = '#ff9d94'; return false; }
-            if (!String(modelInput.value || '').trim() && list.models && list.models.length) modelInput.value = list.models[0];
-            if (!String(modelInput.value || '').trim()) { status.textContent = '✗ The server answered but has no model loaded.'; status.style.color = '#ff9d94'; return false; }
-            const reply = await wpAiSend({ type: 'WP_AI_ASK', url: url, model: String(modelInput.value).trim(), messages: [{ role: 'user', content: 'Reply with exactly this JSON and nothing else: {"summary":"ok"}' }] });
-            if (!reply.ok) { status.textContent = '✗ The model did not answer: ' + reply.error; status.style.color = '#ff9d94'; return false; }
-            status.textContent = '✓ Works — ' + String(modelInput.value).trim() + ' answered in ' + (Math.round(reply.ms / 100) / 10) + ' s' + (list.models && list.models.length > 1 ? ' (also available: ' + list.models.slice(0, 4).join(', ') + ')' : '');
-            status.style.color = '#6fd16f';
-            return true;
-        };
-        button('Test', '#c9a3ff', test);
-        button('Save and turn on', '#6fd16f', async function() {
-            if (!(await test())) return;
-            wpAiSaveConfig({ on: true, url: String(urlInput.value || '').trim().replace(/\/+$/, ''), model: String(modelInput.value || '').trim() });
-            wpDashLog('🧠 Local AI reader: ON (' + String(modelInput.value || '').trim() + ')');
-            status.textContent += ' — saved, on.';
-        });
-        button('Turn off', '#aab4b9', function() {
-            wpAiSaveConfig({ on: false, url: String(urlInput.value || '').trim().replace(/\/+$/, ''), model: String(modelInput.value || '').trim() });
-            wpDashLog('🧠 Local AI reader: OFF');
-            status.textContent = 'Off.';
-            status.style.color = '#cfd6da';
-        });
-        button('Close', '#7d8a90', function() { box.remove(); });
-        (document.body || document.documentElement).appendChild(box);
+    // ---- Sent to suggested (1.7.332) ----
+    // Every transfer wlcm watches that has no "sent to suggested" note yet
+    // is sent to the CRM's suggested drivers (top 5 with WhatsApp) and the
+    // note "sent to suggested" is written (EM first when it has no tag).
+    // One city at a time: its transfers (up to 5) go together, one message
+    // per driver with the transfers they are suggested for ("these 2").
+    // Not for a transfer at / past Final BC, one already sent to Final BC,
+    // one wlcm is working on, or one you touched in the last 10 minutes.
+    const WP_AUTO_SUGGESTED_SENT_KEY = 'wp_auto_suggested_sent_v1';
+    // 1.7.408: sending to suggested / heroes runs only while Full auto is on
+    function wpAutoSuggestedActive() { return wpAutoSuggestedOn() && wpAutoFullOn(); }
+    function wpAutoHeroesActive() { return wpAutoHeroesOn() && wpAutoFullOn(); }
+    function wpAutoSuggestedOn() {
+        if (WP_NO_AUTO) return false;
+        try { return localStorage.getItem('wp_auto_suggested_v1') !== '0'; } catch (_) { return true; }
+    }
+    // 1.7.369: only transfers within this many hours of pickup are sent to suggested (0 / empty = no limit).
+    const WP_SUG_HOURS_KEY = 'wp_auto_suggested_hours_v1';
+    function wpAutoSuggestedHours() {
+        let value = 0;
+        try { value = Number(localStorage.getItem(WP_SUG_HOURS_KEY) || 0); } catch (_) {}
+        return Number.isFinite(value) && value > 0 ? Math.min(72, value) : 0;
+    }
+    function wpAutoSuggestedHoursSet(value, by) {
+        const hours = Math.max(0, Math.min(72, Math.round((Number(value) || 0) * 2) / 2));
+        try { if (hours > 0) localStorage.setItem(WP_SUG_HOURS_KEY, String(hours)); else localStorage.removeItem(WP_SUG_HOURS_KEY); } catch (_) {}
+        wpDashLog('Send to suggested: ' + (hours > 0 ? 'only transfers up to ' + hours + ' h before pickup' : 'no hours limit') + (by ? ' (' + by + ')' : ''));
+        try { wpDashPaintSwitches(); } catch (_) {}
+        try { wpRemoteLastSig = ''; } catch (_) {}
+        return hours;
+    }
+    function wpAutoSuggestedSent() {
+        try {
+            const map = JSON.parse(localStorage.getItem(WP_AUTO_SUGGESTED_SENT_KEY) || '{}') || {};
+            return map && typeof map === 'object' ? map : {};
+        } catch (_) { return {}; }
+    }
+    function wpAutoSuggestedMark(id, what) {
+        try {
+            const map = wpAutoSuggestedSent();
+            const now = Date.now();
+            Object.keys(map).forEach(function(key) { if (now - Number(map[key] && map[key].at) > 36 * 3600000) delete map[key]; });
+            map[id] = { at: now, what: String(what || '') };
+            localStorage.setItem(WP_AUTO_SUGGESTED_SENT_KEY, JSON.stringify(map));
+        } catch (_) {}
+    }
+    // 1.7.338: any wording of "sent to suggested" ("sugg", "suggestions"…)
+    function wpNoteSaysSuggested(text) {
+        return /\bsugg(?:est(?:ed|ion|ions)?)?\b/i.test(String(text || ''));
+    }
+    // Sent to suggested already (or nothing to send, or the step is off).
+    function wpAutoSuggestedDone(state, id, notes) {
+        if (!wpAutoSuggestedActive() || wpNoteSaysSuggested(notes)) return true;
+        if (wpAutoSuggestedSent()[id]) return true;
+        return Boolean(state && state.sugNone && state.sugNone[id]);
+    }
+    // 1.7.338: Final BC only after "sent to suggested" and then the heroes
+    // (when the city has a hero with a fitting car). '' = Final BC can go.
+    // Waits at most 10 minutes, then Final BC goes anyway (said once).
+    function wpAutoFinalWaitFor(state, item, data, city) {
+        const tasks = Array.isArray(data && data.tasks) ? data.tasks : [];
+        const notes = tasks.map(function(task) { return String(task && task.note || ''); }).join('\n');
+        let wait = '';
+        if (!wpAutoSuggestedDone(state, item.id, notes)) wait = 'sent to suggested';
+        else if (wpAutoHeroesActive() && !/\bhero(?:es)?\b/i.test(notes) && !wpAutoHeroesSent()[item.id] && !wpRuleExceptionFor('heroes', city)) {
+            let fit = [];
+            try { fit = wpHeroesForCar(wpGetHeroDriversForCity(city) || [], String(data && data.carType || '')).filter(function(hero) { return wpHeroPhone(hero.whatsapp); }); } catch (_) {}
+            if (fit.length) wait = 'sent to heroes';
+        }
+        if (!wait && wpHeroRunActive) wait = 'the WhatsApp messages being sent';
+        state.finalWait = state.finalWait || {};
+        if (!wait) { delete state.finalWait[item.id]; return ''; }
+        const first = Number(state.finalWait[item.id]) || Date.now();
+        state.finalWait[item.id] = first;
+        if (Date.now() - first > 10 * 60000) {
+            if (state.finalWait['told_' + item.id] !== 1) {
+                state.finalWait['told_' + item.id] = 1;
+                wpDashLog('wlcm: ' + item.label + ' (' + city + ') — waited 10 min for "' + wait + '" before Final BC; Final BC goes now', 'warn');
+            }
+            return '';
+        }
+        return wait;
+    }
+    // 1.7.373: when each driver was last sent to suggested (by phone, kept 3 h)
+    var WP_SUG_ROT_KEY = 'wp_sug_rot_v1';
+    var WP_SUG_ROT_MS = 3 * 3600000;
+    function wpSugRotLoad() {
+        let map = {};
+        try { map = JSON.parse(localStorage.getItem(WP_SUG_ROT_KEY) || '{}') || {}; } catch (_) {}
+        const now = Date.now();
+        Object.keys(map).forEach(function(phone) { if (!(now - Number(map[phone]) < WP_SUG_ROT_MS)) delete map[phone]; });
+        return map;
+    }
+    function wpSugRotate(list) {
+        const map = wpSugRotLoad();
+        const key = function(person) { return String(person.phone || '').replace(/\D/g, ''); };
+        const fresh = list.filter(function(person) { return !map[key(person)]; });
+        const used = list.filter(function(person) { return map[key(person)]; })
+            .sort(function(a, b) { return Number(map[key(a)]) - Number(map[key(b)]); });
+        return fresh.concat(used);
+    }
+    function wpSugRotateMark(phones) {
+        const map = wpSugRotLoad();
+        const now = Date.now();
+        (phones || []).forEach(function(phone) { const k = String(phone || '').replace(/\D/g, ''); if (k) map[k] = now; });
+        try { localStorage.setItem(WP_SUG_ROT_KEY, JSON.stringify(map)); } catch (_) {}
     }
 
-    // ============================================================
-    // TELL THE MOD (1.7.205) — typed instructions in the Terminal
-    // ============================================================
-    // "raise 15% for airbnb transfers in rome for the 13th of october":
-    // the local model turns the sentence into a small, fixed command
-    // (action, %, city, partner, date, car…); the extension finds the
-    // matching transfers ON THIS PAGE, shows what it understood and the
-    // list, and only after your OK runs them one at a time through the
-    // usual transfer tab. A raise is "to +X% in total": what is already
-    // raised is subtracted per transfer (as the Custom button does).
+    // 1.7.422: sending to suggested waits until the regular actions are done
+    // (questions waiting, approved, or running) — it used to run first in
+    // every round and its CRM reads held the queue back. A question waiting
+    // over 10 min (e.g. one Full auto leaves for you) no longer holds it.
+    function wpAutoRegularBusy(state) {
+        if (wpAutoPopupOpen || typeof wpDirector.answer === 'function' || wpDirector.running) return true;
+        try { if ((JSON.parse(localStorage.getItem(WP_AUTO_ACTIONS_KEY) || '[]') || []).length) return true; } catch (_) {}
+        const now = Date.now();
+        const items = state && state.items ? state.items : {};
+        return Object.keys(items).some(function(key) {
+            const item = items[key];
+            if (!item || typeof item !== 'object') return false;
+            if (item.status === 'approved' || item.status === 'inflight') return true;
+            return item.status === 'queued' && now - Number(item.queuedAt || now) < 10 * 60000;
+        });
+    }
+    async function wpAutoSuggestedSweep(state, entries) {
+        if (!wpAutoSuggestedActive() || wpHeroRunActive) return;
+        if (wpAutoRegularBusy(state)) return; // 1.7.422
+        const now = Date.now();
+        const sent = wpAutoSuggestedSent();
+        state.sugTry = state.sugTry || {};
+        state.sugNone = state.sugNone || {};
+        Object.keys(state.sugTry).forEach(function(id) { if (now - Number(state.sugTry[id]) > 6 * 3600000) { delete state.sugTry[id]; delete state.sugNone[id]; } });
+        const maxHours = wpAutoSuggestedHours();
+        const open = function(entry) {
+            const item = entry.item, timing = entry.timing;
+            if (!item || sent[item.id] || ['closed', 'inflight', 'approved', 'queued', 'gone', 'yours'].indexOf(item.status) >= 0) return false;
+            if (now - Number(state.sugTry[item.id] || 0) < 15 * 60000) return false;
+            if (!item.city || !wpLooksLikeCityName(item.city)) return false;
+            // 1.7.338: at Final BC time too — suggested comes first, then heroes, then Final BC
+            if (!timing || !Number.isFinite(timing.tbo) || timing.tbo <= 0) return false;
+            if (maxHours > 0 && timing.tbo > maxHours * 60) return false; // 1.7.369
+            const touched = wpUserTouchedAt(item.id);
+            return !(touched && now - touched < 10 * 60000);
+        };
+        const due = entries.filter(open).sort(function(a, b) { return a.timing.tbo - b.timing.tbo; });
+        const first = due[0];
+        if (!first) return;
+        const cityKey = wpNormalizeCityKey(first.item.city);
+        const city = first.item.city;
+        // up to 8 read, up to 5 sent (ones that turn out noted / assigned don't take a place)
+        const group = due.filter(function(entry) { return wpNormalizeCityKey(entry.item.city) === cityKey; }).slice(0, 8);
+        const going = [];
+        const byPhone = {};
+        for (const entry of group) {
+            if (going.length >= 5) break;
+            const item = entry.item;
+            state.sugTry[item.id] = now;
+            let data = null;
+            try { data = await wpFetchTransferCrmDetails(item.path, true); } catch (_) {}
+            if (!data) continue;
+            if (data.cancelled || data.assigned) { wpAutoSuggestedMark(item.id, data.cancelled ? 'cancelled' : 'assigned'); continue; }
+            const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+            const noted = tasks.find(function(task) { return wpNoteSaysSuggested(task && task.note) || /\bfinal\s*bc\b/i.test(String(task && task.note || '')); });
+            if (noted) { wpAutoSuggestedMark(item.id, 'note already there'); continue; }
+            if (!wpHeroDetailsText(data, city)) continue;
+            let list = [];
+            try { list = await wpFetchSuggestedDrivers(item.path, true) || []; } catch (_) { continue; }
+            // 1.7.373: rotation — drivers wlcm sent to suggested in the last 3 h
+            // go to the back (longest ago first), so a city's other suggested
+            // drivers get the next ones instead of always the top 5.
+            const fit = wpSugRotate(list.filter(function(person) { return person && person.phone; })).slice(0, 5);
+            if (!fit.length) {
+                // suggestions can come later: tried again in 15 minutes, said once
+                if (!state.sugNone[item.id]) wpDashLog('wlcm: ' + item.label + ' (' + city + ') — no suggested drivers with WhatsApp yet, not sent to suggested (tries again)');
+                state.sugNone[item.id] = now;
+                continue;
+            }
+            fit.forEach(function(person) {
+                if (!byPhone[person.phone]) byPhone[person.phone] = { person: person, list: [] };
+                byPhone[person.phone].list.push(data);
+            });
+            going.push({ row: entry.row, item: item, data: data, fit: fit, tbo: entry.timing.tbo });
+        }
+        // re-checked after the reads: another send may have started meanwhile
+        if (!going.length || wpHeroRunActive || !wpAutoSuggestedActive()) return;
+        // 1.7.422: new regular work came in during the reads — those go first; these are tried again next round
+        if (wpAutoRegularBusy(state)) { going.forEach(function(one) { delete state.sugTry[one.item.id]; }); return; }
+        const hm = function(minutes) { const value = Math.max(0, Math.round(Number(minutes) || 0)); return Math.floor(value / 60) + ':' + String(value % 60).padStart(2, '0'); };
+        going.forEach(function(one) {
+            const row = one.row, item = one.item, data = one.data, fit = one.fit;
+            const untagged = (Array.isArray(data.tasks) ? data.tasks : []).length === 0;
+            wpAutoSuggestedMark(item.id, 'sent');
+            try {
+                if (row && typeof row.__wpQuickWorkflow === 'function') {
+                    row.__wpQuickWorkflow({ priceIncrease: '', raiseMessage: '', customMessage: 'sent to suggested', needsEm: untagged, broadcastMode: '' });
+                } else {
+                    const noteUrl = new URL(item.path, window.location.href);
+                    noteUrl.searchParams.set('wpCityTaskBatchId', 'suggested_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7));
+                    noteUrl.searchParams.set('wpCityTaskIndex', '0');
+                    noteUrl.searchParams.set('wpCityTaskCustomMessage', 'sent to suggested');
+                    noteUrl.searchParams.set('wpCityTaskNeedsEm', untagged ? '1' : '0');
+                    noteUrl.searchParams.set('wpCityTaskRaiseMessage', '');
+                    noteUrl.searchParams.set('wpCityPriceIncrease', '');
+                    noteUrl.searchParams.set('wpAutoRefresh', 'off');
+                    wpExtensionOpenInTab(noteUrl.toString(), { active: false, insert: true, setParent: true });
+                }
+            } catch (_) {}
+            try { wpOutcomeTrack(item.path, { city: city, action: 'suggested' }); } catch (_) {}
+            wpDashLog('wlcm: ' + item.label + ' (' + city + ') — ' + hm(one.tbo) + ' to pickup → sent to ' + fit.length + ' suggested driver' + (fit.length === 1 ? '' : 's') + ': ' + fit.map(function(person) { return person.name; }).join(', ') + ' · note "sent to suggested"' + (going.length > 1 ? ' (together with ' + (going.length - 1) + ' more of ' + city + ')' : ''));
+            try { wpSuggestAdd({ id: item.id, label: item.label, city: city, partner: '', what: 'sent to ' + fit.length + ' suggested driver' + (fit.length === 1 ? '' : 's'), answer: 'Yes', by: 'wlcm', final: false, result: 'done' }); } catch (_) {}
+        });
+        const people = Object.keys(byPhone).map(function(phone) {
+            const entry = byPhone[phone];
+            return { name: entry.person.name, phone: entry.person.phone, car: entry.person.car, text: wpHeroGroupText(entry.list, city) };
+        });
+        const labels = going.map(function(one) { return one.item.label; }).join(' + ');
+        wpSugRotateMark(people.map(function(person) { return person.phone; }));
+        wpSendToPeople(people, city, people[0].text, 'Suggested ' + city + ' ' + labels, 'Driver').catch(function() {});
+    }
+
     var wpCmdBusy = false;
 
-    function wpCmdToday() {
-        const now = new Date();
-        const pad = function(value) { return String(value).padStart(2, '0'); };
-        return now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
-    }
-
-    // The model's JSON → a checked command, or null.
-    function wpCmdParse(text) {
-        const clean = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?/gi, '');
-        const start = clean.indexOf('{');
-        const end = clean.lastIndexOf('}');
-        if (start < 0 || end <= start) return null;
-        let raw = null;
-        try { raw = JSON.parse(clean.slice(start, end + 1)); } catch (_) { return null; }
-        if (!raw || typeof raw !== 'object') return null;
-        const word = function(value) { return value === null || value === undefined ? '' : String(value).replace(/\s+/g, ' ').trim(); };
-        const action = /^(raise|bc|final_bc)$/.test(word(raw.action)) ? word(raw.action) : 'unknown';
-        const percent = Number(raw.percent);
-        const date = /^\d{4}-\d{2}-\d{2}$/.test(word(raw.date)) ? word(raw.date) : '';
-        const car = /^(sedan|minivan|minibus)$/i.test(word(raw.car)) ? word(raw.car).toLowerCase() : '';
-        return {
-            action: action,
-            percent: Number.isFinite(percent) && raw.percent !== null && percent > 0 && percent <= 100 ? percent : null,
-            dctc: raw.dc_equals_tc === true,
-            also: /^(bc|final_bc)$/.test(word(raw.also)) ? word(raw.also) : 'none',
-            city: word(raw.city),
-            partner: word(raw.partner).toLowerCase(),
-            date: date,
-            car: car,
-            onlyUntagged: raw.only_untagged === true
-        };
-    }
-
-    // The date is worked out here, not by the model (it dropped "on
-    // saturday" in testing). Returns { date:'YYYY-MM-DD' } , { date:'' } when
+    // Returns { date:'YYYY-MM-DD' } , { date:'' } when
     // no date is mentioned, or { error } when one is mentioned but unclear.
     function wpCmdDateFromText(typed) {
         const text = ' ' + String(typed || '').toLowerCase() + ' ';
@@ -24634,162 +26534,6 @@ async function wpTransferAssistantExtensionEnabled() {
         if (/\b(the\s+)?\d{1,2}(st|nd|rd|th)\b/.test(text)) return { error: 'I could not tell which month you mean — say e.g. "13 october"' };
         if (/\b(next week|this week|weekend|yesterday)\b/.test(text)) return { error: 'I can only do one exact day — say e.g. "tomorrow", "saturday" or "13 october"' };
         return { date: '' };
-    }
-
-    // Nothing the model says is taken on trust: every part of the command
-    // must be in what you actually typed. Returns '' or the reason to stop.
-    function wpCmdCheck(command, typed) {
-        const text = String(typed || '').toLowerCase();
-        const flat = text.replace(/[\s.]/g, '');
-        // 1.7.277: "in today's" = the Today section only (and not a date)
-        command.section = wpSaysTodaySection(typed) ? 'today' : '';
-        const when = wpCmdDateFromText(wpWithoutTodaySection(typed));
-        if (when.error) return when.error;
-        command.date = when.date;
-        // "also BC / Final BC" only when you wrote it.
-        if (command.also === 'bc' && !/\b(bc|broadcast)\b/.test(text)) command.also = 'none';
-        if (command.also === 'final_bc' && !/\bfinal\b/.test(text)) command.also = 'none';
-        if (command.also === 'bc' && /\bfinal\b/.test(text)) command.also = 'final_bc';
-        if (command.action === 'final_bc' && !/\bfinal\b/.test(text)) return 'I read that as Final BC but you did not write "final" — say it again more plainly';
-        if (command.action === 'bc' && !/\b(bc|broadcast)\b/.test(text)) return 'I read that as BC but you did not write "BC" — say it again more plainly';
-        if (command.action === 'raise') {
-            command.dctc = /dc\s*=\s*tc|dctc|\bdc equals? tc\b/.test(text);
-            if (!command.dctc) {
-                const numbers = (text.match(/\d+(?:[.,]\d+)?(?=\s*(?:%|percent|per cent))/g) || []).map(function(value) { return parseFloat(value.replace(',', '.')); });
-                if (numbers.length !== 1) return 'say the raise as one percentage, e.g. "raise 15%"';
-                command.percent = numbers[0];
-                if (!(command.percent > 0 && command.percent <= 50)) return 'a raise of ' + command.percent + '% is outside what I will do (1–50%)';
-            } else {
-                command.percent = null;
-            }
-        }
-        if (command.city && text.indexOf(command.city.toLowerCase()) < 0) return 'I am not sure about the city ("' + command.city + '" is not in what you typed)';
-        if (command.partner) {
-            const partnerFlat = command.partner.replace(/[\s.]/g, '').replace(/com$/, '');
-            if (partnerFlat.length < 3 || flat.indexOf(partnerFlat) < 0) command.partner = '';
-        }
-        if (/\b(airbnb|booking)\b/.test(text) && !command.partner) command.partner = /airbnb/.test(text) ? 'airbnb' : 'booking';
-        if (command.car && !new RegExp('\\b(' + (command.car === 'sedan' ? 'sedans?' : command.car === 'minivan' ? 'mini ?vans?|mvs?' : 'mini ?bus(?:es)?') + ')\\b').test(text)) command.car = '';
-        if (command.onlyUntagged && !/untagged|no tag|not tagged|without (a )?tag/.test(text)) command.onlyUntagged = false;
-        if (!command.city && !command.partner && !command.date && !command.car && !command.onlyUntagged && !command.section) return 'that would touch every transfer on the page — name a city, partner, date or car';
-        return '';
-    }
-
-    function wpCmdRowDate(row) {
-        const cell = row.querySelector(':scope > td.date');
-        const match = String(cell ? cell.textContent : '').match(/(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?\s+(\d{4})/);
-        if (!match) return '';
-        const month = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(match[2].toLowerCase());
-        if (month < 0) return '';
-        return match[3] + '-' + String(month + 1).padStart(2, '0') + '-' + String(match[1]).padStart(2, '0');
-    }
-
-    // Transfers on this page that fit the command's filters.
-    function wpCmdMatches(command) {
-        const wantedCity = command.city ? wpNormalizeCityKey(command.city) : '';
-        const seen = new Set();
-        // 1.7.277: only the rows of the Today section
-        let todayRows = null;
-        if (command.section === 'today') { try { const table = wpTodayFindTable(wpTodayFindHeading()); todayRows = table ? new Set(Array.from(table.querySelectorAll(':scope > tbody > tr'))) : new Set(); } catch (_) { todayRows = new Set(); } }
-        return Array.from(document.querySelectorAll('table.transfers > tbody > tr')).map(function(row) {
-            if (todayRows && !todayRows.has(row)) return null;
-            if (row.classList.contains('wp-rx-detail') || !row.querySelector(':scope > td')) return null;
-            const path = wpRowCrmPath(row);
-            if (!path || seen.has(path)) return null;
-            let city = '';
-            try { const cityCell = getCityCell(row); city = cityCell ? wpNormalizeDetailText(cityCell.textContent) : ''; } catch (_) {}
-            const partnerCell = getPartnerCell(row);
-            const partner = partnerCell ? String(partnerCell.textContent || '').replace(/\s+/g, ' ').trim() : '';
-            const date = wpCmdRowDate(row);
-            const carCell = row.querySelector(':scope > td.wp-car-cell');
-            const car = carCell ? String(carCell.textContent || '').trim() : '';
-            const link = row.querySelector('a[href*="/admin/transfers/"]');
-            const dateCell = row.querySelector(':scope > td.date');
-            if (wantedCity && wpNormalizeCityKey(city) !== wantedCity) return null;
-            if (command.partner && partner.toLowerCase().replace(/[\s.]/g, '').indexOf(command.partner.replace(/[\s.]/g, '').replace(/com$/, '')) < 0) return null;
-            if (command.date && date !== command.date) return null;
-            if (command.car && wpEmCarClass(car) !== wpEmCarClass(command.car)) return null;
-            if (command.onlyUntagged && !row.querySelector('.wp-transfer-tag-no-tag')) return null;
-            seen.add(path);
-            return {
-                row: row, path: path, city: city, partner: partner, car: car, date: date,
-                label: (link ? String(link.textContent || '').trim() : '') || ('#' + wpOutcomeId(path)),
-                when: String(dateCell ? dateCell.textContent : '').replace(/\s+/g, ' ').trim().slice(0, 28)
-            };
-        }).filter(Boolean);
-    }
-
-    function wpCmdDescribe(command, withBc) {
-        const what = command.action === 'raise'
-            ? (command.dctc ? 'set DC = TC' : 'raise to +' + command.percent + '% in total (minus what is already raised)') +
-                (withBc === 'bc' ? ' + send to BC' : withBc === 'final_bc' ? ' + FINAL BC' : ', save — no BC')
-            : command.action === 'bc' ? 'send to BC (note "sent to BC and Group")' : 'send to FINAL BC (note "sent to suggested / final BC")';
-        const filters = [];
-        if (command.partner) filters.push(command.partner);
-        if (command.city) filters.push(command.city);
-        if (command.section === 'today') filters.push('Today section');
-        if (command.date) filters.push(command.date);
-        if (command.car) filters.push(command.car);
-        if (command.onlyUntagged) filters.push('no tag only');
-        return what + ' — ' + (filters.length ? filters.join(' · ') : 'ALL transfers on this page');
-    }
-
-    // The confirmation card. Resolves to '' (cancel) or 'none' | 'bc' | 'final_bc'.
-    function wpCmdConfirm(typed, command, matches) {
-        return new Promise(function(resolve) {
-            wpDirectorCardStyles();
-            const old = document.getElementById('wp-director-card');
-            if (old) old.remove();
-            const card = document.createElement('div');
-            card.id = 'wp-director-card';
-            const add = function(tag, cls, text, parent) {
-                const node = document.createElement(tag);
-                if (cls) node.className = cls;
-                if (text !== undefined && text !== null) node.textContent = text;
-                (parent || card).appendChild(node);
-                return node;
-            };
-            const finish = function(answer) { wpDirector.answer = null; card.remove(); resolve(answer); };
-            wpDirector.answer = function() { finish(''); };
-            const top = add('div', 'dc-top');
-            const badge = add('span', 'dc-badge', 'YOUR INSTRUCTION', top);
-            badge.style.background = '#c9a3ff';
-            badge.style.color = '#1c0f33';
-            const close = add('span', 'dc-x', '×', top);
-            close.addEventListener('click', function(event) { event.preventDefault(); event.stopPropagation(); finish(''); });
-            add('div', 'dc-why', '“' + typed + '”');
-            add('div', 'dc-q', 'I understood: ' + wpCmdDescribe(command, command.action === 'raise' ? command.also : command.action));
-            const box = add('div', 'dc-box dc-whybox');
-            add('div', 'dc-cap', matches.length + ' TRANSFER' + (matches.length === 1 ? '' : 'S') + ' ON THIS PAGE MATCH', box);
-            matches.slice(0, 14).forEach(function(match) {
-                const line = add('div', 'dc-note', null, box);
-                add('span', 'dc-dot', '›', line);
-                line.appendChild(document.createTextNode(match.label + ' · ' + match.city + (match.partner ? ' · ' + match.partner : '') + (match.car ? ' · ' + match.car : '') + ' · ' + match.when));
-            });
-            if (matches.length > 14) add('div', 'dc-by', '+' + (matches.length - 14) + ' more', box);
-            add('div', 'dc-why', 'They run one at a time. Each one is read again first: assigned or cancelled ones are skipped, and a raise only adds what is missing.');
-            const buttons = add('div', 'dc-buttons');
-            const button = function(label, cls, answer) {
-                const node = add('button', 'dc-btn ' + cls, label, buttons);
-                node.type = 'button';
-                node.addEventListener('click', function(event) { event.preventDefault(); event.stopPropagation(); finish(answer); });
-            };
-            if (command.action === 'raise') {
-                if (command.also === 'none') {
-                    button('Raise only (' + matches.length + ')', 'dc-yes', 'none');
-                    button('Raise + BC (' + matches.length + ')', 'dc-no', 'bc');
-                } else {
-                    button('Yes, do it (' + matches.length + ')', 'dc-yes' + (command.also === 'final_bc' ? ' is-final' : ''), command.also);
-                }
-            } else {
-                button('Yes, do it (' + matches.length + ')', 'dc-yes' + (command.action === 'final_bc' ? ' is-final' : ''), command.action);
-            }
-            const links = add('div', 'dc-links');
-            const cancel = add('span', 'dc-link', 'Cancel', links);
-            cancel.addEventListener('click', function(event) { event.preventDefault(); event.stopPropagation(); finish(''); });
-            add('div', 'dc-bar');
-            document.body.appendChild(card);
-        });
     }
 
     // ---- Rules typed in the Terminal (1.7.226) ----
@@ -24843,24 +26587,6 @@ async function wpTransferAssistantExtensionEnabled() {
         try { scan(CITY_PRICE_INCREASES); } catch (_) {}
         return best;
     }
-    // A city that is not in the EM Project list: the local model picks it
-    // out, and it only counts when it is in what you typed.
-    async function wpRuleCityAsk(typed) {
-        const cfg = wpAiConfig();
-        if (!cfg.on) return '';
-        const reply = await wpAiSend({
-            type: 'WP_AI_ASK', url: cfg.url, model: cfg.model,
-            messages: [
-                { role: 'system', content: 'From the sentence, give the name of the city it is about. Reply with JSON only: {"city": string or null}. Use null when no city is named. Booking.com and Airbnb are companies, not cities.' },
-                { role: 'user', content: typed }
-            ]
-        });
-        if (!reply || !reply.ok) return '';
-        let raw = null;
-        try { const clean = String(reply.text).replace(/<think>[\s\S]*?<\/think>/gi, ''); raw = JSON.parse(clean.slice(clean.indexOf('{'), clean.lastIndexOf('}') + 1)); } catch (_) {}
-        const city = raw && raw.city ? wpNormalizeCityKey(raw.city) : '';
-        return city && city.length >= 3 && !/booking|airbnb/.test(city) && String(typed).toLowerCase().indexOf(city) >= 0 ? city : '';
-    }
     // Every EM Project city named in the text, in the order they are said
     // (the longer name wins: "new york", not "york").
     function wpRuleCitiesIn(typed) {
@@ -24894,10 +26620,6 @@ async function wpTransferAssistantExtensionEnabled() {
         const except = wpRuleCitiesIn(rest);
         const all = /\b(all|every|any)\s+(the\s+)?(other\s+)?(cities|city|transfers?|partners?|of them)\b|\beverywhere\b|\beverything\b|\beverybody\b|\ball\s*$/.test(main);
         let known = true;
-        if (!cities.length && !partners.length && !all) {
-            const asked = await wpRuleCityAsk(main);
-            if (asked) { cities = [asked]; known = false; }
-        }
         const scopes = [];
         const one = function(partner, city) {
             scopes.push({ city: city, cityName: city ? wpRuleCityName(city) : '', partner: partner, all: !partner && !city, except: city ? [] : except, exceptPartners: partner ? [] : exceptPartners });
@@ -25020,8 +26742,8 @@ async function wpTransferAssistantExtensionEnabled() {
         });
         let name = key;
         if (!key) {
-            const city = wpRuleCityIn(plain) || await wpRuleCityAsk(plain);
-            if (!city) return { error: 'I could not tell which city that is for' + (wpAiConfig().on ? '' : ' (a city I do not know yet needs 🧠 AI on)') + '. Say e.g. "the whatsapp group for bucharest is https://chat.whatsapp.com/…"' };
+            const city = wpRuleCityIn(plain);
+            if (!city) return { error: 'I could not tell which city that is for. Say e.g. "the whatsapp group for bucharest is https://chat.whatsapp.com/…"' };
             name = city.replace(/(^|[\s-])([a-zà-ɏ])/g, function(all, gap, letter) { return gap + letter.toUpperCase(); });
             key = name;
         }
@@ -25149,14 +26871,14 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         if (intent === 'forgetall') {
             if (!list.length) { wpDashLog('📘 There are no rules to forget.'); return true; }
-            const ok = await wpRuleConfirm(typed, 'Forget all ' + list.length + ' of your rules?', list.slice(0, 8).map(wpRuleText).concat(['mod goes back to Booking.com +20%, Airbnb +10% and EM Project.']), 'Forget all (' + list.length + ')');
+            const ok = await wpRuleConfirm(typed, 'Forget all ' + list.length + ' of your rules?', list.slice(0, 8).map(wpRuleText).concat(['wlcm goes back to Booking.com +20%, Airbnb +10% and EM Project.']), 'Forget all (' + list.length + ')');
             if (ok) { wpRulesSave([]); wpDashLog('📘 All your rules were forgotten.'); } else wpDashLog('Nothing changed.');
             return true;
         }
         const scope = await wpRuleScope(typed);
         if (scope.error) { wpDashLog('📘 Not done: ' + scope.error, 'warn'); return true; }
         if (!scope.scopes.length) {
-            wpDashLog('📘 Not done: I could not tell which city or partner the rule is for' + (wpAiConfig().on ? '' : ' (a city outside the EM Project list needs 🧠 AI on)') + '. Say e.g. "new york for booking.com is 10%", or "all cities".', 'warn');
+            wpDashLog('📘 Not done: I could not tell which city or partner the rule is for. Say e.g. "new york for booking.com is 10%", or "all cities".', 'warn');
             return true;
         }
         const sameScope = function(rule, where) {
@@ -25186,14 +26908,14 @@ async function wpTransferAssistantExtensionEnabled() {
         const lines = [];
         if (kind === 'note') {
             base.note = wpRuleQuoted(typed).slice(0, 120);
-            lines.push('Written as a note on every transfer mod sends for these, together with its own note. Nothing is sent that would not be sent anyway.');
+            lines.push('Written as a note on every transfer wlcm sends for these, together with its own note. Nothing is sent that would not be sent anyway.');
         } else if (kind === 'finaldue') {
             base.minutes = wpRuleDueMinutes(text);
             if (!(base.minutes >= 30 && base.minutes <= 720)) return stop('a Final BC time between 0:30 and 12:00 to pickup, please — e.g. "final bc for booking.com at 3 hours".');
-            lines.push('mod sends Final BC once the time to pickup is at or under this. Built in: Booking.com 3:10, others 2:10 (2:40 for airport / port / train drop-offs).');
-            lines.push('Only mod\'s timing changes — the colours of the TBO column stay as they are.');
+            lines.push('wlcm sends Final BC once the time to pickup is at or under this. Built in: Booking.com 3:10, others 2:10 (2:40 for airport / port / train drop-offs).');
+            lines.push('Only wlcm\'s timing changes — the colours of the TBO column stay as they are.');
         } else if (kind === 'skip') {
-            lines.push('mod does nothing with these: no tag, no raise, no BC, no Final BC, and no question. You can still work on them yourself.');
+            lines.push('wlcm does nothing with these: no tag, no raise, no BC, no Final BC, and no question. You can still work on them yourself.');
         } else if (kind === 'floor') {
             const margin = /\bmargins?\b/.test(text) ? (text.match(/\d+(?:[.,]\d+)?/) || [])[0] : '0';
             base.limit = parseFloat(String(margin).replace(',', '.'));
@@ -25241,7 +26963,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (/\bfinal\b/.test(text) && kind !== 'finaldue') base.when = 'final';
         else if (base.onlyFinal) base.when = 'final';
         else if (/\b(normal|first|regular)\s+(bc|broadcast)\b/.test(text)) base.when = 'normal';
-        if (base.when === 'final' && !base.onlyFinal) lines.push('Only when mod sends Final BC. A normal BC is not touched by this rule.');
+        if (base.when === 'final' && !base.onlyFinal) lines.push('Only when wlcm sends Final BC. A normal BC is not touched by this rule.');
         if (base.when === 'normal') lines.push('Only for a normal BC. At Final BC this rule does not count.');
         if (Object.keys(said.cond).length) base.cond = said.cond;
         if (todaySection) { base.section = 'today'; lines.push('Only for the transfers in the Today section — not Tomorrow and not the 2-4 days page.'); }
@@ -25287,7 +27009,7 @@ async function wpTransferAssistantExtensionEnabled() {
         wpRulesSave(next);
         made.forEach(function(rule) { wpDashLog('📘 Rule saved: ' + wpRuleText(rule)); });
         try { wpRulesWindow(true); } catch (_) {}
-        wpDashLog('📘 ' + next.length + ' rule' + (next.length === 1 ? '' : 's') + ' in mod\'s memory ("show rules" lists them).');
+        wpDashLog('📘 ' + next.length + ' rule' + (next.length === 1 ? '' : 's') + ' in wlcm\'s memory ("show rules" lists them).');
         return true;
     }
 
@@ -25296,235 +27018,17 @@ async function wpTransferAssistantExtensionEnabled() {
         if (!typed || wpCmdBusy) return;
         // (A WhatsApp invite link is not written out in the log.)
         wpDashLog('🗣 You: ' + typed.replace(/(chat\.whatsapp\.com\/(?:invite\/)?[A-Za-z0-9]{4})[A-Za-z0-9]+/gi, '$1…'));
-        // A sentence about a WhatsApp link (1.7.227) or about rules
-        // (1.7.226) is not an order on transfers.
-        // Anything that is not a plain order (1.7.228) is a conversation:
-        // the local AI answers, and may hand back one sentence to carry out.
-        // The AI has just asked you something ("which city, how many
-        // percent?"): what you type next is your answer to it.
-        const answering = Date.now() - wpChatAskedAt < 180000;
-        wpChatAskedAt = 0;
-        // Your answer together with what you said before it may already be
-        // a whole rule ("make booking cheaper just for today" + "new york,
-        // 10 percent"): then it is read by the fixed rules, not by the model.
-        const before = answering && wpChatTurns.length ? wpChatTurns[wpChatTurns.length - 1].you : '';
-        const whole = before ? before + ' ' + typed : '';
-        if (whole && !wpLinkIntent(typed) && wpRuleIntent(whole) === 'set' && /\d+(?:[.,]\d+)?\s*(?:%|percent|per cent)|\b(never raise|no raise|do not raise|don'?t raise)\b/i.test(whole)) {
-            wpCmdBusy = true;
-            wpDashSetBusy(true);
-            try { wpChatTurns.push({ you: typed.slice(0, 300), ai: '(made into a rule)' }); await wpRuleCommand(whole); }
-            catch (error) { wpDashLog('Terminal error — ' + (error && error.message || error), 'error'); }
-            finally { wpCmdBusy = false; wpDashSetBusy(false); }
+        // A sentence about a WhatsApp link (1.7.227) or about rules (1.7.226).
+        const special = wpLinkIntent(typed) ? wpLinkCommand : wpRuleIntent(typed) ? wpRuleCommand : null;
+        if (!special) {
+            wpDashLog('Not understood. Here you can give a rule ("new york for booking.com is 10%", "never raise airbnb in agadir", "show rules") or a WhatsApp group link.', 'warn');
             return;
         }
-        const special = wpLinkIntent(typed) ? wpLinkCommand : answering ? wpChat : wpRuleIntent(typed) ? wpRuleCommand : !wpCmdIsOrder(typed) ? wpChat : null;
-        if (special) {
-            wpCmdBusy = true;
-            wpDashSetBusy(true);
-            try { await special(typed); }
-            catch (error) { wpDashLog('Terminal error — ' + (error && error.message || error), 'error'); }
-            finally { wpCmdBusy = false; wpDashSetBusy(false); }
-            return;
-        }
-        return wpCmdInstruct(typed);
-    }
-    // A plain order on transfers ("raise 15% for airbnb in rome…", "bc all
-    // lisbon transfers"), as opposed to a question or a chat.
-    function wpCmdIsOrder(typed) {
-        const text = String(typed || '').toLowerCase().trim();
-        if (/\?\s*$/.test(text)) return false;
-        if (/^(what|why|how|can|could|should|would|do|does|did|is|are|am|who|when|which|where|tell|explain|hi|hello|hey|thanks|thank|ok|okay|yes|no|i|we|please tell|help)\b/.test(text)) return false;
-        return /\b(raise|bc|broadcast|final)\b|dc\s*=\s*tc/.test(text);
-    }
-
-    // ---- Talking with mod (1.7.228) ----
-    // The local model gets what you typed, the last few lines of the
-    // conversation, the time, your rules and today's hailing counts. It
-    // answers in a sentence or two and may give ONE sentence in the form the
-    // Terminal already understands (a rule, a rule to forget, an order on
-    // transfers). That sentence then goes the usual way — the same checks,
-    // the same card to confirm — so the model never changes anything itself.
-    var wpChatTurns = [];
-    var wpChatAskedAt = 0;
-    function wpChatFacts(typed) {
-        const now = new Date();
-        const lines = ['Now: ' + now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) + ', ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + '.'];
-        lines.push('Built-in raise rules: Booking.com DC + 20%, Airbnb DC + 10%, every other transfer the city\'s EM Project rule. Final BC is the last broadcast before pickup.');
-        const rules = wpRulesLoad();
-        lines.push('The dispatcher\'s own rules: ' + (rules.length ? rules.map(wpRuleText).join('; ') : 'none') + '.');
-        const city = wpRuleCityIn(typed);
-        if (city) {
-            let info = null;
-            try { info = getCityPricingData(city); } catch (_) {}
-            const flat = function(value) { return String(value || '').replace(/\s+/g, ' ').trim(); };
-            if (info) lines.push('EM Project for ' + flat(info.city || city) + ': raise ' + (flat(info.raise) || '?') + (flat(info.howMuch) ? ', ' + flat(info.howMuch) : '') + (flat(info.carType) ? ', car type ' + flat(info.carType) : '') + (flat(info.sku) ? ', condition: ' + flat(info.sku).slice(0, 200) : '') + '.');
-        }
-        try {
-            const today = wpRemoteCmCities().today;
-            if (today && today.cities.length) {
-                lines.push('Transfers still hailing today on this page: ' + today.cities.slice(0, 14).map(function(entry) { return entry.c + ' ' + entry.n + (entry.u ? ' (' + entry.u + ' untagged)' : ''); }).join(', ') +
-                    '. Of all of them: Booking.com ' + today.booking + ', untagged ' + today.untagged + ', at Final BC time ' + today.final + '.');
-            } else lines.push('No transfers are hailing today on this page.');
-        } catch (_) {}
-        return lines;
-    }
-    async function wpChat(typed) {
-        const cfg = wpAiConfig();
-        if (!cfg.on) { wpDashLog('🧠 The local AI is off — turn it on (🧠 AI in this header) to talk with mod. Rules and orders in their plain form still work, e.g. "new york for booking.com is 10% only for today".', 'warn'); return; }
-        const history = wpChatTurns.slice(-3).map(function(turn) { return 'Dispatcher: ' + turn.you + '\nYou: ' + turn.ai; }).join('\n');
-        const reply = await wpAiSend({
-            type: 'WP_AI_ASK', url: cfg.url, model: cfg.model,
-            messages: [
-                { role: 'system', content: 'You are mod, an assistant inside a dispatcher\'s tool for airport transfers. DC = driver cost, TC = traveler cost, BC = broadcast to drivers. Answer the dispatcher briefly and plainly, using ONLY the facts given; if you do not know, say so. Never invent numbers, cities or rules.\n' +
-                    'You cannot change anything yourself. When the dispatcher wants something done, put ONE sentence in "command", in exactly one of these forms (lower case):\n' +
-                    '- a rule: "<city> for booking.com is <N>%" / "<city> for airbnb is <N>%" / "<city> is <N>%" / "booking.com is <N>% everywhere" / "never raise airbnb in <city>"\n' +
-                    '- a rule on top of the usual raise: "extra <N>% dc for booking.com" / "extra <N>% tc for airbnb in <city>" (dc = the % is of the driver cost, tc = of the traveler cost; if they did not say which, ask)\n' +
-                    '- a rule only for the final broadcast: add "at final bc", e.g. "extra <N>% dc for booking.com at final bc"\n' +
-                    '- a rule may also name: a car type ("for minivans"), a time to pickup ("under <N> hours to pickup"), a pickup time ("for night pickups", "between 22:00 and 06:00"), a route ("for airport pickups"), "untagged", repeating days ("every weekend", "every friday"), several partners or cities ("booking.com and airbnb", "rome, milan and naples", "all cities except athens")\n' +
-                    '- a limit: "never above <N>% in total for <who>" / "keep at least <N>% margin for <who>" / "never above dc = tc for <who>" / "no extra if the driver cost has a surge for <who>"\n' +
-                    '- behaviour: "do not touch <who> today" / "final bc for <who> at <H:MM>" / "add the note \\"<text>\\" for <who>"\n' +
-                    '- a time limit may follow a rule: "only for today" / "only for tomorrow" / "for the next <N> hours" / "until <HH:MM>" / "this weekend"\n' +
-                    '- "show rules" / "forget the rule for <city> booking" / "forget all rules"\n' +
-                    '- an order on transfers: "raise <N>% for <partner> transfers in <city> today and send to bc" / "bc all <city> transfers" / "send the untagged <city> transfers to final bc"\n' +
-                    'Use only cities, partners and numbers the dispatcher gave. If something needed is missing (which city? how many percent?), ask for it in "reply" and set "command" to null. For a question or small talk, "command" is null.\n' +
-                    'Never say that something was done or applied: you only propose it, and the dispatcher confirms it on a card. Keep the dispatcher\'s own city, partner, number and time words exactly ("3 hours" stays "for the next 3 hours"; a city they named stays in the sentence).\n' +
-                    'Examples:\n' +
-                    'Dispatcher: put booking at 10% in new york just for today\n' +
-                    '{"reply": "I will set Booking.com in New York to 10% for today only - confirm it on the card.", "command": "new york for booking.com is 10% only for today"}\n' +
-                    'Dispatcher: lower airbnb in rome\n' +
-                    '{"reply": "To how many percent, and for how long?", "command": null}\n' +
-                    'Dispatcher: what do you raise for airbnb?\n' +
-                    '{"reply": "Airbnb is raised by DC + 10% unless you have a rule of your own for it.", "command": null}\n' +
-                    'Dispatcher: forget what i said about lisbon airbnb\n' +
-                    '{"reply": "I will forget your rule for Airbnb in Lisbon.", "command": "forget the rule for lisbon airbnb"}\n' +
-                    'Reply with JSON only: {"reply": "one to three short sentences", "command": string or null}' },
-                { role: 'user', content: wpChatFacts(typed).join('\n') + (history ? '\n\nThe conversation so far:\n' + history : '') + '\n\nDispatcher: ' + typed }
-            ]
-        });
-        if (!reply || !reply.ok) { wpDashLog('🧠 The AI did not answer (' + (reply && reply.error || 'no answer') + ').', 'error'); return; }
-        const clean = String(reply.text || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?/gi, '').trim();
-        let raw = null;
-        try { raw = JSON.parse(clean.slice(clean.indexOf('{'), clean.lastIndexOf('}') + 1)); } catch (_) {}
-        let said = raw && typeof raw === 'object' ? String(raw.reply || '') : clean;
-        said = said.replace(/\s+/g, ' ').trim().slice(0, 500) || 'I have nothing to say to that.';
-        let command = raw && typeof raw === 'object' && raw.command ? String(raw.command).replace(/\s+/g, ' ').trim().slice(0, 200) : '';
-        wpDashLog('🧠 mod: ' + said);
-        wpChatTurns.push({ you: typed.slice(0, 300), ai: said.slice(0, 300) + (command ? ' [command: ' + command + ']' : '') });
-        if (wpChatTurns.length > 6) wpChatTurns.shift();
-        if (!command) { if (/\?\s*$/.test(said)) wpChatAskedAt = Date.now(); return; }
-        // Every number in the sentence must have come from you (now or in
-        // the last lines), never from the model.
-        const recent = typed + ' ' + wpChatTurns.slice(-4).map(function(turn) { return turn.you; }).join(' ');
-        // A partner you did not name is taken out again.
-        if (!/booking/i.test(recent)) command = command.replace(/\b(?:for\s+)?booking(?:\.com|com)?\b/gi, ' ');
-        if (!/air\s?bnb/i.test(recent)) command = command.replace(/\b(?:for\s+)?air\s?bnb\b/gi, ' ');
-        command = command.replace(/\s+/g, ' ').trim();
-        const yours = recent.match(/\d+(?:[.,]\d+)?/g) || [];
-        const invented = (command.match(/\d+(?:[.,]\d+)?/g) || []).filter(function(number) { return yours.indexOf(number) < 0; });
-        if (invented.length) { wpDashLog('🧠 Not done: the AI wanted to use ' + invented.join(', ') + ', which you did not say. Say it again with the number.', 'warn'); return; }
-        const next = wpLinkIntent(command) ? null : wpRuleIntent(command) ? wpRuleCommand : wpCmdIsOrder(command) ? wpCmdInstruct : null;
-        if (!next) { wpDashLog('🧠 (The AI suggested "' + command + '", which is not something the Terminal can carry out.)', 'warn'); return; }
-        wpDashLog('🧠 → ' + command);
-        if (next === wpCmdInstruct) { wpCmdBusy = false; await wpCmdInstruct(command); }
-        else await next(command);
-    }
-
-    // An order on transfers: read by the local model, checked, confirmed on a card, then run.
-    async function wpCmdInstruct(typed) {
-        const cfg = wpAiConfig();
-        if (!cfg.on) { wpDashLog('🧠 The local AI is off — turn it on (🧠 AI in this header) to give instructions', 'warn'); return; }
         wpCmdBusy = true;
         wpDashSetBusy(true);
-        try {
-            const reply = await wpAiSend({
-                type: 'WP_AI_ASK', url: cfg.url, model: cfg.model,
-                messages: [
-                    { role: 'system', content: 'You turn a dispatcher\'s instruction about airport transfers into one JSON command. Today is ' + wpCmdToday() + ' (' + new Date().toLocaleDateString('en-GB', { weekday: 'long' }) + '). DC = driver cost, TC = traveler cost, BC = broadcast. Reply with JSON only, exactly these keys:\n' +
-                        '{"action": "raise" | "bc" | "final_bc" | "unknown" (raise = change the driver cost; bc = only send to broadcast; final_bc = only send to final broadcast; unknown = anything else),\n' +
-                        ' "percent": number or null (the raise in percent),\n' +
-                        ' "dc_equals_tc": true/false (true if they want driver cost equal to traveler cost),\n' +
-                        ' "also": "none" | "bc" | "final_bc" (for a raise: did they ALSO ask to send to broadcast / final broadcast; "none" if not said),\n' +
-                        ' "city": string or null, "partner": string or null (e.g. "airbnb", "booking.com"),\n' +
-                        ' "date": "YYYY-MM-DD" or null (the pickup date they named; null if none),\n' +
-                        ' "car": "sedan" | "minivan" | "minibus" | null,\n' +
-                        ' "only_untagged": true/false (true only if they said untagged / no tag)}\n' +
-                        'Use null when something is not stated. Do not invent filters.' },
-                    { role: 'user', content: typed }
-                ]
-            });
-            if (!reply || !reply.ok) { wpDashLog('🧠 AI: could not read the instruction (' + (reply && reply.error || 'no answer') + ')', 'error'); return; }
-            const command = wpCmdParse(reply.text);
-            if (!command || command.action === 'unknown') {
-                wpDashLog('🧠 AI: I did not understand that as a raise / BC / Final BC instruction. Try e.g. "raise 15% for airbnb transfers in rome on 13 october"', 'warn');
-                return;
-            }
-            const problem = wpCmdCheck(command, typed);
-            if (problem) {
-                wpDashLog('🧠 Not done: ' + problem, 'warn');
-                return;
-            }
-            const matches = wpCmdMatches(command);
-            wpDashLog('🧠 AI understood: ' + wpCmdDescribe(command, command.action === 'raise' ? command.also : command.action) + ' → ' + matches.length + ' on this page');
-            if (!matches.length) {
-                wpDashLog('No transfer on this page matches' + (command.date ? ' — if they are on another tab (e.g. 2-4 days), open that tab and repeat' : ''), 'warn');
-                return;
-            }
-            const choice = await wpCmdConfirm(typed, command, matches);
-            if (!choice) { wpDashLog('Instruction cancelled'); return; }
-            const mode = command.action === 'raise' ? choice : command.action;   // 'none' | 'bc' | 'final_bc'
-            let done = 0;
-            let skipped = 0;
-            let failed = 0;
-            for (let i = 0; i < matches.length; i++) {
-                const match = matches[i];
-                const row = wpAutoRowByPath(match.path) || match.row;
-                const tag = '(' + (i + 1) + '/' + matches.length + ') ' + match.label + ' ' + match.city;
-                let data = null;
-                try { data = await wpFetchTransferCrmDetails(match.path, true); } catch (_) {}
-                if (!data) { failed++; wpDashLog(tag + ' — CRM page did not load, not done', 'error'); continue; }
-                if (data.assigned || data.cancelled) { skipped++; wpDashLog(tag + ' — skip: ' + (data.cancelled ? 'cancelled' : 'assigned to ' + data.assigned)); continue; }
-                let value = '';
-                let raiseNote = '';
-                let customNote = '';
-                if (command.action === 'raise') {
-                    const raise = wpCustomRaiseFor(data, command.dctc ? 'dctc' : command.percent, match.path);
-                    value = raise.value;
-                    if (!value && mode === 'none') { skipped++; wpDashLog(tag + ' — skip: ' + raise.note); continue; }
-                    if (value) {
-                        // No BC: the note must not say "sent to BC, Group".
-                        raiseNote = mode === 'none'
-                            ? (value === 'dctc' ? 'raised to DC = TC' : 'raised to +' + command.percent + '% DC')
-                            : wpGetBatchRaiseTaskMessage(value);
-                    }
-                    wpDashLog(tag + ' — ' + raise.note + (mode !== 'none' ? ' + ' + (mode === 'bc' ? 'BC' : 'FINAL BC') : ''));
-                }
-                if (mode === 'final_bc') customNote = 'sent to suggested / final BC';
-                else if (mode === 'bc' && !value) customNote = 'sent to BC and Group';
-                const untagged = Array.isArray(data.tasks) && data.tasks.length === 0;
-                try { wpUserTouchedSet(wpOutcomeId(match.path)); } catch (_) {}
-                const batchId = wpDirectorStart(match.path, match.city, match.label, {
-                    value: value, note: raiseNote, customMessage: customNote,
-                    needsEm: mode !== 'none' && untagged,
-                    broadcastMode: mode === 'bc' ? 'send' : mode === 'final_bc' ? 'final' : 'none'
-                }, row);
-                const startedAt = Date.now();
-                let result = null;
-                while (!result && Date.now() - startedAt < 180000) {
-                    await new Promise(function(resolve) { setTimeout(resolve, 1000); });
-                    try { result = JSON.parse(localStorage.getItem('wp_batch_result_v1_' + batchId + '_0') || 'null'); } catch (_) {}
-                    if (result && !result.status) result = null;
-                }
-                if (result && result.status === 'done') { done++; wpDashLog('✓ ' + tag + ' — done'); }
-                else if (result && result.status === 'skipped') { skipped++; wpDashLog(tag + ' — the transfer tab skipped it: ' + (result.reason || '')); }
-                else { failed++; wpDashLog(tag + ' — ' + (result ? result.status + ' ' + (result.reason || '') : 'no result from the transfer tab in 3 min — check it'), 'error'); }
-            }
-            wpDashLog((failed ? '' : '✓ ') + 'Instruction finished — ' + done + ' done, ' + skipped + ' skipped' + (failed ? ', ' + failed + ' FAILED' : ''), failed ? 'error' : undefined);
-        } catch (error) {
-            wpDashLog('Instruction error — ' + (error && error.message || error), 'error');
-        } finally {
-            wpCmdBusy = false;
-            wpDashSetBusy(false);
-        }
+        try { await special(typed); }
+        catch (error) { wpDashLog('Terminal error — ' + (error && error.message || error), 'error'); }
+        finally { wpCmdBusy = false; wpDashSetBusy(false); }
     }
 
     // The question card (1.7.182): a compact prompt on the right side of the
@@ -25558,9 +27062,6 @@ async function wpTransferAssistantExtensionEnabled() {
             '#wp-director-card .dc-partner.is-booking{background:#1d4fa8;color:#fff}',
             '#wp-director-card .dc-partner.is-airbnb{background:#ff5a5f;color:#fff}',
             '#wp-director-card .dc-subcap{font-size:10px;letter-spacing:.08em;font-weight:700;color:#8b979e;margin:3px 0 2px}',
-            '#wp-director-card .dc-aipart{margin-top:7px;padding-top:6px;border-top:1px solid rgba(201,163,255,.25)}',
-            '#wp-director-card .dc-aipart .dc-subcap{color:#c9a3ff}',
-            '#wp-director-card .dc-aipart .dc-dot{color:#c9a3ff;font-size:13px}',
             '#wp-director-card .dc-explain{font-size:13.5px;line-height:1.4}',
             '#wp-director-card .dc-why{margin-top:9px;font-size:12.5px;color:#9aa6ad}',
             '#wp-director-card .dc-city{font-size:17px;font-weight:700;color:#e8ecee}',
@@ -25588,17 +27089,11 @@ async function wpTransferAssistantExtensionEnabled() {
             '#wp-director-card .dc-box{margin-top:10px;border-radius:10px;padding:8px 11px 9px}',
             '#wp-director-card .dc-notesbox{background:rgba(255,210,122,.10);border:1px solid rgba(255,210,122,.38);border-left:4px solid #ffd27a;font-size:14px;color:#fff}',
             '#wp-director-card .dc-whybox{background:rgba(143,255,213,.06);border:1px solid rgba(143,255,213,.20);border-left:4px solid #8fffd5;font-size:13px;color:#e8ecee}',
-            '#wp-director-card .dc-aibox{background:rgba(201,163,255,.12);border:1px solid rgba(201,163,255,.40);border-left:4px solid #c9a3ff;font-size:13.5px;color:#eadcff}',
-            '#wp-director-card .dc-aibox.dc-aipart .dc-subcap{color:#c9a3ff;margin:0 0 3px}',
-            '#wp-director-card .dc-aibox.dc-aipart .dc-note{color:#eadcff}',
-            '#wp-director-card .dc-aibox.dc-aipart .dc-explain{color:#eadcff}',
-            '#wp-director-card .dc-aibox .dc-cap{color:#c9a3ff}',
             '#wp-director-card .dc-bookbox{background:rgba(127,208,255,.07);border:1px solid rgba(127,208,255,.26);border-left:4px solid #7fd0ff;font-size:13px;color:#e8ecee}',
             '#wp-director-card .dc-bookbox .dc-cap{color:#7fd0ff}',
             '#wp-director-card .dc-bookbox .dc-note > .dc-by{flex:0 0 auto}',
             '#wp-director-card .dc-bookbox .dc-change{color:#ffd27a;font-size:14px;padding:2px 0}',
             '#wp-director-card .dc-bookbox .dc-change .dc-dot{color:#ffd27a;font-size:13px}',
-            '#wp-director-card .dc-aibox .dc-dot{color:#c9a3ff;font-size:13px}',
             '#wp-director-card .dc-cap{font-size:10.5px;letter-spacing:.09em;font-weight:700;margin-bottom:4px;color:#ffd27a}',
             '#wp-director-card .dc-whybox .dc-cap{color:#8fffd5}',
             '#wp-director-card .dc-note{display:flex;gap:7px;align-items:baseline;padding:1px 0;overflow-wrap:anywhere}',
@@ -25735,7 +27230,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     el('span', 'dc-step ' + cls, text, flow);
                 };
                 if (plan.skip) {
-                    step(extra.booking && extra.booking.key ? 'Check the booking' : 'Nothing to do', 'is-none');
+                    step('Nothing to do', 'is-none');
                 } else {
                     if (plan.needsEm) step('Tag EM', 'is-tag');
                     if (plan.value) step('Raise ' + raiseText, 'is-raise');
@@ -25844,11 +27339,6 @@ async function wpTransferAssistantExtensionEnabled() {
                     if (none) reasons.push(['No raise: ' + none + '.', '#ffd27a']);
                 }
                 if (!plan.skip && plan.suggestion && plan.suggestion.check) reasons.push(['Check this yourself: ' + plan.suggestion.check, '#ffd27a']);
-                // WHY (1.7.225), always in two parts:
-                //   MOD SAW   the facts the rules worked from
-                //   AI EXPLAINS    the local model's own words about this
-                //                  suggestion, plus what it read in the notes
-                //                  and what that changed (1.7.204)
                 // 1.7.256: the rule above every other rule, on Booking.com cards inside 4 hours
                 if (/booking/i.test(String(extra.partner || '')) && Number.isFinite(extra.tbo) && extra.tbo <= 240) reasons.unshift(['Above every other rule: Booking.com is never left unassigned under 2:00 to pickup — Final BC from 3:00 at the latest, auto-cancel at 2:02' + (wpBookingCancelOn() ? '' : ' (the auto-cancel switch is OFF: cancel by hand)') + '.', '#ffd27a']);
                 if (!reasons.length) reasons.push(['Nothing on this transfer stood out.', '']);
@@ -25861,102 +27351,17 @@ async function wpTransferAssistantExtensionEnabled() {
                     reasonLine.appendChild(document.createTextNode(reason[0].replace(/\.\.$/, '.')));
                     if (reason[1]) reasonLine.style.color = reason[1];
                 });
-                const aiRead = extra.ai || null;
-                const aiChanged = !editing && override === null ? (plan.aiDid || []) : [];
-                // 1.7.251: its own purple box under WHY (it used to be the lower half of the WHY box)
-                const aiPart = el('div', 'dc-box dc-aibox dc-aipart', null, card);
-                const aiCap = el('div', 'dc-cap dc-subcap', 'AI EXPLAINS', aiPart);
-                const aiLine = function(text, color, bold, dot) {
-                    const node = el('div', 'dc-note', null, aiPart);
-                    el('span', 'dc-dot', dot || (bold ? '✔' : '›'), node);
-                    const body = el('span', '', text, node);
-                    if (color) node.style.color = color;
-                    if (bold) node.style.fontWeight = '700';
-                    return body;
-                };
-                const explainText = aiLine('', '', false, '🧠');
-                const explainRow = explainText.parentNode;
-                explainRow.classList.add('dc-explain');
-                if (!wpAiConfig().on) {
-                    explainText.textContent = 'AI is off — turn 🧠 AI on in the Terminal to get the explanation.';
-                    explainRow.style.color = '#b9a6d6';
-                } else {
-                    explainText.textContent = 'writing…';
-                    explainRow.style.color = '#b9a6d6';
-                    const willDo = [];
-                    if (plan.skip) willDo.push('nothing' + (extra.booking && extra.booking.key ? ' (only check the booking)' : ''));
-                    else {
-                        if (plan.needsEm) willDo.push('tag EM');
-                        if (plan.value) willDo.push('raise the driver cost ' + raiseText + ' (from ' + money(dc) + ' to ' + money(plan.newDc) + ')');
-                        willDo.push(plan.final ? 'send the FINAL broadcast' : 'send a normal broadcast');
-                    }
-                    wpAiExplain(extra.path || header || city, {
-                        city: city, partner: extra.partner || '', car: data.carType || '', action: willDo.join(', then '),
-                        tc: Number.isFinite(tc) ? money(tc) : '', margin: after ? (after.value < 0 ? 'a loss of ' + money(Math.abs(after.value)) : money(after.value) + ' (' + after.pct + '%)') : '',
-                        saw: reasons.map(function(reason) { return reason[0]; }),
-                        notes: allNotes.slice(0, 4).map(function(note) { return note.text.slice(0, 200); }),
-                        read: aiRead ? [aiRead.summary, aiRead.instruction].filter(Boolean).join(' / ') : ''
-                    }).then(function(result) {
-                        if (!document.body.contains(explainText)) return;
-                        if (result && result.ok) {
-                            explainText.textContent = result.text;
-                            explainRow.style.color = '';
-                            aiCap.textContent = 'AI EXPLAINS · local model · ' + (Math.round(result.ms / 100) / 10) + ' s';
-                        } else {
-                            explainText.textContent = 'not available (' + (result && result.error || 'no answer') + ') — see what mod saw above.';
-                        }
-                    });
-                }
-                if (!aiRead) {
-                    if (extra.aiError) aiLine('the notes were not read (' + extra.aiError + ') — rules only', '#9aa6ad');
-                } else {
-                    aiChanged.forEach(function(text) { aiLine('Changed the plan: ' + text, '#c9a3ff', true); });
-                    if (aiRead.summary && (data.tasks || []).length) aiLine('Notes: ' + aiRead.summary);
-                    if (aiRead.instruction) aiLine('Note says: ' + aiRead.instruction, '#ffd27a');
-                    if (aiRead.final === true && plan.final) aiLine('⚠ The notes may already show Final BC — check before Yes', '#ff9d94');
-                    if (override !== null && aiRead.doNotRaise) aiLine('⚠ A note says not to raise — your Edit raises anyway', '#ff9d94');
-                }
-                // Booking check (1.7.208): what was booked, what the passenger
-                // and the driver note say, and what the AI would change.
+                // What was booked, and what the passenger and the driver note say.
                 const bookingNotes = wpBookingNotes(data);
                 if (bookingNotes.length) {
-                    const check = extra.booking || null;
                     const bookBox = el('div', 'dc-box dc-bookbox', null, card);
-                    el('div', 'dc-cap', 'BOOKING · passenger & driver notes' + (check && check.ms ? ' · AI ' + (Math.round(check.ms / 100) / 10) + ' s' : ''), bookBox);
+                    el('div', 'dc-cap', 'BOOKING · passenger & driver notes', bookBox);
                     el('div', 'dc-by', wpBookingLine(data.booking), bookBox);
                     bookingNotes.forEach(function(note) {
                         const noteLine = el('div', 'dc-note', null, bookBox);
                         el('span', 'dc-by', note.label + ':', noteLine);
                         noteLine.appendChild(document.createTextNode('“' + (note.text.length > 260 ? note.text.slice(0, 258) + '…' : note.text) + '”'));
                     });
-                    if (check && (check.changes.length || check.other)) {
-                        check.changes.forEach(function(change) {
-                            const changeLine = el('div', 'dc-note dc-change', null, bookBox);
-                            el('span', 'dc-dot', '✎', changeLine);
-                            const changeText = el('span', '', null, changeLine);
-                            el('b', '', change.text + (change.soft ? ' ?' : ''), changeText);
-                            if (change.why) el('span', 'dc-by', '  — ' + change.why, changeText);
-                        });
-                        if (check.other) {
-                            const otherLine = el('div', 'dc-note dc-change', null, bookBox);
-                            el('span', 'dc-dot', '✎', otherLine);
-                            otherLine.appendChild(document.createTextNode('Also asks: ' + check.other));
-                        }
-                        const foot = el('div', 'dc-by', 'Change it in the transfer yourself — nothing in the booking is edited for you. ', bookBox);
-                        foot.style.marginTop = '4px';
-                        if (extra.path) {
-                            const open = el('a', 'dc-link', 'Open transfer ↗', foot);
-                            open.href = extra.path;
-                            open.target = '_blank';
-                            open.rel = 'noopener';
-                            open.style.color = '#7fd0ff';
-                            open.addEventListener('click', function(event) { event.stopPropagation(); });
-                        }
-                    } else if (check) {
-                        el('div', 'dc-by', '✓ AI: the notes ask for nothing that differs from the booking', bookBox);
-                    } else if (extra.bookingError) {
-                        el('div', 'dc-by', 'AI not available (' + extra.bookingError + ') — read the notes yourself', bookBox);
-                    }
                 }
                 // The facts, one per line: icon · label · value (1.7.183).
                 const info = el('div', 'dc-info', null, card);
@@ -26054,7 +27459,7 @@ async function wpTransferAssistantExtensionEnabled() {
                         else resolve({ action: 'yes', plan: without, override: 'noraise' });
                     });
                 }
-                button(plan.skip ? (plan.aiDid && plan.aiDid.length ? 'OK, no raise' : extra.booking && extra.booking.key ? 'OK, seen' : 'OK') : 'Not now', 'dc-no', 'no');
+                button(plan.skip ? 'OK' : 'Not now', 'dc-no', 'no');
 
                 // Small links: Edit · Details · Turn off.
                 const links = el('div', 'dc-links', null, card);
@@ -26097,7 +27502,7 @@ async function wpTransferAssistantExtensionEnabled() {
                             render();
                         });
                     }
-                    link('Stop', 'Turn mod off', function() { finish('stop'); });
+                    link('Stop', 'Turn wlcm off', function() { finish('stop'); });
                 }
 
                 // Details (on demand).
@@ -26167,10 +27572,10 @@ async function wpTransferAssistantExtensionEnabled() {
         if (plan.broadcastMode !== 'none') url.searchParams.set('wpCityBroadcastMode', plan.broadcastMode || 'send');
         url.searchParams.set('wpAutoRefresh', 'off');
         try { wpRememberTransferCity(path, city); } catch (_) {}
-        wpNoteLogAdd(path, [plan.needsEm ? 'em' : '', plan.note, plan.customMessage], 'mod');
+        wpNoteLogAdd(path, [plan.needsEm ? 'em' : '', plan.note, plan.customMessage], 'wlcm');
         try { wpOutcomeTrack(path, { city: city, action: 'raise' }); wpOutcomeTrack(path, { city: city, action: 'bc' }); } catch (_) {}
         try { wpDashWatchResults(batchId, [label]); } catch (_) {}
-        wpDashLog('mod: ' + label + ' — no quickbar on this row, BC without the WhatsApp message', 'warn');
+        wpDashLog('wlcm: ' + label + ' — no quickbar on this row, BC without the WhatsApp message', 'warn');
         if (typeof wpExtensionOpenInTab === 'function') wpExtensionOpenInTab(url.toString(), { active: false, insert: true, setParent: true });
         else window.open(url.toString(), '_blank');
         }
@@ -26204,7 +27609,7 @@ async function wpTransferAssistantExtensionEnabled() {
     }
 
     // A yes / no card in the same look.
-    function wpDirectorConfirm(title, lines, yesLabel, countdown) {
+    function wpDirectorConfirm(title, lines, yesLabel, countdown, badgeText) {
         return new Promise(function(resolve) {
             wpDirectorCardStyles();
             const old = document.getElementById('wp-director-card');
@@ -26221,7 +27626,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const finish = function(action) { wpDirector.answer = null; card.remove(); resolve({ action: action }); };
             wpDirector.answer = finish;
             const top = add('div', 'dc-top');
-            const badge = add('span', 'dc-badge', 'A/C OFF', top);
+            const badge = add('span', 'dc-badge', badgeText || 'A/C OFF', top); // 1.7.413: its own badge when asked
             badge.style.background = '#74b8f4';
             badge.style.color = '#04192b';
             add('span', '', title, top);
@@ -26238,7 +27643,7 @@ async function wpTransferAssistantExtensionEnabled() {
             });
             const links = add('div', 'dc-links');
             const stop = add('span', 'dc-link', 'Stop', links);
-            stop.title = 'Turn mod off';
+            stop.title = 'Turn wlcm off';
             stop.addEventListener('click', function(event) { event.preventDefault(); event.stopPropagation(); finish('stop'); });
             const bar = add('div', 'dc-bar');
             if (countdown) add('i', '', null, bar).style.animationDuration = (countdown * 1000) + 'ms';
@@ -26277,9 +27682,13 @@ async function wpTransferAssistantExtensionEnabled() {
     })();
     var wpAutoTicking = false;
     var wpAutoTickAgain = false;
+    var wpAutoTickStartedAt = 0; // 1.7.372
     var wpAutoStarted = false;
 
     function wpAutoMode() {
+        if (WP_NO_AUTO) return 'off';
+        // 1.7.414: wlcm works only where this page's day runs on the CRM pages engine
+        try { if (wpAutoEngine(wpEmPeriod() ? 'later' : 'today') !== 'crm') return 'off'; } catch (_) {}
         let mode = '';
         try { mode = localStorage.getItem(WP_AUTO_MODE_KEY) || ''; } catch (_) {}
         // Shadow mode is gone (1.7.201): on ("ask") or off.
@@ -26342,6 +27751,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // 1.7.265: "Phone notifications" in Controls — off: the phone app still
     // shows everything, but no notification is sent for a new suggestion.
     function wpPhoneNotifyOn() {
+        if (WP_NO_AUTO) return false;
         try { return localStorage.getItem('wp_phone_notify_v1') !== '0'; } catch (_) { return true; }
     }
     // 1.7.265: Full auto works silently — no card on the screen, no sound,
@@ -26371,6 +27781,138 @@ async function wpTransferAssistantExtensionEnabled() {
     // 1.7.244: the Em Hailing pages of later days ("2-4 days", "5-15 days",
     // "16-30 days") have ONE table with its own title. '' on the
     // Today-Tomorrow page.
+    // 1.7.407: Today = every transfer with today's pickup date, Tomorrow = every
+    // transfer with tomorrow's, whichever of the page's lists it sits in (the CRM's
+    // "Today" list can hold tomorrow's early pickups and the other way round).
+    // Later-days pages keep their own list. When a page's dates cannot be read,
+    // the lists decide as before (null).
+    function wpRowDateCell(row) {
+        if (!row) return null;
+        const direct = row.querySelector(':scope > td.date');
+        if (direct) return direct;
+        const table = row.closest('table');
+        const head = table ? (table.querySelector(':scope > thead > tr') || Array.from(table.querySelectorAll('tr')).find(function(tr) { return tr.querySelector(':scope > th'); })) : null;
+        if (!head) return null;
+        const index = Array.from(head.children).findIndex(function(cell) {
+            const name = String(cell.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            return name === 'datetime' || name === 'date time' || name === 'date';
+        });
+        return index >= 0 ? row.children[index] || null : null;
+    }
+    function wpRowPickupDay(row) {
+        const cell = wpRowDateCell(row);
+        const text = String(cell ? (cell.title || cell.textContent) : '').replace(/\s+/g, ' ').trim();
+        if (!text) return '';
+        if (/^today\b/i.test(text)) return 'today';
+        if (/^tomorrow\b/i.test(text)) return 'tomorrow';
+        let date = null;
+        const named = text.match(/(\d{1,2})\s+([A-Za-z]{3,})\.?,?\s+(\d{4})/);
+        const numeric = text.match(/(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})/);
+        const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+        if (named && months.indexOf(named[2].slice(0, 3).toLowerCase()) >= 0) date = new Date(Number(named[3]), months.indexOf(named[2].slice(0, 3).toLowerCase()), Number(named[1]));
+        else if (numeric) date = new Date(Number(numeric[3]), Number(numeric[2]) - 1, Number(numeric[1]));
+        if (!date || isNaN(date.getTime())) return 'unknown';
+        const today = new Date();
+        const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+        if (date.toDateString() === today.toDateString()) return 'today';
+        if (date.toDateString() === tomorrow.toDateString()) return 'tomorrow';
+        return 'other';
+    }
+    // The transfer rows of the page with that pickup day, from every list; null = dates not readable.
+    function wpDayRows(day) {
+        if (wpEmPeriod() || wpIsTransferDetailPage()) return null;
+        const rows = [];
+        document.querySelectorAll('table.transfers').forEach(function(table) {
+            if (!table.getClientRects().length) return;
+            table.querySelectorAll(':scope > tbody > tr').forEach(function(row) {
+                if (row.classList.contains('wp-rx-detail') || !row.querySelector(':scope > td') || !wpRowCrmPath(row)) return;
+                rows.push(row);
+            });
+        });
+        if (!rows.length) return null;
+        const days = rows.map(wpRowPickupDay);
+        if (days.every(function(value) { return value === '' || value === 'unknown'; })) return null;
+        return rows.filter(function(row, index) { return days[index] === day; });
+    }
+
+    // ============================================================
+    // 2-4 DAYS FROM THE TODAY-TOMORROW TAB (1.7.415)
+    // ============================================================
+    // With the switch on (Automations), this tab downloads the CRM's own
+    // "2-4 days" list in the background (about 1-2 s, nothing drawn on the
+    // page) and keeps it off-screen under its own class, so the dashboard code
+    // never treats it as one of its lists. The City Manager reads it as its
+    // "2-4 days" tab and the Ops Hub chain works on it like on Tomorrow.
+    const WP_LATER24_KEY = 'wp_auto_later24_v1';
+    var wpLater24 = { at: 0, job: null };
+    function wpLater24On() {
+        if (wpEmPeriod() || wpIsTransferDetailPage()) return false;
+        try { return localStorage.getItem(WP_LATER24_KEY) === '1'; } catch (_) { return false; }
+    }
+    function wpLater24Set(on) {
+        try { localStorage.setItem(WP_LATER24_KEY, on ? '1' : '0'); } catch (_) {}
+        if (on) wpLater24Ensure(0).then(function(table) { wpDashLog('Automations: 2-4 days list ' + (table ? 'loaded in the background (' + table.querySelectorAll('tbody tr').length + ' transfers)' : 'could not be loaded')); try { wpTodayCityUpdate(); } catch (_) {} });
+        else { const host = document.getElementById('wp-later24-host'); if (host) host.remove(); }
+    }
+    function wpLater24Table() {
+        const host = document.getElementById('wp-later24-host');
+        return host ? host.querySelector('table.wp-later24-table') : null;
+    }
+    function wpLater24Ensure(maxAge) {
+        if (!wpLater24On()) return Promise.resolve(null);
+        if (wpLater24Table() && Date.now() - wpLater24.at < (maxAge === undefined ? 60000 : maxAge)) return Promise.resolve(wpLater24Table());
+        if (wpLater24.job) return wpLater24.job;
+        const url = location.origin + location.pathname + '?em_hailing=true&em_hailing_period=days_2_4&filters%5Bcity%5D=all&filters%5Bdate%5D=';
+        wpLater24.job = fetch(url, { credentials: 'include', headers: { Accept: 'text/html' } })
+            .then(function(response) { return response.ok ? response.text() : ''; })
+            .then(function(html) {
+                if (!html) return wpLater24Table();
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const source = doc.querySelector('table.transfers');
+                if (!source) return wpLater24Table();
+                const table = document.importNode(source, true);
+                table.className = 'wp-later24-table';
+                let host = document.getElementById('wp-later24-host');
+                if (!host) {
+                    host = document.createElement('div');
+                    host.id = 'wp-later24-host';
+                    host.setAttribute('aria-hidden', 'true');
+                    // off-screen but laid out (the reader skips rows that are not drawn)
+                    Object.assign(host.style, { position: 'fixed', left: '-100000px', top: '0', width: '2400px', pointerEvents: 'none' });
+                    document.body.appendChild(host);
+                }
+                host.replaceChildren(table);
+                wpLater24.at = Date.now();
+                return table;
+            })
+            .catch(function() { return wpLater24Table(); })
+            .finally(function() { wpLater24.job = null; });
+        return wpLater24.job;
+    }
+    // The City Manager's "2-4 days" tab, there while the switch is on.
+    function wpLater24TabEnsure(tabs) {
+        tabs = tabs || document.querySelector('#wp-today-city-window .wp-today-city-tabs');
+        if (!tabs) return;
+        let laterTab = tabs.querySelector('button[data-tab="later24"]');
+        if (!wpLater24On()) { if (laterTab) laterTab.remove(); return; }
+        if (laterTab) return;
+        laterTab = document.createElement('button');
+        laterTab.type = 'button';
+        laterTab.dataset.tab = 'later24';
+        laterTab.textContent = '2-4 days';
+        laterTab.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            wpLater24Ensure().then(function() { wpTodayCitySelectedTab = 'later24'; wpTodayCityUpdate(); });
+        });
+        const before = tabs.querySelector('button.wp-cm-auto');
+        tabs.insertBefore(laterTab, before || null);
+    }
+    // the period wording of a City Manager tab
+    function wpTabPeriod(tabName) { return tabName === 'later24' ? '2-4 days' : tabName === 'tomorrow' ? '' : wpEmPeriod(); }
+    window.setTimeout(function() { if (wpLater24On()) wpLater24Ensure(0).then(function() { try { wpTodayCityUpdate(); } catch (_) {} }); }, 3000);
+    window.setInterval(function() { if (wpLater24On()) wpLater24Ensure(90000); }, 30000);
+
     function wpEmPeriod() {
         try {
             const period = new URLSearchParams(window.location.search).get('em_hailing_period') || '';
@@ -26381,6 +27923,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // page never changes today's.
     function wpTodayCityKey(tabName) {
         if (tabName === 'tomorrow') return WP_TOMORROW_CITY_PROGRESS_KEY_V1;
+        if (tabName === 'later24') return WP_TODAY_CITY_PROGRESS_KEY_V3 + '_2_4_days_bg';
         const period = wpEmPeriod();
         return WP_TODAY_CITY_PROGRESS_KEY_V3 + (period ? '_' + period.replace(/[^0-9a-z]+/gi, '_') : '');
     }
@@ -26395,6 +27938,8 @@ async function wpTransferAssistantExtensionEnabled() {
     }
 
     function wpAutoRows() {
+        // 1.7.407: today's pickups, whichever list they are in
+        if (wpTodayFindHeading()) { const byDate = wpDayRows('today'); if (byDate) return byDate; }
         let table = wpTodayFindTable(wpTodayFindHeading());
         // 1.7.245: on a later-days page mod (and the phone) work on that page's table
         if (!table && wpEmPeriod()) table = Array.from(document.querySelectorAll('table.transfers')).find(function(candidate) { return candidate.getClientRects().length > 0; }) || null;
@@ -26409,7 +27954,7 @@ async function wpTransferAssistantExtensionEnabled() {
 
     function wpAutoDescribe(plan) {
         if (plan.final) {
-            return (plan.needsEm ? 'tag EM + ' : '') + (plan.value ? 'raise ' + plan.totalText + ' (DC ' + plan.dc + '€ → ' + plan.newDc + '€) + ' : '') + 'note "sent to suggested / final BC" + FINAL BC';
+            return (plan.needsEm ? 'tag EM + ' : '') + (plan.value ? 'raise ' + plan.totalText + ' (DC ' + plan.dc + '€ → ' + plan.newDc + '€) + ' : '') + 'note "final BC" + FINAL BC';
         }
         if (plan.tagOnly) return 'tag EM + note "' + plan.customMessage + '" + BC';
         return (plan.needsEm ? 'tag EM + ' : '') + 'raise ' + plan.totalText + ' (DC ' + plan.dc + '€ → ' + plan.newDc + '€) + BC';
@@ -26429,7 +27974,7 @@ async function wpTransferAssistantExtensionEnabled() {
 
     function wpAutoPause(reason) {
         try { localStorage.setItem(WP_AUTO_PAUSE_KEY, reason); } catch (_) {}
-        wpDashLog('🤖 mod PAUSED: ' + reason + ' — click the Autopilot button to resume', 'error');
+        wpDashLog('🤖 wlcm PAUSED: ' + reason + ' — click the Autopilot button to resume', 'error');
         wpAutoSound('urgent');
         wpAutoSetButton();
     }
@@ -26470,6 +28015,7 @@ async function wpTransferAssistantExtensionEnabled() {
     const WP_BOOKING_CANCEL_AT = 122;
     const WP_NORMAL_LIMIT = 38;
     function wpBookingCancelOn() {
+        if (WP_NO_AUTO) return false;
         try { return localStorage.getItem('wp_booking_autocancel_v1') === '1'; } catch (_) { return false; }
     }
     // 1.7.294: auto-cancel thresholds — Booking.com 2:00 (cancelled at
@@ -26488,6 +28034,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // 1.7.290: transfers that appeared already under their limit (grey):
     // { first: the TBO when it appeared, at: the TBO it is cancelled at }.
     const WP_TOP_LATE_KEY = 'wp_top_late_v1';
+    const WP_TOP_GRACE_MS = 10 * 60000; // 1.7.336
     function wpTopLateAll() {
         try { const map = JSON.parse(localStorage.getItem(WP_TOP_LATE_KEY) || '{}'); return map && typeof map === 'object' ? map : {}; } catch (_) { return {}; }
     }
@@ -26536,10 +28083,11 @@ async function wpTransferAssistantExtensionEnabled() {
                 sent.result = result.status;
                 try { wpSuggestResult(id, result.status === 'done' ? 'done — cancelled (No Available driver)' : result.status === 'skipped' ? 'skipped — ' + (result.reason || '') : 'failed — ' + (result.reason || 'not cancelled')); } catch (_) {}
                 try { if (result.status === 'done') wpRenderTransferHistory(); } catch (_) {}
+                try { wpHistoryAlertPaint(); } catch (_) {}
             } else if (now - Number(sent.at) > 3 * 60000) {
                 sent.result = 'failed';
                 try { wpSuggestResult(id, 'failed — no result from the transfer tab in 3 min'); } catch (_) {}
-                wpDashLog('mod: ' + (sent.label || '#' + id) + ' — the auto-cancel gave no result in 3 min: check that transfer NOW', 'error');
+                wpDashLog('wlcm: ' + (sent.label || '#' + id) + ' — the auto-cancel gave no result in 3 min: check that transfer NOW', 'error');
             }
         });
         entries.forEach(function(entry) {
@@ -26556,23 +28104,27 @@ async function wpTransferAssistantExtensionEnabled() {
             try { const cell = getAutoCancelCell(entry.row); timer = cell ? parseAutoCancelMinutes(cell.textContent || '') : null; } catch (_) {}
             if (timer !== null && Number.isFinite(timer) && tbo > limit && tbo - timer < limit && !state.acLate[item.id]) {
                 state.acLate[item.id] = now;
-                wpDashLog('mod: ' + item.label + ' (' + item.city + ') — its AutoCancel only runs out at ' + wpTopHm(tbo - timer) + ' to pickup, after the ' + lim.mark, 'warn');
+                wpDashLog('wlcm: ' + item.label + ' (' + item.city + ') — its AutoCancel only runs out at ' + wpTopHm(tbo - timer) + ' to pickup, after the ' + lim.mark, 'warn');
             }
             // 1.7.290: it appeared already under its limit (grey) → not cancelled
             // at once: at 1:00 when it appeared at 1:01–1:59, at 0:30 when under 1:00
             const late = wpTopLateFor(item.id) || (Number.isFinite(item.firstTbo) && item.firstTbo < lim.limit ? wpTopLateSet(item.id, item.firstTbo) : null);
+            // 1.7.336: never auto-cancelled in its first 10 minutes on the list
+            // (one that appeared at 0:25, or at 0:39 for a pickup, was cancelled at once).
+            const firstSeen = Number(item.firstSeen) || now;
+            const graceLeft = Math.max(0, Math.ceil((firstSeen + WP_TOP_GRACE_MS - now) / 60000));
             // 1.7.296: shown before it happens — "cancel in 12m" on the row's
             // AutoCancel cell (last 30 min), and a Terminal line 10 min before.
             try {
                 const cancelTbo = late ? Number(late.at) : lim.cancelAt;
-                const cancelIn = Math.round(tbo - cancelTbo);
+                const cancelIn = Math.max(Math.round(tbo - cancelTbo), graceLeft);
                 const willCancel = wpBookingCancelOn() && !wpRuleExceptionFor('autocancel', item.city) && !state.topCancel[item.id] && (late || tbo >= lim.limit - 3);
                 if (willCancel && cancelIn <= 30 && cancelIn >= 0) {
                     entry.row.dataset.wpCancelAt = String(now + cancelIn * 60000);
                     entry.row.dataset.wpCancelSeen = String(now);
                     if (cancelIn > 0 && cancelIn <= 10 && !state.topTold['soon_' + item.id]) {
                         state.topTold['soon_' + item.id] = now;
-                        wpDashLog('mod: ' + item.label + ' (' + item.city + ') — ' + lim.kind + ', will be auto-cancelled in ' + cancelIn + ' min (at ' + wpTopHm(cancelTbo) + ' to pickup) if still unassigned', 'warn');
+                        wpDashLog('wlcm: ' + item.label + ' (' + item.city + ') — ' + lim.kind + ', will be auto-cancelled in ' + cancelIn + ' min (at ' + wpTopHm(cancelTbo) + ' to pickup) if still unassigned', 'warn');
                     }
                 }
             } catch (_) {}
@@ -26580,18 +28132,25 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (tbo > late.at) {
                     if (!state.topTold['late_' + item.id]) {
                         state.topTold['late_' + item.id] = now;
-                        wpDashLog('mod: ' + item.label + ' (' + item.city + ') — appeared at ' + wpTopHm(late.first) + ' to pickup, already under the ' + lim.mark + ': given time — auto-cancelled at ' + wpTopHm(late.at) + ' if still unassigned');
+                        wpDashLog('wlcm: ' + item.label + ' (' + item.city + ') — appeared at ' + wpTopHm(late.first) + ' to pickup, already under the ' + lim.mark + ': given time — auto-cancelled at ' + wpTopHm(late.at) + ' if still unassigned');
                     }
                     return;
                 }
             // 1.7.294: threshold for each transfer (Booking.com 2:02, drop-offs 1:10, pickups 0:40)
             } else if (tbo > lim.cancelAt || tbo < lim.limit - 3) return;
             if (state.topCancel[item.id]) return;
+            if (graceLeft > 0) {
+                if (!state.topTold['grace_' + item.id]) {
+                    state.topTold['grace_' + item.id] = now;
+                    wpDashLog('wlcm: ' + item.label + ' (' + item.city + ') — ' + lim.kind + ', ' + wpTopHm(tbo) + ' to pickup, at its auto-cancel point but it just appeared: given 10 minutes (auto-cancel in ' + graceLeft + ' min if still unassigned)', 'warn');
+                }
+                return;
+            }
             const cancelException = wpRuleExceptionFor('autocancel', item.city);
             if (!wpBookingCancelOn() || cancelException) {
                 if (!state.topTold[item.id]) {
                     state.topTold[item.id] = now;
-                    wpDashLog('mod: ' + item.label + ' (' + item.city + ') — ' + lim.kind + ', ' + wpTopHm(tbo) + ' to pickup and still unassigned. ' + (cancelException ? 'Auto-cancel is off for ' + item.city + ' (your exception)' : 'Auto-cancel is OFF (Controls, Auto-cancel)') + ': cancel it by hand now.', 'error');
+                    wpDashLog('wlcm: ' + item.label + ' (' + item.city + ') — ' + lim.kind + ', ' + wpTopHm(tbo) + ' to pickup and still unassigned. ' + (cancelException ? 'Auto-cancel is off for ' + item.city + ' (your exception)' : 'Auto-cancel is OFF (Controls, Auto-cancel)') + ': cancel it by hand now.', 'error');
                     try { wpAutoSound('found', true); } catch (_) {}
                 }
                 return;
@@ -26607,7 +28166,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (typeof wpRememberTransferCity === 'function') wpRememberTransferCity(item.path, item.city);
                 wpExtensionOpenInTab(url.toString(), { active: false, insert: true, setParent: true });
             } catch (_) {}
-            wpDashLog('mod: ' + item.label + ' (' + item.city + ') — ' + lim.kind + ', ' + wpTopHm(tbo) + ' to pickup and still unassigned → auto-cancel "No Available driver" started (the rule above every other rule)', 'warn');
+            wpDashLog('wlcm: ' + item.label + ' (' + item.city + ') — ' + lim.kind + ', ' + wpTopHm(tbo) + ' to pickup and still unassigned → auto-cancel "No Available driver" started (the rule above every other rule)', 'warn');
             try { wpSuggestAdd({ id: item.id, label: item.label, city: item.city, partner: booking ? 'Booking.com' : '', what: 'auto-cancel — No Available driver (' + lim.kind + ' at ' + wpTopHm(tbo) + ' to pickup)', answer: 'Yes', by: 'top rule', final: false, result: '' }); } catch (_) {}
             try { wpAutoSound('found'); } catch (_) {}
         });
@@ -26669,14 +28228,12 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         state.misses = 0;
         if (data.cancelled || data.assigned) {
-            if (item.status !== 'closed') wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — ' + (data.cancelled ? 'cancelled' : 'assigned to ' + data.assigned) + ', nothing to do');
+            if (item.status !== 'closed') wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — ' + (data.cancelled ? 'cancelled' : 'assigned to ' + data.assigned) + ', nothing to do');
             item.status = 'closed';
             item.nextAt = now + 10 * 60000;
             return;
         }
         const extra = wpDirectorBuildExtra(row, data);
-        try { await wpAiFor(item.path, item.city, data, extra); } catch (_) {}
-        try { await wpBookingFor(data, extra); } catch (_) {}
         // 1.7.258: the notes mention a wheelchair / bulky luggage and the box
         // is not ticked → it is ticked on the transfer page first, and this
         // transfer is looked at again when that is done.
@@ -26686,69 +28243,32 @@ async function wpTransferAssistantExtensionEnabled() {
         const plan = wpDirectorPlan(item.city, data, null, extra);
         item.finalMode = Boolean(extra.finalMode);
         item.untagged = Boolean(extra.untagged);
-        const aiDidNow = (plan.aiDid || []).join(' · ');
-        if (aiDidNow && item.aiLogged !== aiDidNow) wpDashLog('🧠 AI: ' + item.label + ' (' + item.city + ') — ' + aiDidNow);
-        item.aiLogged = aiDidNow;
         // Look again in 10 min, or at the Final BC time if that comes first.
         // 1.7.272: Booking.com also at the DC = TC moment (1 hour before Final BC)
         // 1.7.280: every transfer at that moment too (the heroes step)
-        const dcTcAt = Number.isFinite(extra.finalDue) && ((wpDirectorPartnerRule(extra.partner) && wpDirectorPartnerRule(extra.partner).name === 'Booking.com') || wpAutoHeroesOn()) && extra.tbo > extra.finalDue + 60 ? extra.finalDue + 60 : null;
+        const dcTcAt = Number.isFinite(extra.finalDue) && ((wpDirectorPartnerRule(extra.partner) && wpDirectorPartnerRule(extra.partner).name === 'Booking.com') || wpAutoHeroesActive()) && extra.tbo > extra.finalDue + 60 ? extra.finalDue + 60 : null;
         const untilFinal = !extra.finalMode && Number.isFinite(extra.tbo) && Number.isFinite(extra.finalDue) ? (extra.tbo - (dcTcAt !== null ? dcTcAt : extra.finalDue)) * 60000 : null;
         const later = function(ms) { return now + (untilFinal !== null ? Math.max(60000, Math.min(ms, untilFinal)) : ms); };
-        // The AI is the reason for "no raise" (1.7.204): you are asked once
-        // (OK / Edit to raise anyway) instead of it being skipped silently.
-        if (plan.skip && plan.aiDid && plan.aiDid.length && item.aiAck !== plan.skip && mode === 'ask') {
-            const aiKey = 'aiskip|' + plan.skip;
-            if (!(item.status === 'dismissed' && item.dismissedKey === aiKey && now < Number(item.dismissedUntil || 0))) {
-                if (item.status !== 'queued' || item.loggedKey !== aiKey) {
-                    wpDashLog('🧠 AI: ' + item.label + ' (' + item.city + ') — thinks no raise is needed: ' + plan.skip + ' — asking you');
-                    wpAutoSound('found');
-                    item.queuedAt = now;
-                }
-                item.status = 'queued';
-                item.planKey = aiKey;
-                item.loggedKey = aiKey;
-                item.text = 'AI: no raise — ' + plan.skip;
-                item.flags = [];
-                item.reason = '';
-                item.nextAt = later(3 * 60000);
-                return;
-            }
-        }
-        // Booking check (1.7.208): the notes ask for something the booking
-        // does not have (pax, child seat…). Said in the Terminal once; when
-        // nothing else is due for this transfer you are asked once ("OK,
-        // seen"), otherwise it is on the card of the raise / BC question.
-        const bookingKey = extra.booking && extra.booking.key || '';
-        if (bookingKey && item.bookingLogged !== bookingKey) {
-            wpDashLog('🧠 AI: ' + item.label + ' (' + item.city + ') — booking check: ' + wpBookingSummary(extra.booking), 'warn');
-            item.bookingLogged = bookingKey;
-        }
-        if (plan.skip && bookingKey && item.bookingAck !== bookingKey && mode === 'ask') {
-            const askKey = 'booking|' + bookingKey;
-            if (item.status !== 'queued' || item.loggedKey !== askKey) {
-                wpAutoSound('found');
-                item.queuedAt = now;
-            }
-            item.status = 'queued';
-            item.planKey = askKey;
-            item.loggedKey = askKey;
-            item.text = 'Booking check: ' + wpBookingSummary(extra.booking);
-            item.flags = [];
-            item.reason = '';
-            // Not a Final BC question: it waits behind those.
-            item.finalMode = false;
-            item.nextAt = later(3 * 60000);
-            return;
-        }
         if (plan.skip) {
             if (item.reason !== plan.skip) {
-                wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — ' + (extra.finalMode ? '⏰ Final BC time, but nothing to do: ' : 'nothing to do: ') + plan.skip, extra.finalMode ? 'warn' : undefined);
+                wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — ' + (extra.finalMode ? '⏰ Final BC time, but nothing to do: ' : 'nothing to do: ') + plan.skip, extra.finalMode ? 'warn' : undefined);
             }
             item.status = 'skip';
             item.reason = plan.skip;
             item.nextAt = extra.finalSent ? now + 12 * 3600000 : later(10 * 60000);
             return;
+        }
+        // 1.7.338: the order is always sent to suggested → heroes → Final BC
+        if (plan.final) {
+            const waitFor = wpAutoFinalWaitFor(state, item, data, item.city);
+            if (waitFor) {
+                const why = 'Final BC after ' + waitFor;
+                if (item.reason !== why) wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — ⏰ Final BC time: first ' + waitFor + ', then Final BC');
+                item.status = 'skip';
+                item.reason = why;
+                item.nextAt = now + 60000;
+                return;
+            }
         }
         const key = wpAutoPlanKey(plan);
         if (item.noRaise && item.noRaise === key && !plan.final && !plan.tagOnly) {
@@ -26771,7 +28291,7 @@ async function wpTransferAssistantExtensionEnabled() {
             return;
         }
         if (item.status !== 'queued' || isNew) {
-            wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — suggests: ' + text + (flags.length ? ' ⚠ ' + flags.join(', ') : ''));
+            wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — suggests: ' + text + (flags.length ? ' ⚠ ' + flags.join(', ') : ''));
             wpAutoSound(item.finalMode ? 'urgent' : 'found');
             item.queuedAt = now;
         }
@@ -26794,20 +28314,20 @@ async function wpTransferAssistantExtensionEnabled() {
                 item.doneAt = now;
                 item.nextAt = now + 5 * 60000;
                 state.failures = 0;
-                wpDashLog('✓ 🤖 mod: ' + item.label + ' (' + item.city + ') — done: ' + item.text);
+                wpDashLog('✓ 🤖 wlcm: ' + item.label + ' (' + item.city + ') — done: ' + item.text);
             } else if (result && result.status === 'skipped') {
                 item.status = 'skip';
                 item.reason = 'the transfer tab skipped it: ' + (result.reason || '');
                 try { wpSuggestResult(id, 'skipped — ' + (result.reason || 'by the transfer tab')); } catch (_) {}
                 item.nextAt = now + 10 * 60000;
-                wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — ' + item.reason, 'warn');
+                wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — ' + item.reason, 'warn');
             } else if ((result && result.status) || now - Number(item.startedAt) > 3 * 60000) {
                 item.status = 'failed';
                 item.reason = result && result.status ? result.status + ' ' + (result.reason || '') : 'no result from the transfer tab in 3 min';
                 try { wpSuggestResult(id, 'failed — ' + item.reason); } catch (_) {}
                 item.nextAt = now + 10 * 60000;
                 state.failures += 1;
-                wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — FAILED: ' + item.reason + ' (check that tab)', 'error');
+                wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — FAILED: ' + item.reason + ' (check that tab)', 'error');
             }
         });
     }
@@ -26825,35 +28345,34 @@ async function wpTransferAssistantExtensionEnabled() {
             const first = approved[0];
             if (running && first.waitLoggedFor !== running.id) {
                 first.waitLoggedFor = running.id;
-                wpDashLog('🤖 mod: ' + first.label + ' is approved and waits for ' + running.label + ' to finish (its tab has been running ' +
+                wpDashLog('🤖 wlcm: ' + first.label + ' is approved and waits for ' + running.label + ' to finish (its tab has been running ' +
                     Math.max(0, Math.round((Date.now() - Number(running.startedAt)) / 1000)) + ' s; given up after 3 min)');
             }
         }
         for (const item of approved) {
             if (slots <= 0) break;
             const row = wpAutoRowByPath(item.path);
-            if (!row) { item.status = 'gone'; wpDashLog('🤖 mod: ' + item.label + ' — no longer in the list, not done'); continue; }
+            if (!row) { item.status = 'gone'; wpDashLog('🤖 wlcm: ' + item.label + ' — no longer in the list, not done'); continue; }
             let data = null;
             try { data = await wpFetchTransferCrmDetails(item.path, true); } catch (_) {}
             if (!data || !data.prices || data.prices.dc === null) {
                 item.startTries = Number(item.startTries || 0) + 1;
-                wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — approved, but the CRM page did not load (try ' + item.startTries + ')' + (item.startTries >= 3 ? ' — given up, it will be asked again' : ', trying again'), 'warn');
+                wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — approved, but the CRM page did not load (try ' + item.startTries + ')' + (item.startTries >= 3 ? ' — given up, it will be asked again' : ', trying again'), 'warn');
                 if (item.startTries >= 3) { item.status = 'failed'; item.reason = 'CRM page did not load'; item.nextAt = Date.now() + 60000; delete item.startTries; }
                 continue;
             }
             delete item.startTries;
             if (data.assigned || data.cancelled) {
                 item.status = 'closed';
-                wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — ' + (data.cancelled ? 'cancelled' : 'assigned') + ' meanwhile, not done');
+                wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — ' + (data.cancelled ? 'cancelled' : 'assigned') + ' meanwhile, not done');
                 continue;
             }
             const extra = wpDirectorBuildExtra(row, data);
-            try { await wpAiFor(item.path, item.city, data, extra); } catch (_) {}
             const plan = wpDirectorPlan(item.city, data, item.override === undefined ? null : item.override, extra);
             if (plan.skip) {
                 item.status = 'skip';
                 item.reason = plan.skip;
-                wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — not needed any more: ' + plan.skip);
+                wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — not needed any more: ' + plan.skip);
                 continue;
             }
             if (wpAutoPlanKey(plan) !== item.approvedKey) {
@@ -26863,7 +28382,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 item.text = wpAutoDescribe(plan);
                 item.flags = wpAutoFlags(plan, data);
                 item.queuedAt = Date.now();
-                wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — changed since you approved, asking again: ' + item.text, 'warn');
+                wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — changed since you approved, asking again: ' + item.text, 'warn');
                 wpAutoSound('found');
                 continue;
             }
@@ -26872,7 +28391,7 @@ async function wpTransferAssistantExtensionEnabled() {
             item.startedAt = Date.now();
             item.text = wpAutoDescribe(plan);
             slots -= 1;
-            wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — started: ' + item.text);
+            wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — started: ' + item.text);
         }
     }
 
@@ -26909,13 +28428,13 @@ async function wpTransferAssistantExtensionEnabled() {
             const ids = new Set(ready.map(function(item) { return item.id; }));
             try { wpSaveAcOffWatch(wpGetAcOffWatch().filter(function(item) { return !ids.has(item.id); })); wpRenderAcOffWatch(); } catch (_) {}
             ready.forEach(function(item, index) { window.setTimeout(function() { try { wpAutoEnableAcForWatchItem(item); } catch (_) {} }, index * 250); });
-            wpDashLog('✓ 🤖 mod: ' + text);
+            wpDashLog('✓ 🤖 wlcm: ' + text);
             delete state.items.ac;
             return;
         }
         const previous = state.items.ac;
         if (!previous || previous.text !== text) {
-            wpDashLog('🤖 mod: suggests: ' + text);
+            wpDashLog('🤖 wlcm: suggests: ' + text);
             wpAutoSound('found');
         }
         state.items.ac = { id: 'ac', kind: 'ac', label: 'A/C Off', city: '', text: text, flags: [], status: 'queued', queuedAt: previous ? previous.queuedAt : Date.now() };
@@ -26964,7 +28483,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (back.length) {
                 wpSaveAcOffWatch(watchList.filter(function(watch) { return back.indexOf(watch) < 0; }));
                 try { wpRenderAcOffWatch(); } catch (_) {}
-                wpDashLog('🤖 mod: AutoCancel is ON again in the CRM on ' + back.map(function(watch) { return '#' + (wpOutcomeId(watch.url) || '?') + (watch.city ? ' ' + watch.city : ''); }).join(', ') + ' (ticked back on by someone) — taken off the A/C Off list, so it can be turned off again', 'warn');
+                wpDashLog('🤖 wlcm: AutoCancel is ON again in the CRM on ' + back.map(function(watch) { return '#' + (wpOutcomeId(watch.url) || '?') + (watch.city ? ' ' + watch.city : ''); }).join(', ') + ' (ticked back on by someone) — taken off the A/C Off list, so it can be turned off again', 'warn');
             }
         } catch (_) {}
         const watched = new Set();
@@ -26996,9 +28515,9 @@ async function wpTransferAssistantExtensionEnabled() {
                 await Promise.all(list.slice(i, i + 2).map(async function(entry) {
                     let data = null;
                     try { data = await wpFetchTransferCrmDetails(entry.path, true); } catch (_) {}
-                    if (!data) { wpDashLog('🤖 mod: ' + entry.label + ' ' + entry.city + ' — its notes could not be read, A/C left on', 'warn'); return; }
+                    if (!data) { wpDashLog('🤖 wlcm: ' + entry.label + ' ' + entry.city + ' — its notes could not be read, A/C left on', 'warn'); return; }
                     if (data.cancelled || data.assigned) return;
-                    if (wpTasksHaveFinal(data.tasks)) { wpDashLog('🤖 mod: ' + entry.label + ' ' + entry.city + ' — a Final BC note is on it, A/C left on'); return; }
+                    if (wpTasksHaveFinal(data.tasks)) { wpDashLog('🤖 wlcm: ' + entry.label + ' ' + entry.city + ' — a Final BC note is on it, A/C left on'); return; }
                     checked.push(entry);
                 }));
             }
@@ -27017,7 +28536,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     } catch (_) {}
                 }, index * 600);
             });
-            wpDashLog('✓ 🤖 mod: A/C Off started on ' + list.length + ': ' + list.map(function(entry) { return entry.label + ' ' + entry.city + ' (' + entry.minutes + 'm)'; }).join(', '));
+            wpDashLog('✓ 🤖 wlcm: A/C Off started on ' + list.length + ': ' + list.map(function(entry) { return entry.label + ' ' + entry.city + ' (' + entry.minutes + 'm)'; }).join(', '));
             delete state.items.acoff;
             return;
         }
@@ -27028,7 +28547,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const text = 'turn A/C off on ' + list.length + ' about to auto-cancel: ' + list.map(function(entry) { return entry.label + ' ' + entry.city + ' (' + entry.minutes + 'm)'; }).join(', ');
         const asked = previous && previous.status === 'queued';
         if (!asked || previous.ids !== ids) {
-            wpDashLog('🤖 mod: suggests: ' + text);
+            wpDashLog('🤖 wlcm: suggests: ' + text);
             wpAutoSound('found');
         }
         state.items.acoff = { id: 'acoff', kind: 'acoff', label: 'A/C about to cancel', city: '', text: text, list: list, ids: ids, flags: [], status: 'queued', queuedAt: asked ? previous.queuedAt : now };
@@ -27045,12 +28564,17 @@ async function wpTransferAssistantExtensionEnabled() {
         const rows = wpAutoRows();
         if (!rows) return;
         if (!wpAutoHasLock()) {
-            if (reason === 'click' || reason === 'mode' || reason === 'again') wpDashLog('🤖 mod: another CRM tab is running mod — this tab takes over', 'warn');
+            if (reason === 'click' || reason === 'mode' || reason === 'again') wpDashLog('🤖 wlcm: another CRM tab is running wlcm — this tab takes over', 'warn');
             if (reason !== 'click' && reason !== 'mode' && reason !== 'again') { wpAutoRenderQueue(); return; }
             wpAutoClaimLock();
         }
         wpAutoTicking = true;
-        wpDashSetBusy(true);
+        // 1.7.372: the round used to hold the auto-refresh (countdown gone,
+        // "held") for as long as it read; now the countdown keeps going and
+        // only the reload itself waits for the round. The background alarm
+        // is paused for the round so it can't reload in the middle.
+        wpAutoTickStartedAt = Date.now();
+        try { chrome.runtime.sendMessage({ type: 'WP_AUTO_REFRESH_SET', enabled: false }); } catch (_) {}
         try { wpDirectorCardStyles(); } catch (_) {}
         try {
             const state = wpAutoLoad();
@@ -27085,25 +28609,23 @@ async function wpTransferAssistantExtensionEnabled() {
                         state.items.acoff.status = 'dismissed';
                         state.items.acoff.dismissedUntil = action.at + 5 * 60000;
                         state.items.acoff.dismissedIds = (state.items.acoff.list || []).map(function(entry) { return entry.id; });
-                        wpDashLog('🤖 mod: A/C off for those about to auto-cancel — not now (asks again in 5 min, or when another one joins)');
+                        wpDashLog('🤖 wlcm: A/C off for those about to auto-cancel — not now (asks again in 5 min, or when another one joins)');
                     }
                     return;
                 }
                 if (action.id === 'ac') {
                     if (action.action === 'approve') wpAutoAcCheck(state, mode, true);
-                    else if (state.items.ac) { state.items.ac.status = 'dismissed'; wpDashLog('🤖 mod: A/C re-enable — not now'); }
+                    else if (state.items.ac) { state.items.ac.status = 'dismissed'; wpDashLog('🤖 wlcm: A/C re-enable — not now'); }
                     return;
                 }
                 const item = state.items[action.id];
                 if (!item) return;
-                // The booking check was on a card you answered: seen.
-                if (action.action === 'bookingack') { item.bookingAck = String(action.key || ''); return; }
                 if (action.action === 'approve') {
                     item.status = 'approved';
                     item.approvedAt = action.at;
                     item.approvedKey = action.key || item.planKey;
                     if (action.override !== undefined && action.override !== null) item.override = action.override; else delete item.override;
-                    wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — approved by you');
+                    wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — approved by you');
                 } else if (action.action === 'noraise') {
                     // Remembered for this raise: not suggested again (Final BC
                     // time still asks, with its own "no raise" button).
@@ -27111,26 +28633,14 @@ async function wpTransferAssistantExtensionEnabled() {
                     item.status = 'skip';
                     item.reason = 'no raise — your choice';
                     item.nextAt = action.at + 10 * 60000;
-                    wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — no raise (your choice), not asked again for this raise');
-                } else if (action.action === 'dismiss' && String(item.planKey || '').indexOf('booking|') === 0) {
-                    item.bookingAck = String(item.planKey).slice(8);
-                    item.status = 'skip';
-                    item.reason = 'booking check seen';
-                    item.nextAt = action.at + 10 * 60000;
-                    wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — booking check seen by you, not asked again');
-                } else if (action.action === 'dismiss' && String(item.planKey || '').indexOf('aiskip|') === 0) {
-                    item.aiAck = String(item.planKey).slice(7);
-                    item.status = 'skip';
-                    item.reason = item.aiAck;
-                    item.nextAt = action.at + 10 * 60000;
-                    wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — no raise, as the AI read it (confirmed by you)');
+                    wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — no raise (your choice), not asked again for this raise');
                 } else if (action.action === 'dismiss') {
                     item.status = 'dismissed';
                     item.dismissedKey = item.planKey;
                     item.dismissedUntil = action.at + (item.finalMode ? 5 : 30) * 60000;
                     item.dismissedFinal = Boolean(item.finalMode);
                     item.nextAt = item.dismissedUntil;
-                    wpDashLog('🤖 mod: ' + item.label + ' (' + item.city + ') — not now (asks again ' + (item.finalMode ? 'in 5 min' : 'in 30 min or at Final BC time') + ')');
+                    wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — not now (asks again ' + (item.finalMode ? 'in 5 min' : 'in 30 min or at Final BC time') + ')');
                 }
             });
 
@@ -27192,7 +28702,7 @@ async function wpTransferAssistantExtensionEnabled() {
                         const touched = wpUserTouchedAt(item.id);
                         const leaveFor = (entry.timing.finalMode ? 3 : 10) * 60000;
                         if (touched && Date.now() - touched < leaveFor) {
-                            if (item.status !== 'yours') wpDashLog('🤖 mod: ' + item.label + ' — you are working on it, leaving it for ' + (leaveFor / 60000) + ' min');
+                            if (item.status !== 'yours') wpDashLog('🤖 wlcm: ' + item.label + ' — you are working on it, leaving it for ' + (leaveFor / 60000) + ' min');
                             item.status = 'yours';
                             item.nextAt = touched + leaveFor;
                             return;
@@ -27220,15 +28730,18 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!state.items.ac || state.items.ac.status !== 'dismissed') wpAutoAcCheck(state, mode, false);
             await wpAutoAcOffCheck(state, entries);
             try { wpAutoTopRuleCheck(state, entries); } catch (_) {}
+            try { wpHistoryAlertPaint(); } catch (_) {}
             try { await wpAutoHeroesSweep(state, entries); } catch (_) {}
+            try { await wpAutoSuggestedSweep(state, entries); } catch (_) {}
             try { wpAutoBoxResults(state); } catch (_) {}
             state.lastTick = Date.now();
             wpAutoSave(state);
         } catch (error) {
-            wpDashLog('🤖 mod: tick error — ' + (error && error.message || error), 'error');
+            wpDashLog('🤖 wlcm: tick error — ' + (error && error.message || error), 'error');
         } finally {
             wpAutoTicking = false;
-            wpDashSetBusy(false);
+            try { if (wpIsAutoRefreshEnabled() && (wpAutoRefreshCountdownInterval !== null || wpAutoRefreshInterval !== null)) wpSyncBackgroundAutoRefresh(true); else if (!wpIsAutoRefreshEnabled()) chrome.runtime.sendMessage({ type: 'WP_AUTO_REFRESH_SET', enabled: false }); } catch (_) {}
+            wpDashRefreshStatus();
             wpAutoRenderQueue();
             wpAutoAlert();
             if (wpAutoTickAgain) { wpAutoTickAgain = false; window.setTimeout(function() { wpAutoTick('again'); }, 200); }
@@ -27259,7 +28772,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 let flip = false;
                 wpAutoTitleTimer = window.setInterval(function() {
                     flip = !flip;
-                    document.title = flip ? (wpAutoPaused() ? '⏸ mod paused' : '⚠ mod needs you') : wpAutoTitle;
+                    document.title = flip ? (wpAutoPaused() ? '⏸ wlcm paused' : '⚠ wlcm needs you') : wpAutoTitle;
                 }, 1000);
             }
         } else if (wpAutoTitleTimer) {
@@ -27295,15 +28808,13 @@ async function wpTransferAssistantExtensionEnabled() {
         const row = item && item.path ? wpAutoRowByPath(item.path) : null;
         if (!row) {
             wpAutoPopupOpen = false;
-            if (item) wpDashLog('🤖 mod: ' + item.label + ' is no longer in the list');
+            if (item) wpDashLog('🤖 wlcm: ' + item.label + ' is no longer in the list');
             return;
         }
         let data = null;
         try { data = await wpFetchTransferCrmDetails(item.path, true); } catch (_) {}
-        if (!data) { wpAutoPopupOpen = false; wpDashLog('🤖 mod: ' + item.label + ' — CRM details not loaded', 'warn'); return; }
+        if (!data) { wpAutoPopupOpen = false; wpDashLog('🤖 wlcm: ' + item.label + ' — CRM details not loaded', 'warn'); return; }
         const extra = wpDirectorBuildExtra(row, data);
-        try { await wpAiFor(item.path, item.city, data, extra); } catch (_) {}
-        try { await wpBookingFor(data, extra); } catch (_) {}
         extra.label = item.label;
         // 60 s to answer; 10 min while the phone app is on (1.7.212).
         if (auto) extra.countdown = wpRemoteWaitSeconds();
@@ -27366,7 +28877,7 @@ async function wpTransferAssistantExtensionEnabled() {
         let answer = { action: 'later', plan: {} };
         if (quiet) wpAutoQuietShow(true);
         try {
-            answer = await wpDirectorAsk('mod · ' + item.label + ' · ' + item.city, item.city, data, extra);
+            answer = await wpDirectorAsk('wlcm · ' + item.label + ' · ' + item.city, item.city, data, extra);
         } finally {
             if (quiet) wpAutoQuietShow(false);
             if (timeout) clearInterval(timeout);
@@ -27378,7 +28889,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // answered, and by whom. "No answer" (the timer ran out) is not kept.
         if (answer.action === 'yes' || answer.action === 'no' || answer.action === 'noraise' || answer.action === 'stop') {
             let what = '';
-            try { what = answer.plan && !answer.plan.skip ? wpAutoDescribe(answer.plan) : (extra.booking && extra.booking.key ? 'check the booking' : 'nothing to do' + (answer.plan && answer.plan.skip ? ': ' + answer.plan.skip : '')); } catch (_) {}
+            try { what = answer.plan && !answer.plan.skip ? wpAutoDescribe(answer.plan) : 'nothing to do' + (answer.plan && answer.plan.skip ? ': ' + answer.plan.skip : ''); } catch (_) {}
             if (answer.action === 'yes' && answer.override !== null && answer.override !== undefined && answer.override !== '') what += ' (your Edit)';
             wpSuggestAdd({
                 id: String(id), label: item.label, city: item.city, partner: extra.partner || '', what: what,
@@ -27395,12 +28906,8 @@ async function wpTransferAssistantExtensionEnabled() {
         if (answer.action === 'yes' && !answer.plan.skip) wpAutoAction(id, 'approve', { key: wpAutoPlanKey(answer.plan), override: answer.override });
         else if (answer.action === 'no') wpAutoAction(id, 'dismiss');
         else if (answer.action === 'noraise') { wpAutoAnswered[id] = Date.now(); wpAutoAction(id, 'noraise'); }
-        else if (answer.action === 'stop') { wpAutoSetMode('off'); wpDashLog('🤖 mod: OFF (Stop on the pop-up)'); }
-        else if (answer.action === 'later') { wpAutoLaterAt[id] = Date.now(); wpDashLog('🤖 mod: ' + item.label + ' — no answer, it asks again after the refresh'); return; }
-        // (Left for you by Full auto: the booking check is not marked as seen.)
-        if (extra.booking && extra.booking.key && !fullLeft && (answer.action === 'yes' || answer.action === 'no' || answer.action === 'noraise')) {
-            wpAutoAction(id, 'bookingack', { key: extra.booking.key });
-        }
+        else if (answer.action === 'stop') { wpAutoSetMode('off'); wpDashLog('🤖 wlcm: OFF (Stop on the pop-up)'); }
+        else if (answer.action === 'later') { wpAutoLaterAt[id] = Date.now(); wpDashLog('🤖 wlcm: ' + item.label + ' — no answer, it asks again after the refresh'); return; }
         // Next suggestion right away.
         if (auto) window.setTimeout(wpAutoPopupNext, 800);
     }
@@ -27482,7 +28989,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (answer.action === 'later') wpAutoLaterAt.acoff = Date.now();
         if (answer.action === 'yes') wpAutoAction('acoff', 'approve');
         else if (answer.action === 'no') wpAutoAction('acoff', 'dismiss');
-        else if (answer.action === 'stop') { wpAutoSetMode('off'); wpDashLog('🤖 mod: OFF (Stop on the pop-up)'); }
+        else if (answer.action === 'stop') { wpAutoSetMode('off'); wpDashLog('🤖 wlcm: OFF (Stop on the pop-up)'); }
     }
 
     async function wpAutoAcPopup(text) {
@@ -27507,7 +29014,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (answer.action === 'later') wpAutoLaterAt.ac = Date.now();
         if (answer.action === 'yes') wpAutoAction('ac', 'approve');
         else if (answer.action === 'no') wpAutoAction('ac', 'dismiss');
-        else if (answer.action === 'stop') { wpAutoSetMode('off'); wpDashLog('🤖 mod: OFF (Stop on the pop-up)'); }
+        else if (answer.action === 'stop') { wpAutoSetMode('off'); wpDashLog('🤖 wlcm: OFF (Stop on the pop-up)'); }
     }
 
     function wpAutoSetMode(mode) {
@@ -27527,9 +29034,9 @@ async function wpTransferAssistantExtensionEnabled() {
         const counts = mode === 'off' ? '' : [waiting ? waiting + ' waiting' : '', running ? running + ' running' : ''].filter(Boolean).join(' · ');
         const stopped = Boolean(paused && mode !== 'off');
         wpDashSwitch('autopilot', mode === 'ask', stopped ? 'paused — click to resume' : counts, stopped ? 'warn' : '');
-        button.title = 'mod on / off. On: it watches Em Hailing - Today and its suggestions pop up (Yes / Edit / Not now / Stop); nothing is done without your Yes' + (wpAutoFullOn() ? ' — except with Full auto, which is ON' : '') + '.' + (paused ? ' Paused: ' + paused + ' — click to resume.' : '');
+        button.title = 'wlcm on / off. On: it watches Em Hailing - Today and its suggestions pop up (Yes / Edit / Not now / Stop); nothing is done without your Yes' + (wpAutoFullOn() ? ' — except with Full auto, which is ON' : '') + '.' + (paused ? ' Paused: ' + paused + ' — click to resume.' : '');
         const full = wpAutoFullOn();
-        wpDashSwitch('full', full, full ? (mode === 'ask' ? 'answering by itself' : 'waits for mod') : '', '');
+        wpDashSwitch('full', full, full ? (mode === 'ask' ? 'answering by itself' : 'waits for wlcm') : '', '');
     }
 
     // ---- Full auto (1.7.234): for when nobody can watch ----
@@ -27543,21 +29050,62 @@ async function wpTransferAssistantExtensionEnabled() {
     const WP_AUTO_FULL_DELAY = 12;      // seconds a card stays up before it is answered
     const WP_AUTO_FULL_PER_HOUR = 60;   // at most this many Yes in an hour
     function wpAutoFullOn() {
+        if (WP_NO_AUTO) return false;
         try { return localStorage.getItem(WP_AUTO_FULL_KEY) === '1'; } catch (_) { return false; }
     }
     function wpAutoFullSet(on, by) {
         try { localStorage.setItem(WP_AUTO_FULL_KEY, on ? '1' : '0'); } catch (_) {}
-        wpDashLog(on ? '🤖 FULL AUTO: ON' + (by ? ' (' + by + ')' : '') + ' — mod answers its own suggestions; anything with a warning is left for you'
+        wpDashLog(on ? '🤖 FULL AUTO: ON' + (by ? ' (' + by + ')' : '') + ' — wlcm answers its own suggestions; anything with a warning is left for you'
             : '🤖 Full auto: OFF' + (by ? ' (' + by + ')' : '') + ' — every suggestion waits for your answer again', on ? 'warn' : undefined);
         wpAutoSetButton();
         try { wpRemoteLastSig = ''; } catch (_) {}
+        // 1.7.420: Full auto switches the page's auto-refresh on
+        if (on && !WP_NO_AUTO) window.setTimeout(function() { wpFullAutoRefreshOn('Full auto is on and needs it'); }, 300);
     }
+    // 1.7.420: Full auto needs the page to refresh (new transfers, new rounds). While
+    // Full auto is on the auto-refresh is switched on, and when you switch it off it
+    // comes back on by itself after 1 minute (the button counts down), in case it is
+    // forgotten. With Full auto off the refresh button works as it always did.
+    var wpFullRefreshOffSince = 0;
+    function wpFullAutoRefreshOn(why) {
+        try {
+            if (wpIsAutoRefreshEnabled()) return;
+            wpSetAutoRefreshEnabled(true);
+            const button = document.getElementById('wp-refresh-toggle');
+            if (button) wpSetRefreshToggleVisual(button, true);
+            if (wpAutoRefreshPausedByTransferOverview) wpStopAutoRefreshTimers(); else wpStartAutoRefresh();
+            wpDashLog('Auto-refresh: ON — ' + why);
+        } catch (_) {}
+        wpFullRefreshOffSince = 0;
+    }
+    function wpFullAutoRefreshGuard() {
+        try {
+            if (WP_NO_AUTO || window.top !== window || wpIsTransferDetailPage() || /[?&]wpAutoRefresh=off/.test(location.search)) return;
+            if (!wpAutoFullOn() || wpAutoMode() === 'off' || wpIsAutoRefreshEnabled()) {
+                wpFullRefreshOffSince = 0;
+                // a countdown left on the button when Full auto went off: the plain button again
+                const plainButton = document.getElementById('wp-refresh-toggle');
+                if (plainButton && / · on in /.test(plainButton.textContent || '')) wpSetRefreshToggleVisual(plainButton, wpIsAutoRefreshEnabled());
+                return;
+            }
+            const now = Date.now();
+            if (!wpFullRefreshOffSince) {
+                wpFullRefreshOffSince = now;
+                wpDashLog('Auto-refresh is off while Full auto is on — it switches back on in 1 minute', 'warn');
+            }
+            const left = Math.max(0, 60 - Math.round((now - wpFullRefreshOffSince) / 1000));
+            const button = document.getElementById('wp-refresh-toggle');
+            if (button && !button.classList.contains('wp-refresh-on')) button.textContent = '↻ Auto Refresh: OFF · on in ' + left + 's';
+            if (left <= 0) wpFullAutoRefreshOn('Full auto is on and needs it');
+        } catch (_) {}
+    }
+    try { window.setInterval(wpFullAutoRefreshGuard, 1000); } catch (_) {}
     async function wpAutoFullToggle() {
         if (wpAutoFullOn()) { wpAutoFullSet(false); return; }
         const ok = await wpRuleConfirm('', 'Turn Full auto on?', [
-            'mod will say Yes to every one of its suggestions by itself: tag, raise, BC and Final BC go out without anyone pressing Yes. The A/C off and A/C back on questions are answered Yes too. No card is shown, no sound is played and nothing is sent to the phone — what it does is written in the Terminal and in the suggestion history.',
+            'wlcm will say Yes to every one of its suggestions by itself: tag, raise, BC and Final BC go out without anyone pressing Yes. The A/C off and A/C back on questions are answered Yes too. No card is shown, no sound is played and nothing is sent to the phone — what it does is written in the Terminal and in the suggestion history.',
             'Also when the card has a warning on it: a raise that puts the driver cost over the traveler cost, Hub, A/C lock city, Autohail off, car type not read, an EM Project condition nobody checked, a booking to check. Each of those is written in the Terminal and in the suggestion history.',
-            'The only limits are your own rules — "never above dc = tc", "never above 30% in total", "do not touch …" — and mod pausing itself after 3 failures.',
+            'The only limits are your own rules — "never above dc = tc", "never above 30% in total", "do not touch …" — and wlcm pausing itself after 3 failures.',
             'It stays on after a refresh, until you switch it off here or from the phone.'
         ], 'Turn Full auto on', 'FULL AUTO');
         if (ok) wpAutoFullSet(true);
@@ -27596,8 +29144,7 @@ async function wpTransferAssistantExtensionEnabled() {
         let plan = null;
         try { plan = wpDirectorPlan(city, data, null, extra); } catch (_) {}
         if (!plan) return 'the plan could not be worked out';
-        const booking = extra && extra.booking;
-        if (plan.skip && !(booking && booking.key)) return 'nothing to do (' + plan.skip + ')';
+        if (plan.skip) return 'nothing to do (' + plan.skip + ')';
         return '';
     }
     // What a Yes of Full auto went past, for the Terminal and the history.
@@ -27612,8 +29159,6 @@ async function wpTransferAssistantExtensionEnabled() {
             if (data && data.autohailOn === false) out.push('Autohail off');
             if (!(data && data.carType)) out.push('car type not read');
             if (plan.suggestion && plan.suggestion.check) out.push('EM condition not checked');
-            const booking = extra && extra.booking;
-            if (booking && booking.key && ((booking.changes || []).length || booking.other)) out.push('booking check had changes');
         } catch (_) {}
         return out;
     }
@@ -27643,6 +29188,8 @@ async function wpTransferAssistantExtensionEnabled() {
             answer: cut(entry.answer, 20), by: cut(entry.by, 12), warn: cut(entry.warn, 160), final: entry.final === true, result: cut(entry.result, 160)
         });
         wpSuggestSave(list);
+        // 1.7.328: what wlcm did shows on the worked-on dot
+        if (/^done/i.test(String(entry.result || ''))) { try { wpWorkedGhasMark(entry.id, entry.what); } catch (_) {} }
     }
     // How the newest open entry of that transfer ended ("done", "failed: …").
     function wpSuggestResult(id, result) {
@@ -27652,6 +29199,7 @@ async function wpTransferAssistantExtensionEnabled() {
         entry.result = String(result || '').replace(/\s+/g, ' ').trim().slice(0, 160);
         entry.resultAt = Date.now();
         wpSuggestSave(list);
+        if (/^done/i.test(entry.result)) { try { wpWorkedGhasMark(entry.id, entry.what); } catch (_) {} }
     }
     function wpSuggestLine(entry) {
         const when = new Date(Number(entry.at) || 0);
@@ -27698,7 +29246,7 @@ async function wpTransferAssistantExtensionEnabled() {
             '#wp-director-queue .wpsh-row.is-run{border-left:3px solid #6fd16f;padding-left:9px}',
             '#wp-director-queue .wpsh-row.is-off{border-left:3px solid #5c676d;padding-left:9px;opacity:.8}',
             '#wp-director-queue .wpsh-row.is-link{margin:0!important;border-radius:0 10px 10px 0}',
-            '#wp-queue-mini{position:fixed;right:14px;bottom:300px;z-index:2147483644;width:420px;max-width:calc(100vw - 24px);box-sizing:border-box;display:none;padding:0;background:rgba(17,20,22,0.96);color:#dfe4e6;border:1px solid rgba(143,255,213,0.35);border-radius:14px;box-shadow:0 10px 28px rgba(0,0,0,.5);font:12px/1.4 Consolas,"Cascadia Mono","Courier New",monospace;overflow:hidden}',
+            '#wp-queue-mini{position:fixed;right:14px;bottom:300px;z-index:2147483644;width:420px;max-width:calc(100vw - 24px);box-sizing:border-box;display:none;padding:0;background:rgba(17,20,22,0.96);color:#dfe4e6;border:1px solid rgba(143,255,213,0.35);border-radius:14px;box-shadow:0 10px 28px rgba(0,0,0,.5);font:12px/1.4 Segoe UI,system-ui,sans-serif;overflow:hidden}',
             '#wp-queue-mini .wpqm-head{display:flex;align-items:center;gap:8px;padding:8px 12px 7px;border-bottom:1px solid rgba(143,255,213,0.2);cursor:pointer;user-select:none}',
             '#wp-queue-mini .wpqm-title{color:#8fffd5;font-weight:700;margin-right:auto}',
             '#wp-queue-mini .wpqm-count{padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700}',
@@ -27732,7 +29280,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const name = (entry.label || '') + (entry.city ? ' (' + entry.city + ')' : '');
         let item = null;
         try { item = wpAutoLoad().items[id]; } catch (_) {}
-        if (!item || !item.path) { wpDashLog('History: ' + name + ' is not in mod list any more — open it from the table', 'warn'); return; }
+        if (!item || !item.path) { wpDashLog('History: ' + name + ' is not in wlcm list any more — open it from the table', 'warn'); return; }
         if (item.status === 'approved' || item.status === 'inflight') { wpDashLog('History: ' + name + ' is still running — wait for its result', 'warn'); return; }
         if (typeof wpDirector.answer === 'function' || wpAutoPopupOpen) { wpDashLog('History: answer the card that is open first, then click ' + name + ' again', 'warn'); return; }
         try { delete wpAutoAnswered[id]; delete wpAutoLaterAt[id]; } catch (_) {}
@@ -27983,15 +29531,15 @@ async function wpTransferAssistantExtensionEnabled() {
             state.failures = 0;
             state.misses = 0;
             wpAutoSave(state);
-            wpDashLog('🤖 mod resumed (' + wpAutoMode() + ')');
+            wpDashLog('🤖 wlcm resumed (' + wpAutoMode() + ')');
             wpAutoSetButton();
             wpAutoTick('resume');
             return;
         }
         const next = wpAutoMode() === 'ask' ? 'off' : 'ask';
         wpAutoSetMode(next);
-        wpDashLog(next === 'ask' ? '🤖 mod: ON — each suggestion pops up: Yes / Edit / Not now / Stop'
-            : '🤖 mod: OFF');
+        wpDashLog(next === 'ask' ? '🤖 wlcm: ON — each suggestion pops up: Yes / Edit / Not now / Stop'
+            : '🤖 wlcm: OFF');
         // Switched on: everything is looked at again, also what you answered
         // "Not now" earlier (1.7.183).
         if (next !== 'off') {
@@ -28004,12 +29552,12 @@ async function wpTransferAssistantExtensionEnabled() {
 
     // ↻ in the Terminal header: from the top again, by hand (1.7.191).
     function wpAutoRestart() {
-        if (wpAutoMode() === 'off') { wpDashLog('🤖 mod is off — switch it on first'); return; }
+        if (wpAutoMode() === 'off') { wpDashLog('🤖 wlcm is off — switch it on first'); return; }
         const open = document.getElementById('wp-director-card');
         if (open && typeof wpDirector.answer === 'function') wpDirector.answer('later');
         wpAutoAnswered = {};
         wpAutoLaterAt = {};
-        wpDashLog('🤖 mod: starting from the top again — Final BC first');
+        wpDashLog('🤖 wlcm: starting from the top again — Final BC first');
         if (wpAutoRows()) wpAutoClaimLock();
         wpAutoAction('all', 'restart');
     }
@@ -28017,11 +29565,9 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpAutoStart() {
         if (wpAutoStarted || wpIsTransferDetailPage()) return;
         wpAutoStarted = true;
-        // The Terminal (with its instruction box) is there whenever the
-        // mod or the local AI is on, also before anything was logged.
-        try { if (wpAutoMode() !== 'off' || wpAiConfig().on) wpDashEnsureUI(); } catch (_) {}
+        // The Terminal is there whenever the mod is on, also before anything was logged.
+        try { if (wpAutoMode() !== 'off') wpDashEnsureUI(); } catch (_) {}
         wpAutoSetButton();
-        try { wpAiSetButton(); } catch (_) {}
         try { if (wpRemoteOn()) wpDashEnsureUI(); wpRemoteSetButton(); wpRemoteStart(); } catch (_) {}
         wpAutoRenderQueue();
         // Let the rows load first, then every 30 s (also when the refresh
@@ -28056,7 +29602,8 @@ async function wpTransferAssistantExtensionEnabled() {
     const WP_REMOTE_CFG_KEY = 'wp_remote_cfg_v1';
     // 1.7.268: a Cloudflare Worker (….workers.dev) or a relay you host yourself
     // behind Tailscale Funnel (….ts.net, with an optional port such as :8443).
-    const WP_REMOTE_URL = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net)(:\d{2,5})?$/;
+    // 1.7.344: or Evan's own domain (….eserris.com, e.g. https://wlcm.eserris.com).
+    const WP_REMOTE_URL = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/;
     var wpRemoteLastSig = '';
     var wpRemoteLastPut = 0;
     var wpRemoteBusy = false;
@@ -28076,6 +29623,7 @@ async function wpTransferAssistantExtensionEnabled() {
         wpRemoteSetButton();
     }
     function wpRemoteOn() {
+        if (WP_NO_AUTO) return false;
         const cfg = wpRemoteConfig();
         return Boolean(cfg.on && cfg.key && WP_REMOTE_URL.test(cfg.url));
     }
@@ -28090,7 +29638,7 @@ async function wpTransferAssistantExtensionEnabled() {
     }
     function wpRemoteCall(path, body) {
         const cfg = wpRemoteConfig();
-        return wpAiSend({ type: 'WP_REMOTE', url: cfg.url, key: cfg.key, path: path, body: body || {} });
+        return wpExtSend({ type: 'WP_REMOTE', url: cfg.url, key: cfg.key, path: path, body: body || {} });
     }
 
     // ---- Sync between your PCs (1.7.229) ----
@@ -28098,8 +29646,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // on every PC that is linked to the same relay (📱 Phone → "Use a setup
     // code"). Each of the three is sent whole when it changes here, and
     // taken whole when the relay has a newer one — the relay's clock decides
-    // what is newer, so the PCs' own clocks do not matter. The AI settings
-    // stay per PC (each has its own model).
+    // what is newer, so the PCs' own clocks do not matter.
     const WP_SYNC_META_KEY = 'wp_sync_meta_v1';
     // 1.7.231: + the Reminders list and the A/C off list.
     const WP_SYNC_STORES = { rules: 'wp_director_rules_v1', links: 'wp_wa_links_v1', hub: 'wp_hub_history_v1', reminders: 'wp_transfer_watch_reminders_v1', acoff: 'wp_ac_off_watch_v1' };
@@ -28223,7 +29770,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const plain = parts.filter(function(node) { return !node.classList.contains('dc-chip'); });
         const question = {
             id: card.dataset.wpRemoteId,
-            title: cut(text(plain[0]) || 'mod', 40),
+            title: cut(text(plain[0]) || 'wlcm', 40),
             sub: cut(text(plain[1]), 60),
             chips: parts.filter(function(node) { return node.classList.contains('dc-chip'); }).map(function(node) { return { t: cut(text(node), 40), hot: node.classList.contains('is-hot') }; }),
             steps: all('.dc-step').map(function(node) { return { t: cut(text(node), 40), tone: tone(node, { 'is-raise': 'raise', 'is-final': 'final', 'is-bc': 'bc', 'is-tag': 'tag' }) }; }),
@@ -28242,18 +29789,11 @@ async function wpTransferAssistantExtensionEnabled() {
         });
         all('.dc-box').forEach(function(box) {
             const book = box.classList.contains('dc-bookbox');
-            // WHY goes as its two parts (1.7.225): what mod saw, and
-            // what the AI explains.
+            // WHY goes as what mod saw.
             if (box.classList.contains('dc-whybox')) {
-                const spaced = function(node) { return cut(text(node).replace(/^(›|✔|🧠)\s*/, '$1 '), 345); };
+                const spaced = function(node) { return cut(text(node).replace(/^(›|✔)\s*/, '$1 '), 345); };
                 const saw = all(':scope > .dc-note', box).map(spaced).filter(Boolean);
                 if (saw.length) question.boxes.push({ cap: 'WHY · MOD SAW', tone: 'why', lines: saw.slice(0, 7) });
-                return;
-            }
-            if (box.classList.contains('dc-aipart')) {
-                const spacedAi = function(node) { return cut(text(node).replace(/^(›|✔|🧠)\s*/, '$1 '), 345); };
-                const said = all('.dc-note', box).map(spacedAi).filter(Boolean);
-                if (said.length) question.boxes.push({ cap: 'WHY · ' + cut(text(box.querySelector('.dc-subcap')), 50), tone: 'ai', lines: said.slice(0, 6) });
                 return;
             }
             // The passenger's / driver's own words stay on the PC.
@@ -28262,7 +29802,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!lines.length) return;
             question.boxes.push({
                 cap: book ? 'BOOKING CHECK' : cut(text(box.querySelector('.dc-cap')), 60),
-                tone: box.classList.contains('dc-whybox') ? 'why' : box.classList.contains('dc-aibox') ? 'ai' : book ? 'book' : '',
+                tone: box.classList.contains('dc-whybox') ? 'why' : book ? 'book' : '',
                 lines: lines.slice(0, 6).map(function(line) { return cut(line, 220); })
             });
         });
@@ -28291,6 +29831,8 @@ async function wpTransferAssistantExtensionEnabled() {
 
     // The rows under "Em Hailing - Tomorrow" (today's come from wpAutoRows).
     function wpRemoteTomorrowRows() {
+        // 1.7.407: tomorrow's pickups, whichever list they are in
+        { const byDate = wpDayRows('tomorrow'); if (byDate) return byDate; }
         if (!(wpRemoteTomorrowHeading && document.body.contains(wpRemoteTomorrowHeading))) {
             if (Date.now() - wpRemoteTomorrowMissAt < 10000) return [];
             wpRemoteTomorrowHeading = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, legend, caption, span, div')).find(function(node) {
@@ -28478,6 +30020,36 @@ async function wpTransferAssistantExtensionEnabled() {
         done();
     }
 
+    // 1.7.367: the phone's "Message all drivers of a city". wp-tours.js does the work
+    // in a background tab of the CRM drivers list (read only) and reports back here.
+    var wpDriversStatusHooked = false;
+    async function wpRemoteDrivers(answer) {
+        const jobKey = 'wp_drivers_phone_job_v1';
+        if (!(typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local)) return;
+        if (answer.op === 'stop') {
+            const got = await chrome.storage.local.get(jobKey);
+            const job = got && got[jobKey];
+            if (job) { job.stop = true; await chrome.storage.local.set({ [jobKey]: job }); }
+            wpDashLog('📱 Phone: stop messaging the drivers' + (job ? ' of ' + job.city : ''));
+            return;
+        }
+        const city = String(answer.city || '').replace(/\s+/g, ' ').trim();
+        const text = String(answer.text || '').trim();
+        if (!city || !text) return;
+        if (!wpDriversStatusHooked) {
+            wpDriversStatusHooked = true;
+            chrome.storage.onChanged.addListener(function(changes, area) {
+                const change = area === 'local' && changes.wp_drivers_phone_status_v1;
+                const status = change && change.newValue;
+                if (!status || !status.log) return;
+                wpDashLog('📱 Drivers of ' + (status.city || '?') + ': ' + status.text, status.warn ? 'warn' : '');
+            });
+        }
+        const job = { id: 'd' + Date.now(), city: city, text: text, at: Date.now() };
+        await chrome.storage.local.set({ [jobKey]: job });
+        wpDashLog('📱 Phone: message all drivers of ' + city + ' — reading the drivers list in a background tab…');
+        wpExtensionOpenInTab('https://crm.welcomepickups.com/admin/drivers?wp_send_all=' + job.id, { active: false });
+    }
     // Phone: the quickbar of one transfer (1.7.216). The choices are put
     // into this row's real quickbar and its own button is pressed, so a tap
     // does exactly what a click on the PC does.
@@ -28488,7 +30060,9 @@ async function wpTransferAssistantExtensionEnabled() {
         const selects = bar ? bar.querySelectorAll('select') : [];
         if (!bar || selects.length < 2) { wpDashLog('📱 Phone: that transfer is no longer in the list — nothing done', 'warn'); return; }
         const has = function(select, value) { return Array.from(select.options).some(function(option) { return option.value === value; }); };
-        const raise = String(command.raise || '');
+        // 1.7.343: the phone's Custom amount comes as 'eur:<new driver cost>'
+        const amountMatch = String(command.raise || '').match(/^eur:(\d+(?:\.\d+)?)$/);
+        const raise = amountMatch ? '__amount__' : String(command.raise || '');
         const note = String(command.note || '');
         if (!has(selects[0], raise) || !has(selects[1], note)) { wpDashLog('📱 Phone: that raise or note is not in the quickbar any more — nothing done', 'warn'); return; }
         // 1.7.266: the phone's BC is the one with the WhatsApp group, as before
@@ -28500,9 +30074,11 @@ async function wpTransferAssistantExtensionEnabled() {
         selects[1].dispatchEvent(new Event('change'));
         const custom = bar.querySelector('input[type="text"]');
         if (note === '__custom__' && custom) custom.value = String(command.custom || '');
+        const amount = bar.querySelector('input.wp-raise-amount');
+        if (amount) amount.value = amountMatch ? amountMatch[1] : '';
         const link = found.row.querySelector('a[href*="/admin/transfers/"]');
         wpDashLog('📱 Phone: ' + labels[command.action] + ' — ' + String(link ? link.textContent : command.item).trim() +
-            (selects[0].value ? ' · raise ' + selects[0].options[selects[0].selectedIndex].textContent : '') +
+            (amountMatch ? ' · driver cost to ' + amountMatch[1] + '€' : selects[0].value ? ' · raise ' + selects[0].options[selects[0].selectedIndex].textContent : '') +
             (note ? ' · note "' + (note === '__custom__' ? String(command.custom || '') : note) + '"' : ''));
         button.click();
     }
@@ -28581,30 +30157,6 @@ async function wpTransferAssistantExtensionEnabled() {
         } catch (_) {}
     }
     setInterval(wpEmListPublish, 30000);
-    // 1.7.307: the local AI settings live in the CRM page's localStorage;
-    // a copy goes to extension storage so the Overview's ghas summary can use them.
-    var wpAiMirrorSig = '';
-    function wpAiMirror() {
-        try {
-            const cfg = wpAiConfig();
-            const sig = JSON.stringify(cfg);
-            if (sig !== wpAiMirrorSig) { wpAiMirrorSig = sig; chrome.storage.local.set({ wp_ai_cfg_mirror_v1: cfg }); }
-        } catch (_) {}
-    }
-    setInterval(wpAiMirror, 60000);
-    // 1.7.308: a model picked in the Overview is saved into mod's AI settings here.
-    chrome.storage.onChanged.addListener(function(changes, area) {
-        try {
-            const pick = area === 'local' && changes.wp_ai_model_pick_v1 && changes.wp_ai_model_pick_v1.newValue;
-            if (!pick || !pick.model) return;
-            const cfg = wpAiConfig();
-            if (cfg.model === pick.model && cfg.on) return;
-            cfg.model = String(pick.model); cfg.on = true;
-            wpAiSaveConfig(cfg);
-            wpAiMirror();
-        } catch (_) {}
-    });
-    setTimeout(wpAiMirror, 5000);
     setTimeout(wpEmListPublish, 8000);
     // Where the City Manager's controls are (1.7.218). On the live page the
     // note / price / button row sits inside the orders window itself, and
@@ -28632,7 +30184,12 @@ async function wpTransferAssistantExtensionEnabled() {
             groups: Array.from(panel.querySelectorAll('.wp-today-city-orders-group')).map(function(section) {
                 return {
                     name: text(section.querySelector('.wp-today-city-orders-group-title > span'), 30),
-                    rows: Array.from(section.querySelectorAll('.wp-today-city-order-item')).slice(0, 150).map(function(row) {
+                    rows: Array.from(section.querySelectorAll('.wp-today-city-order-item, tr.wp-cm-row')).slice(0, 150).map(function(row) {
+                        // 1.7.401: the City Manager's copies of the dashboard rows carry their phone fields
+                        if (row.classList.contains('wp-cm-row')) {
+                            const v = row.dataset;
+                            return { o: v.o || '', t: v.t || '', ac: Number(v.ac) || 0, g: text({ textContent: v.g }, 40), p: v.p || '', d: v.d || '', v: v.v || '', m: text({ textContent: v.m }, 50), s: v.s || '' };
+                        }
                         const sub = row.querySelector('.wp-today-city-order-sub');
                         return {
                             o: text(sub, 40), t: text(row.querySelector('.wp-today-city-order-main'), 50),
@@ -28684,6 +30241,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // own guardrails still decide what each transfer may get. What happened
     // goes to the Terminal, the Hub history and back to the phone.
     var wpRemoteHubLast = null;
+    var wpRemoteCmLastSel = null; // 1.7.346: the phone's last ticked transfers (for its Send image)
     const WP_HUB_PHONE_ACTIONS = {
         tag: { label: 'Tag', cap: 200 }, note: { label: 'Add note', cap: 200 }, remove_auto_c: { label: 'Remove Auto-C', cap: 100 },
         enable_auto_c: { label: 'Enable Auto-C', cap: 100 }, broadcast: { label: 'Broadcast', cap: 100 }, price_change: { label: 'Price Change', cap: 70 }
@@ -28717,6 +30275,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const wanted = (command.sel || []).map(function(label) { return String(label).replace(/\s+/g, ' ').trim(); }).filter(Boolean);
         const ids = wanted.map(function(label) { return idOf[label]; }).filter(Boolean);
         count = wanted.length;
+        if (wanted.length) wpRemoteCmLastSel = { city: city, day: day, sel: wanted, at: Date.now() }; // 1.7.346
         if (!wanted.length) { finish('nothing was selected — nothing was run', 'warn'); return; }
         if (ids.length !== wanted.length) { finish((wanted.length - ids.length) + ' of the ' + wanted.length + ' selected transfers are no longer in ' + cityName + ' — open the city again on the phone. Nothing was run.', 'warn'); return; }
         if (ids.length > spec.cap) { finish(spec.label + ' takes at most ' + spec.cap + ' transfers at a time and ' + ids.length + ' were selected. Nothing was run.', 'warn'); return; }
@@ -28751,7 +30310,97 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         if (!answer.pressed) { finish(what + ' — not opened in the Hub: ' + (answer.actionError || '?'), 'warn'); return; }
         const outcome = wpHubAutoOutcome(what, answer, ids.length);
+        // 1.7.346: as on the PC: price remembered for the note; a Broadcast → note + image of only these + refresh
+        if (answer.confirmed && command.action === 'price_change') wpHubRememberPrice(ids, auto.price);
+        if (answer.confirmed && command.action === 'broadcast') {
+            const dropped = Array.isArray(answer.dropped) ? answer.dropped.map(String) : [];
+            const sent = ids.filter(function(id) { return dropped.indexOf(id) < 0; });
+            const chosen = items.filter(function(item) { const id = (String(item && item.url || '').match(/transfers\/(\d+)/) || [])[1] || ''; return id && sent.indexOf(id) >= 0; });
+            const note = wpCmAfterHubBroadcast(chosen, sent, day, 'City Manager ' + cityName);
+            if (note) outcome.text += ' · note "' + note + '" + image of ' + chosen.length + ' to the group';
+        }
         finish(outcome.text, outcome.tone);
+    }
+
+    // 1.7.352: phone: the whole Ops Hub chain on the transfers ticked there,
+    // as the City Manager's Chain button (Tag → Price Change when a price is
+    // given → Remove Auto-C → Broadcast → Ask best drivers → Enable Auto-C →
+    // note → image), with no second click.
+    async function wpRemoteCmChain(command) {
+        const day = command.day === 'tomorrow' ? 'tomorrow' : 'today';
+        const city = String(command.city || '');
+        const cityName = city.replace('__wp_untagged__', 'UNTAGGED').replace('__wp_tbo_expiring__', 'FINAL').replace('__wp_3days__', '3+ days');
+        const pause = function(ms) { return new Promise(function(resolve) { window.setTimeout(resolve, ms); }); };
+        wpRemoteCmActiveAt = Date.now();
+        const finish = function(text, tone) {
+            wpRemoteCmActiveAt = Date.now();
+            wpRemoteHubLast = { text: text, tone: tone, at: Date.now(), action: 'Chain' };
+            wpDashLog('📱 Phone → Ops Hub chain (' + cityName + '): ' + text, tone === 'bad' ? 'error' : tone === 'warn' ? 'warn' : undefined);
+            wpRemoteCmOut = wpRemoteCmSnapshot() || { city: city, day: day, empty: true, hub: wpRemoteHubLast, hubHistory: wpHubHistoryLoad().slice(0, 8).map(wpHubHistoryLine) };
+            wpRemoteLoop().catch(function() {});
+        };
+        const wanted = (command.sel || []).map(function(label) { return String(label).replace(/\s+/g, ' ').trim(); }).filter(Boolean);
+        if (!wanted.length) { finish('nothing was selected — nothing was run', 'warn'); return; }
+        let price = null;
+        if (command.mode) {
+            const mode = String(command.mode);
+            const value = Math.round(Number(command.value) * 10) / 10;
+            const fine = mode === 'pct' ? (value >= 1 && value <= 25) : ((mode === 'add' || mode === 'set') && value > 0 && value <= 1000);
+            if (!fine) { finish('that price is outside what the Hub takes (% of driver cost: 1 to 25; an amount: up to 1,000) — nothing was run', 'warn'); return; }
+            price = { mode: mode, value: value };
+        }
+        const cap = price ? 70 : 100;
+        if (wanted.length > cap) { finish('the chain takes at most ' + cap + ' transfers at a time' + (price ? ' with a price change' : '') + ' and ' + wanted.length + ' were selected. Nothing was run.', 'warn'); return; }
+        if (wpCmAutoRunning || wpCmAutoLoad()) { finish('City Manager auto is running on the PC — wait for it or stop it first. Nothing was run.', 'warn'); return; }
+        let panel = document.getElementById('wp-today-city-orders-window');
+        if (!panel || !wpRemoteCmState || wpRemoteCmState.city !== city || wpRemoteCmState.day !== day) {
+            await wpRemoteCmManagerOpen();
+            try { wpTodayCityOpenCityWindow(city, day); } catch (_) {}
+            wpRemoteCmState = { city: city, day: day };
+            await pause(1200);
+            panel = document.getElementById('wp-today-city-orders-window');
+        }
+        if (!panel || typeof panel._wpRemoteChain !== 'function') { finish(cityName + ' did not open on the PC — nothing was run', 'bad'); return; }
+        wpRemoteCmLastSel = { city: city, day: day, sel: wanted, at: Date.now() };
+        wpRemoteHubLast = { text: 'Chain on ' + wanted.length + ': running in the Hub…', tone: '', at: Date.now(), action: 'Chain' };
+        wpRemoteCmPush([100]);
+        const note = String(command.note || '').replace(/\s+/g, ' ').trim().slice(0, 280);
+        const result = await panel._wpRemoteChain(wanted, price, note);
+        if (result.busy) { finish('the Hub is busy with another run on the PC — try again when it is done. Nothing was run.', 'warn'); return; }
+        if (result.missing) { finish(result.missing + ' of the ' + wanted.length + ' selected transfers are no longer in ' + cityName + ' — open the city again on the phone. Nothing was run.', 'warn'); return; }
+        const text = String(result.text || '').replace(/\n/g, ' ').trim() || 'Chain: the PC did not say how it went';
+        finish(text, /^✓/.test(text) ? 'ok' : /^Chain( stopped|:)/.test(text) ? 'bad' : 'warn');
+    }
+    // 1.7.352: phone: City Manager auto (the chain on every city's untagged
+    // transfers, top to bottom) — start it for a day, or stop it after the
+    // current city. How it goes is in the status (cmAuto / cmAutoMsg).
+    var wpRemoteCmAutoMsg = null;
+    async function wpRemoteCmAuto(command) {
+        const day = command.day === 'tomorrow' ? 'tomorrow' : 'today';
+        const pause = function(ms) { return new Promise(function(resolve) { window.setTimeout(resolve, ms); }); };
+        const say = function(text, tone) {
+            wpRemoteCmAutoMsg = { text: text, tone: tone || '', at: Date.now() };
+            wpDashLog('📱 Phone: City Manager auto — ' + text, tone === 'bad' ? 'error' : tone === 'warn' ? 'warn' : undefined);
+            wpRemoteLoop().catch(function() {});
+        };
+        if (command.value === 'stop') {
+            if (!wpCmAutoRunning && !wpCmAutoLoad()) { say('it was not running', 'warn'); return; }
+            wpCmAutoStop = true;
+            wpCmAutoSave(null);
+            say(wpCmAutoRunning ? 'stopping after the current city' : 'stopped', 'warn');
+            return;
+        }
+        if (wpCmAutoRunning || wpCmAutoLoad()) { say('it is already running', 'warn'); return; }
+        await wpRemoteCmManagerOpen();
+        const overview = document.getElementById('wp-today-city-window');
+        if (!overview || overview.classList.contains('is-closed')) { say('the City Manager could not be opened on the PC — nothing was started', 'bad'); return; }
+        try { wpTodayCitySelectedTab = day; wpTodayCityUpdate(); } catch (_) {}
+        await pause(800);
+        for (let i = 0; i < 30 && !wpCmAutoRows().length; i++) await pause(1000);
+        const cities = wpCmAutoRows().filter(function(entry) { return entry.u > 0; }).length;
+        if (!cities) { say('no city has untagged transfers ' + day + ' — nothing was started', 'warn'); return; }
+        say('started (' + day + ', ' + cities + ' cit' + (cities === 1 ? 'y' : 'ies') + ')', 'ok');
+        wpCmAutoRun(day, wpCmAutoPaint);
     }
 
     // The City Manager has to be OPEN on this page (1.7.219). While it is
@@ -28785,6 +30434,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // you who had it open.
     function wpRemoteCmMaybeClose() {
         if (!wpRemoteCmOpenedHere) return;
+        if (wpCmAutoRunning || wpCmAutoLoad()) return; // 1.7.352: auto mode works in it
         const stop = function() {
             wpRemoteCmOpenedHere = false;
             if (wpRemoteCmCloseTimer) { clearInterval(wpRemoteCmCloseTimer); wpRemoteCmCloseTimer = null; }
@@ -28832,6 +30482,23 @@ async function wpTransferAssistantExtensionEnabled() {
         if (!panel) { stop('no transfers for that city any more'); return; }
         const acts = wpRemoteCmScope(panel);
         // Group buttons: Open all / Generate image (these work on the PC's screen).
+        // 1.7.346: Send image with transfers ticked on the phone (now or for its last Hub run, 30 min):
+        // one image of only those, whichever group's Send image was pressed.
+        if (command.action === 'image') {
+            const last = wpRemoteCmLastSel && wpRemoteCmLastSel.city === city && wpRemoteCmLastSel.day === day && Date.now() - wpRemoteCmLastSel.at < 30 * 60000 ? wpRemoteCmLastSel.sel : [];
+            const sel = (command.sel || []).length ? command.sel.map(function(label) { return String(label).replace(/\s+/g, ' ').trim(); }) : last;
+            if (sel.length) {
+                let all = [];
+                try { all = wpTodayCityGetOrdersForCity(city, day) || []; } catch (_) {}
+                const chosen = all.filter(function(item) { return sel.indexOf(String(item && item.orderLabel || '').replace(/\s+/g, ' ').trim()) >= 0; });
+                if (chosen.length) {
+                    wpDashLog('📱 Phone: City Manager — Send image · ' + chosen.length + ' selected');
+                    wpGenerateTransfersImage(chosen, day, 'selected', true).catch(function() {});
+                    wpRemoteCmPush([1500]);
+                    return;
+                }
+            }
+        }
         if (command.action === 'openall' || command.action === 'image') {
             const section = Array.from(panel.querySelectorAll('.wp-today-city-orders-group')).find(function(node) { return text(node.querySelector('.wp-today-city-orders-group-title > span')) === String(command.group || ''); });
             const wanted = command.action === 'openall' ? 'Open all' : 'Generate image';
@@ -28845,10 +30512,11 @@ async function wpTransferAssistantExtensionEnabled() {
         // The same transfers that were ticked on the phone, by order number.
         const want = new Set((command.sel || []).map(String));
         const boxes = Array.from(panel.querySelectorAll('.wp-city-transfer-select'));
-        const labelOf = function(box) { const row = box.closest('.wp-today-city-order-item'); return text(row && row.querySelector('.wp-today-city-order-sub')); };
+        const labelOf = function(box) { const copy = box.closest('tr.wp-cm-row'); if (copy) return String(copy.dataset.o || ''); const row = box.closest('.wp-today-city-order-item'); return text(row && row.querySelector('.wp-today-city-order-sub')); };
         const present = new Set(boxes.map(labelOf));
         const missing = Array.from(want).filter(function(label) { return !present.has(label); });
         if (!want.size) { stop('nothing was selected'); return; }
+        wpRemoteCmLastSel = { city: city, day: day, sel: Array.from(want), at: Date.now() }; // 1.7.346
         if (missing.length) { stop(missing.length + ' of the ' + want.size + ' selected transfers are no longer there — open the city again on the phone'); return; }
         const noteSelect = acts.querySelector('select.wp-city-note-select');
         const noteInput = acts.querySelector('input.wp-city-task-message-input');
@@ -28920,7 +30588,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 text: cut(item.text, 260),
                 flags: (item.flags || []).slice(0, 4).map(function(flag) { return cut(flag, 40); }),
                 // What "put it off" means for this one (the same as on its card).
-                no: key.indexOf('aiskip|') === 0 ? 'OK, no raise' : key.indexOf('booking|') === 0 ? 'OK, seen' : 'Not now'
+                no: 'Not now'
             };
         });
     }
@@ -28990,10 +30658,26 @@ async function wpTransferAssistantExtensionEnabled() {
                 // The phone left the city: the City Manager can close again.
                 else if (answer.op === 'close') { wpRemoteCmActiveAt = 0; wpRemoteCmMaybeClose(); }
                 else if (answer.op === 'hub') wpRemoteCmHub(answer).catch(function() {});
+                else if (answer.op === 'chain') wpRemoteCmChain(answer).catch(function() {}); // 1.7.352
+                else if (answer.op === 'auto') wpRemoteCmAuto(answer).catch(function() {}); // 1.7.352
                 else wpRemoteCmRun(answer).catch(function() {});
                 return;
             }
             // Typed on the phone = typed into the Terminal's instruction box.
+            // 1.7.357: a Comments card swiped on the phone (done) or brought back (undo)
+            if (answer.type === 'comment') {
+                // 1.7.358: a card's changes carry the transfer in id (item is "edit:<id>")
+                const id = String(answer.op === 'edit' ? answer.id || '' : answer.item || '');
+                if (!/^\d+$/.test(id)) return;
+                if (answer.op === 'edit') wpCommentEdit(id, answer.edit || {}, 'phone');
+                else if (answer.op === 'skip') wpCommentSkip(id, 'phone'); // 1.7.359
+                else wpCommentMark(id, answer.op === 'done', 'phone');
+                return;
+            }
+            // 1.7.423: a WhatsApp card closed (×) on the phone
+            if (answer.type === 'wa') { if (answer.op === 'close' && /^w[a-z0-9]{4,30}$/.test(String(answer.item || ''))) wpWaAlertsDrop(String(answer.item)); return; }
+            // 1.7.367: "Message all drivers of a city" from the phone (or Stop)
+            if (answer.type === 'drivers') { wpRemoteDrivers(answer).catch(function() {}); return; }
             if (answer.type === 'say') { wpDashLog('📱 Phone: instruction typed on the phone'); try { wpCmdRun(String(answer.text || '')); } catch (_) {} return; }
             // 1.7.245: the phone changes the page — Today-Tomorrow or a later-days page.
             if (answer.type === 'page') {
@@ -29016,13 +30700,13 @@ async function wpTransferAssistantExtensionEnabled() {
                 const on = answer.value === true;
                 try {
                     if (answer.item === 'director') {
-                        if (on && (wpAutoMode() === 'off' || wpAutoPaused())) { wpDashLog('📱 Phone: mod switched on'); wpAutoCycle(); }
+                        if (on && (wpAutoMode() === 'off' || wpAutoPaused())) { wpDashLog('📱 Phone: wlcm switched on'); wpAutoCycle(); }
                         else if (!on && wpAutoMode() !== 'off') {
                             const open = document.getElementById('wp-director-card');
                             if (open && typeof wpDirector.answer === 'function') wpDirector.answer('later');
                             wpAutoSetMode('off');
                             wpAutoSetButton();
-                            wpDashLog('📱 Phone: 🤖 mod: OFF');
+                            wpDashLog('📱 Phone: 🤖 wlcm: OFF');
                         }
                     } else if (answer.item === 'restart') {
                         wpDashLog('📱 Phone: start from the top again');
@@ -29038,10 +30722,13 @@ async function wpTransferAssistantExtensionEnabled() {
                         wpDashLog('📱 Phone: WhatsApp auto-send ' + (on ? 'ON' : 'OFF'));
                     } else if (answer.item === 'full') {
                         if (on !== wpAutoFullOn()) wpAutoFullSet(on, 'from the phone');
-                    } else if (answer.item === 'ai') {
-                        const cfg = wpAiConfig();
-                        if (on && !cfg.model) wpDashLog('📱 Phone: the local AI has no model chosen yet — set it up once on the PC (🧠 AI)', 'warn');
-                        else { cfg.on = on; wpAiSaveConfig(cfg); wpDashLog('📱 Phone: 🧠 AI ' + (on ? 'ON' : 'OFF')); }
+                    } else if (answer.item === 'sug') {
+                        // 1.7.369: Send to suggested on / off, and its hours limit, from the phone
+                        localStorage.setItem('wp_auto_suggested_v1', on ? '1' : '0');
+                        wpDashPaintSwitches();
+                        wpDashLog('📱 Phone: Send to suggested ' + (on ? 'ON' : 'OFF'));
+                    } else if (answer.item === 'sughours') {
+                        wpAutoSuggestedHoursSet(Number(answer.hours), 'from the phone');
                     }
                 } catch (error) { wpDashLog('📱 Phone: that switch did not work — ' + (error && error.message || error), 'error'); }
                 wpRemoteLastSig = '';
@@ -29092,10 +30779,15 @@ async function wpTransferAssistantExtensionEnabled() {
             running: items.filter(function(item) { return item && (item.status === 'inflight' || item.status === 'approved'); }).length,
             // For the phone's gear: how the Terminal's other switches stand.
             wa: wpWhatsAppAutoSendOn(),
-            ai: wpAiConfig().on,
             full: wpAutoFullOn(),
+            sug: wpAutoSuggestedOn(), sugHours: wpAutoSuggestedHours(), // 1.7.369
             // 1.7.245: which Em Hailing page this tab shows (the phone can change it)
-            page: (function() { try { return new URLSearchParams(window.location.search).get('em_hailing_period') || 'today_tomorrow'; } catch (_) { return 'today_tomorrow'; } })()
+            page: (function() { try { return new URLSearchParams(window.location.search).get('em_hailing_period') || 'today_tomorrow'; } catch (_) { return 'today_tomorrow'; } })(),
+            // 1.7.352: City Manager auto: where it is, and the last word on a start / stop from the phone
+            cmAuto: (function() { const state = wpCmAutoLoad(); if (!state) return null; const index = Math.max(1, Number(state.index) || 0); return { day: state.tab, at: Math.min(index, state.cities.length), of: state.cities.length, city: String(state.cities[index - 1] || '').slice(0, 40), ran: Number(state.ran) || 0 }; })(),
+            cmAutoMsg: wpRemoteCmAutoMsg && Date.now() - wpRemoteCmAutoMsg.at < 10 * 60000 ? wpRemoteCmAutoMsg : null,
+            // 1.7.357: transfers with a comment waiting (the phone's Comments badge)
+            comments: wpCommentQueue().queue.length
         };
         // The suggestion history (1.7.236), newest first, for the phone.
         const history = wpSuggestLoad().slice(0, 40).map(function(entry) {
@@ -29116,13 +30808,20 @@ async function wpTransferAssistantExtensionEnabled() {
         const sendList = (listSig !== wpRemoteListSig && now - wpRemoteListPut > 20000) || now - wpRemoteListPut > 300000;
         const detail = wpRemoteDetailOut;
         const cm = wpRemoteCmOut;
+        // 1.7.357: the Comments cards, when they changed (at most every 5 s), and every 5 min
+        const commentsOut = wpCommentPhone();
+        const commentsSig = JSON.stringify(commentsOut);
+        const sendComments = (commentsSig !== wpCommentPhoneSig && now - wpCommentPhonePut > 5000) || now - wpCommentPhonePut > 300000;
+        // 1.7.423: WhatsApp mention / direct-message cards for the phone app
+        const waSig = JSON.stringify(wpWaAlertsPhone || []);
+        const sendWa = waSig !== wpWaAlertsPhoneSig;
         // How often the relay is asked for taps (1.7.217): every loop while
         // the phone app is open (the relay says so), every 6 s otherwise —
         // it used to be every 15 s when no suggestion was waiting, so a tap
         // on a city or a transfer could sit there that long.
         const phoneActive = now < wpRemotePhoneUntil;
         const poll = now - wpRemoteLastCall >= 6000;
-        if (!question && !queue.length && !changed && !beat && !sendList && !detail && !cm && !phoneActive && !poll) return;
+        if (!question && !queue.length && !changed && !beat && !sendList && !detail && !cm && !sendComments && !sendWa && !phoneActive && !poll) return;
         wpRemoteLastCall = now;
         wpRemoteBusy = true;
         try {
@@ -29130,7 +30829,9 @@ async function wpTransferAssistantExtensionEnabled() {
                 changed || beat ? { state: { question: question, queue: queue, log: log, status: status, history: history, quiet: !wpPhoneNotifyOn() } } : {},
                 sendList ? { list: { rows: rows, cities: wpRemoteCmCities() } } : {},
                 detail ? { detail: detail } : {},
-                cm ? { cm: cm } : {}));
+                cm ? { cm: cm } : {},
+                sendComments ? { comments: commentsOut } : {},
+                sendWa ? { wa: { alerts: wpWaAlertsPhone || [] } } : {}));
             if (result && result.ok && result.standby) {
                 // Your other PC got there first: it has the phone. Nothing of
                 // this PC is shown there, and no tap is taken from it.
@@ -29151,6 +30852,8 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (changed || beat) { wpRemoteLastSig = sig; wpRemoteLastPut = now; }
                 wpRemotePhoneUntil = Number.isFinite(result.phoneAge) && result.phoneAge !== null && result.phoneAge < 45000 ? Date.now() + 45000 - result.phoneAge : 0;
                 if (sendList) { wpRemoteListSig = listSig; wpRemoteListPut = now; }
+                if (sendComments) { wpCommentPhoneSig = commentsSig; wpCommentPhonePut = now; }
+                if (sendWa) wpWaAlertsPhoneSig = waSig;
                 if (detail && wpRemoteDetailOut === detail) wpRemoteDetailOut = null;
                 if (cm && wpRemoteCmOut === cm) wpRemoteCmOut = null;
                 wpRemoteFails = 0;
@@ -29193,8 +30896,8 @@ async function wpTransferAssistantExtensionEnabled() {
             return node;
         };
         add('div', '📱 Phone app', { fontSize: '16px', fontWeight: '700' });
-        add('div', 'mod\'s questions on your phone: tap Yes / No raise / Not now there and it is pressed here. This PC has to stay on with this CRM tab open. The question text goes through the relay you host (passenger and driver notes are not sent). With the phone on, a question waits 10 minutes instead of 60 seconds.', { color: '#9aa6ad', margin: '4px 0 10px' });
-        add('div', 'Relay address (your Cloudflare Worker or Tailscale Funnel address)', { color: '#7d8a90', fontSize: '12px', marginTop: '6px' });
+        add('div', 'wlcm\'s questions on your phone: tap Yes / No raise / Not now there and it is pressed here. This PC has to stay on with this CRM tab open. The question text goes through the relay you host (passenger and driver notes are not sent). With the phone on, a question waits 10 minutes instead of 60 seconds.', { color: '#9aa6ad', margin: '4px 0 10px' });
+        add('div', 'Relay address (e.g. https://wlcm.eserris.com or your Tailscale Funnel address)', { color: '#7d8a90', fontSize: '12px', marginTop: '6px' });
         const urlInput = add('input');
         urlInput.type = 'text';
         urlInput.value = cfg.url;
@@ -29212,7 +30915,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const say = function(text, good) { status.textContent = text; status.style.color = good === true ? '#6fd16f' : good === false ? '#ff9d94' : '#cfd6da'; };
         const connect = async function() {
             const url = String(urlInput.value || '').trim().replace(/\/+$/, '').toLowerCase();
-            if (!WP_REMOTE_URL.test(url)) { say('✗ The address must look like https://name.your-tailnet.ts.net:8443 or https://name.your-account.workers.dev', false); return false; }
+            if (!WP_REMOTE_URL.test(url)) { say('✗ The address must look like https://name.your-tailnet.ts.net:8443 or https://name.eserris.com', false); return false; }
             const now = wpRemoteConfig();
             // One key per relay, made here; the relay remembers the first one it sees.
             if (now.url !== url || !now.key) {
@@ -29240,7 +30943,7 @@ async function wpTransferAssistantExtensionEnabled() {
             codeBox.textContent = '';
             add('div', 'On the iPhone, in Safari, open:', { color: '#9aa6ad' }, codeBox);
             add('div', wpRemoteConfig().url, { fontWeight: '700', userSelect: 'all', overflowWrap: 'anywhere' }, codeBox);
-            add('div', 'Share → Add to Home Screen → open "mod" from the home screen → type this code (valid ' + result.minutes + ' min):', { color: '#9aa6ad', marginTop: '6px' }, codeBox);
+            add('div', 'Share → Add to Home Screen → open "wlcm" from the home screen → type this code (valid ' + result.minutes + ' min):', { color: '#9aa6ad', marginTop: '6px' }, codeBox);
             add('div', String(result.code).replace(/(\d{3})(\d{3})/, '$1 $2'), { font: '700 30px/1.3 ui-monospace,Consolas,monospace', letterSpacing: '.12em', color: '#7fd0ff' }, codeBox);
             add('div', 'Then tap "Turn on notifications" in the app.', { color: '#9aa6ad' }, codeBox);
         });
@@ -29277,7 +30980,7 @@ async function wpTransferAssistantExtensionEnabled() {
             codeBox.textContent = '';
             add('div', 'On your other PC: load the same extension, open the CRM, 📱 Phone → "Use a setup code", and paste this (it is the key to your relay — do not share it):', { color: '#9aa6ad' }, codeBox);
             add('div', 'WPD1-' + btoa(now.url + '\n' + now.key).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''), { font: '12px/1.4 ui-monospace,Consolas,monospace', userSelect: 'all', overflowWrap: 'anywhere', color: '#8fffd5', marginTop: '6px' }, codeBox);
-            add('div', 'After that both PCs share your rules, WhatsApp links and Hub history. The AI settings stay separate on each PC.', { color: '#9aa6ad', marginTop: '6px' }, codeBox);
+            add('div', 'After that both PCs share your rules, WhatsApp links and Hub history.', { color: '#9aa6ad', marginTop: '6px' }, codeBox);
             wpSyncTick(true).catch(function() {});
         });
         button('Use a setup code', '#8fffd5', function() {
@@ -29307,7 +31010,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 const result = await wpSyncTick(true);
                 codeBox.style.display = 'none';
                 if (result && result.ok) say('✓ This PC is linked: your rules, WhatsApp links and Hub history now stay the same on both. Press "Turn on" if this PC should also serve the phone when the other one is off.', true);
-                else say('✓ Linked, but the sync did not answer (' + (result && result.error || 'no answer') + '). Paste the newest worker.js into Cloudflare, then it starts by itself.', false);
+                else say('✓ Linked, but the sync did not answer (' + (result && result.error || 'no answer') + '). Put the newest worker.js on the relay server, then it starts by itself.', false);
             });
             codeInput.focus();
         });
@@ -29347,14 +31050,19 @@ async function wpTransferAssistantExtensionEnabled() {
             const text = String(note || '').replace(/\s+/g, ' ').trim().toLowerCase();
             const entries = ((JSON.parse(localStorage.getItem('wp_note_log_v1') || '{}') || {})[id] || []).filter(function(entry) { return entry.text === text; });
             const last = entries[entries.length - 1];
-            return last ? last.by + ' ' + new Date(last.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+            return last ? (last.by === 'wlcm' || last.by === 'ghas' ? 'wlcm' : last.by) + ' ' + new Date(last.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
         } catch (_) { return ''; }
     }
 
     function wpOutcomeTrackWorkflow(url, city, time, options) {
         options = options || {};
-        wpNoteLogAdd(url, [options.needsEm ? 'em' : '', /last\s*resort/i.test(String(options.customMessage || '')) && /\d\s*%/.test(String(options.customMessage || '')) ? '' : options.raiseMessage, options.customMessage], options.director ? 'mod' : 'you');
+        wpNoteLogAdd(url, [options.needsEm ? 'em' : '', /last\s*resort/i.test(String(options.customMessage || '')) && /\d\s*%/.test(String(options.customMessage || '')) ? '' : options.raiseMessage, options.customMessage], options.director ? 'wlcm' : 'you');
         if (!options.director) { try { const touchedId = wpOutcomeId(url); if (touchedId) wpUserTouchedSet(touchedId); } catch (_) {} }
+        // 1.7.327: the worked-on dot on the Em Hailing list
+        try {
+            const workedHow = options.broadcastMode === 'final' ? 'Final BC' : options.broadcastMode === 'send' ? 'BC' : 'quickbar';
+            if (options.director) wpWorkedGhasMark(wpOutcomeId(url), workedHow); else wpWorkedMark(wpOutcomeId(url), true, workedHow);
+        } catch (_) {}
         const actions = [];
         if (options.broadcastMode === 'final') actions.push('final');
         else if (options.broadcastMode === 'send') actions.push('bc');
@@ -29395,6 +31103,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 event.preventDefault();
                 event.stopPropagation();
                 wpSetPanelClosed(WP_TRANSFER_HISTORY_CLOSED_KEY, false);
+                try { localStorage.setItem(WP_AUTOCANCEL_SEEN_KEY, String(Date.now())); } catch (_) {}
                 panel.style.setProperty('bottom', wpHistoryStackOffsets().panel + 'px', 'important');
                 panel.style.setProperty('right', '14px', 'important');
                 panel.style.setProperty('top', 'auto', 'important');
@@ -32998,6 +34707,7 @@ async function wpTransferAssistantExtensionEnabled() {
 
 
     function wpTodayCityFindTable(tabName) {
+        if (tabName === 'later24') return wpLater24Table(); // 1.7.415
 
         const tables =
             Array.from(
@@ -33070,9 +34780,26 @@ async function wpTransferAssistantExtensionEnabled() {
     }
 
     function wpTodayCityGetTransfers(tabName) {
+        if (tabName === 'later24') return wpTodayCityGetTransfersOfTable(wpLater24Table()); // 1.7.415
+        // 1.7.407: by pickup date, from every list of the page
+        const want = tabName === 'tomorrow' ? 'tomorrow' : 'today';
+        const dayRows = wpDayRows(want);
+        if (dayRows) {
+            let all = null;
+            document.querySelectorAll('table.transfers').forEach(function(table) {
+                if (!table.getClientRects().length) return;
+                const list = wpTodayCityGetTransfersOfTable(table);
+                if (list) all = (all || []).concat(list);
+            });
+            if (all) {
+                const keep = new Set(dayRows);
+                return all.filter(function(item) { return item && item.row && keep.has(item.row); });
+            }
+        }
+        return wpTodayCityGetTransfersOfTable(wpTodayCityFindTable(tabName));
+    }
 
-        const table =
-            wpTodayCityFindTable(tabName);
+    function wpTodayCityGetTransfersOfTable(table) {
 
         if (!table) {
             return null;
@@ -33386,6 +35113,8 @@ async function wpTransferAssistantExtensionEnabled() {
                         crmPath:
                             row.dataset.wpCrmPath || ''
                     });
+                    // 1.7.401: the dashboard row itself, for the City Manager's copy of it
+                    try { Object.defineProperty(transfers[transfers.length - 1], 'row', { value: row, enumerable: false }); } catch (_) {}
 
                 }
             );
@@ -33902,7 +35631,7 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpCityOrdersBar(panel) {
         const header = panel.querySelector('.wp-today-city-orders-header');
         if (!header) return;
-        const count = panel.querySelectorAll('.wp-today-city-order-item').length;
+        const count = panel.querySelectorAll('.wp-today-city-order-item, tr.wp-cm-row').length;
         let info = header.querySelector('.wp-cm-count');
         if (!info) {
             info = document.createElement('span');
@@ -33927,13 +35656,13 @@ async function wpTransferAssistantExtensionEnabled() {
             });
             link('Open all', 'Open every transfer of this city', function() {
                 panel.querySelectorAll('.wp-today-city-orders-group').forEach(function(group) {
-                    if (!group.querySelector('.wp-today-city-order-item')) return;
+                    if (!group.querySelector('.wp-today-city-order-item, tr.wp-cm-row')) return;
                     const button = group.querySelector('.wp-today-city-orders-group-open'); if (button) button.click();
                 });
             });
             link('Image', 'Make the picture of this city\'s transfers', function() {
                 panel.querySelectorAll('.wp-today-city-orders-group').forEach(function(group) {
-                    if (!group.querySelector('.wp-today-city-order-item')) return;
+                    if (!group.querySelector('.wp-today-city-order-item, tr.wp-cm-row')) return;
                     const buttons = group.querySelectorAll('.wp-today-city-orders-group-open'); if (buttons[1]) buttons[1].click();
                 });
             });
@@ -33949,10 +35678,10 @@ async function wpTransferAssistantExtensionEnabled() {
         const viewportGap = 8, leftWidth = 390, paneWidth = 252, headHeight = 40;
         const overviewRect = overview.getBoundingClientRect();
         const left = Math.round(overviewRect.left);
-        const ordersWidth = Math.min(900, Math.floor(window.innerWidth - viewportGap - left - leftWidth - paneWidth));
+        const ordersWidth = Math.min(Math.max(900, panel._wpWantWidth || 0), Math.floor(window.innerWidth - viewportGap - left - leftWidth - paneWidth)); // 1.7.401: room for the dashboard rows
         if (side !== 'right' || !detached || !actionsWindow || ordersWidth < 480) { wpCityUnjoin(); return; }
         const top = Math.max(viewportGap, Math.round(overviewRect.top));
-        const total = Math.max(380, Math.min(560, Math.floor(window.innerHeight - top - 56)));
+        const total = Math.max(380, Math.min(860, Math.floor(window.innerHeight - top - 56)));
         const inner = (total - headHeight) + 'px';
         const ordersLeft = left + leftWidth;
         const paneLeft = ordersLeft + ordersWidth;
@@ -34237,6 +35966,25 @@ async function wpTransferAssistantExtensionEnabled() {
             wheelchair: bookedBox('transfer_wheelchair'),
             bulky: bookedBox('transfer_bulky_luggage')
         };
+        // 1.7.383: the flight (the arrival one, else the departure one): number, time, and the CRM's live tracking line
+        (function() {
+            const labelled = function(label) {
+                const cell = Array.from(doc.querySelectorAll('td.label')).find(function(node) { return String(node.textContent || '').replace(/\s+/g, ' ').trim() === label && node.nextElementSibling && String(node.nextElementSibling.textContent || '').trim(); });
+                return cell ? String(cell.nextElementSibling.textContent || '').replace(/\s+/g, ' ').trim() : '';
+            };
+            const arriving = bookedText('transfer_pre_transfer_name_short') || bookedText('transfer_pre_transfer_name');
+            const leaving = bookedText('transfer_post_transfer_name_short') || bookedText('transfer_post_transfer_name');
+            data.booking.flight = {
+                name: String(arriving || leaving).slice(0, 40),
+                word: arriving ? 'Lands' : 'Leaves',
+                at: bookedText(arriving ? 'transfer_pre_transfer_datetime' : 'transfer_post_transfer_datetime'),
+                live: labelled('Flight Monitored').slice(0, 120)
+            };
+        })();
+        // 1.7.324: keep the traveller comment for the city hover
+        if (doc.getElementById('transfer_traveler_comment')) {
+            try { wpTravelerNoteRemember(key, data.booking.travelerNote); } catch (_) {}
+        }
 
         // Task notes: the CRM's notes table (#transfer-task-list), each row
         // "<span.task-label>Task</span>note text", in the order shown.
@@ -34323,7 +36071,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // loader, so the same transfer is not fetched again within 5 min.
         try {
             const rowStore = wpRowCrmLoad();
-            rowStore[key] = { at: Date.now(), tags: wpCrmPriceTags(data), car: data.carType || '' };
+            rowStore[key] = { at: Date.now(), tags: wpCrmPriceTags(data), tc: data.prices ? data.prices.tc : null, dc: data.prices ? data.prices.dc : null, car: data.carType || '', seats: wpChildSeatCount(data.booking), seatsV: WP_SEATS_VERSION };
             localStorage.setItem(WP_ROW_CRM_KEY, JSON.stringify(rowStore));
         } catch (_) {}
         return data;
@@ -34634,6 +36382,299 @@ async function wpTransferAssistantExtensionEnabled() {
         });
     } catch (_) {}
 
+    // ---- City Manager rows (1.7.401) ----
+    // The middle window shows each transfer exactly as its dashboard row: a copy
+    // of the row with every element's computed look written on it (the
+    // dashboard's CSS is for table.transfers only, and the copy must not be a
+    // table.transfers or the dashboard code would treat it as one of its own).
+    // The copy is for looking, ticking and expanding: nothing inside it is clickable.
+    const WP_CM_PROPS = ['display', 'color', 'background-color', 'background-image', 'background-size', 'background-position', 'background-repeat',
+        'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'vertical-align', 'white-space',
+        'text-decoration-line', 'text-decoration-color', 'text-transform', 'text-overflow', 'overflow', 'word-break', 'overflow-wrap',
+        'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+        'border-top-width', 'border-top-style', 'border-top-color', 'border-right-width', 'border-right-style', 'border-right-color',
+        'border-bottom-width', 'border-bottom-style', 'border-bottom-color', 'border-left-width', 'border-left-style', 'border-left-color',
+        'border-top-left-radius', 'border-top-right-radius', 'border-bottom-left-radius', 'border-bottom-right-radius',
+        'box-shadow', 'box-sizing', 'width', 'min-width', 'max-width', 'height', 'min-height', 'opacity', 'visibility',
+        'flex-direction', 'flex-wrap', 'flex-grow', 'flex-shrink', 'flex-basis', 'gap', 'align-items', 'justify-content', 'position', 'top', 'left', 'right', 'bottom'];
+    function wpCmCloneStyled(source, bump) {
+        const copy = source.cloneNode(true);
+        const from = [source].concat(Array.from(source.querySelectorAll('*')));
+        const to = [copy].concat(Array.from(copy.querySelectorAll('*')));
+        for (let i = 0; i < from.length && i < to.length; i++) {
+            const a = from[i], b = to[i];
+            const cs = window.getComputedStyle(a);
+            const cell = /^(TD|TH|TR)$/.test(a.tagName);
+            if (b.removeAttribute) {
+                b.removeAttribute('id');
+                Array.from(b.attributes || []).forEach(function(attr) { if (/^on/i.test(attr.name)) b.removeAttribute(attr.name); });
+            }
+            if (!b.style) continue;
+            // Sizes: only small inline boxes (badges, icons) keep theirs; cells and
+            // blocks size to their content, as the dashboard's are stretched to the page.
+            const shown = cs.display;
+            const keepSize = /^(IMG|svg|SVG)$/.test(a.tagName) || (/^inline-(block|flex)$/.test(shown) && parseFloat(cs.width) <= 80);
+            WP_CM_PROPS.forEach(function(prop) {
+                // the row dimming of the dashboard filters is not copied
+                if (prop === 'opacity' && cell) return;
+                if ((prop === 'width' || prop === 'height' || prop === 'min-height') && !keepSize) return;
+                let value = cs.getPropertyValue(prop);
+                if (prop === 'position' && (value === 'sticky' || value === 'fixed')) value = 'static';
+                if (prop === 'font-size' && bump && /px$/.test(value)) value = (parseFloat(value) + bump) + 'px'; // 1.7.404
+                if (value) b.style.setProperty(prop, value, 'important');
+            });
+            if (cell) {
+                b.style.setProperty('width', 'auto', 'important');
+                b.style.setProperty('height', 'auto', 'important');
+            }
+            if (i > 0 && !cell) b.style.setProperty('pointer-events', 'none', 'important');
+        }
+        copy.querySelectorAll('input, select, textarea').forEach(function(node) { node.remove(); });
+        copy.classList.remove('wp-rx-open', 'wp-rx-row');
+        return copy;
+    }
+    // 1.7.402: columns the City Manager leaves out (already clear from the city
+    // window, or not needed there), found by the dashboard's header text and
+    // by the cell classes the extension gives them.
+    const WP_CM_DROP_HEADERS = ['city', 'tbo', 'order#', 'order', 'task', 's', 'priority', 'at risk', 'driver'];
+    const WP_CM_DROP_CLASSES = ['wp-tbo-cell', 'wp-s-cell', 'wp-city-link', 'wp-sel-cell'];
+    function wpCmDropIndexes(headRow) {
+        const out = [];
+        if (!headRow) return out;
+        Array.from(headRow.children).forEach(function(cell, index) {
+            const name = String(cell.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            if (WP_CM_DROP_HEADERS.indexOf(name) >= 0 || WP_CM_DROP_CLASSES.some(function(cls) { return cell.classList.contains(cls); })) out.push(index);
+        });
+        return out;
+    }
+    function wpCmDropCells(copyRow, indexes) {
+        const cells = Array.from(copyRow.children);
+        cells.forEach(function(cell, index) {
+            if (indexes.indexOf(index) >= 0 || WP_CM_DROP_CLASSES.some(function(cls) { return cell.classList.contains(cls); })) cell.remove();
+        });
+    }
+    // The card theme on the copy: no CRM grid, Segoe UI, a thin line under each
+    // row, plain text light; the coloured text (partner, tags, timers) keeps its colour.
+    function wpCmTheme(copyRow, head, baseColor) {
+        const font = '"Segoe UI",system-ui,-apple-system,Roboto,sans-serif';
+        copyRow.style.setProperty('background', 'transparent', 'important');
+        copyRow.querySelectorAll('*').forEach(function(node) { if (node.style) node.style.setProperty('font-family', font, 'important'); });
+        Array.from(copyRow.children).forEach(function(cell) {
+            const set = function(prop, value) { cell.style.setProperty(prop, value, 'important'); };
+            set('background-color', 'transparent');
+            set('background-image', 'none');
+            set('box-shadow', 'none');
+            set('border', '0');
+            set('border-bottom', '1px solid rgba(255,255,255,0.07)');
+            set('font-family', font);
+            set('vertical-align', 'middle');
+            if (head) {
+                set('color', '#7d8a90');
+                set('font-size', '11px');
+                set('font-weight', '700');
+                set('letter-spacing', '0.04em');
+                set('text-transform', 'uppercase');
+                set('padding', '6px 9px');
+                set('white-space', 'nowrap');
+            } else {
+                set('padding', '7px 9px');
+                if (!cell.style.getPropertyValue('color') || cell.style.getPropertyValue('color') === baseColor) set('color', '#e8ecee');
+            }
+        });
+    }
+
+    // 1.7.403: the date column first and short: "6 Nov · 18:40" (no year, no "(3h)").
+    function wpCmDateIndex(headRow) {
+        if (!headRow) return -1;
+        return Array.from(headRow.children).findIndex(function(cell) {
+            const name = String(cell.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            return name === 'date' || name === 'datetime' || name === 'date time';
+        });
+    }
+    function wpCmDateCell(cell) {
+        if (!cell) return;
+        const raw = String(cell.textContent || '').replace(/\s+/g, ' ').trim();
+        const m = raw.match(/(\d{1,2})\s+([A-Za-zÀ-ɏ]{3,})\.?(?:\s+\d{4})?\s*[-–,]?\s*(\d{1,2}:\d{2})/);
+        cell.title = raw;
+        cell.replaceChildren();
+        const time = document.createElement('span');
+        time.className = 'wp-cm-time';
+        const day = document.createElement('span');
+        day.className = 'wp-cm-day';
+        if (m) {
+            time.textContent = m[3];
+            const today = new Date();
+            const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+            const isToday = Number(m[1]) === today.getDate() && months.indexOf(m[2].slice(0, 3).toLowerCase()) === today.getMonth();
+            const tomorrow = new Date(Date.now() + 864e5);
+            const isTomorrow = Number(m[1]) === tomorrow.getDate() && months.indexOf(m[2].slice(0, 3).toLowerCase()) === tomorrow.getMonth();
+            day.textContent = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : m[1] + ' ' + m[2].slice(0, 3);
+        } else {
+            time.textContent = raw.replace(/\s*\([^)]*\)\s*$/, '');
+        }
+        cell.appendChild(time);
+        if (day.textContent) cell.appendChild(day);
+        cell.classList.add('wp-cm-date');
+        ['white-space', 'nowrap'].forEach(function() {});
+        cell.style.setProperty('white-space', 'nowrap', 'important');
+    }
+
+    // 1.7.406: the dimming filters inside the City Manager: its own list, a bar
+    // at the top of the middle window, the same matching as the dashboard's.
+    function wpCmFocusFromCell(row, cell) {
+        const clean = wpTransferFocusClean;
+        if (cell.classList.contains('partner')) {
+            const partner = wpTransferFocusPartner(cell);
+            return partner ? ['partner', partner, clean(cell.textContent)] : null;
+        }
+        if (cell.classList.contains('wp-car-cell')) {
+            const car = clean(cell.textContent);
+            return car ? ['car', car.toLowerCase(), car] : null;
+        }
+        if (cell.matches('.wp-from-cell, .wp-to-cell, .from, .to')) {
+            const which = cell.matches('.wp-from-cell, .from') ? 'from' : 'to';
+            const place = wpTransferFocusPlace(row, which);
+            const shown = clean(wpLocationCellText(cell));
+            return place ? [which, place, (which === 'from' ? 'From ' : 'To ') + (shown.length > 28 ? shown.slice(0, 27) + '…' : shown)] : null;
+        }
+        if (cell.classList.contains('wp-cm-date-col')) {
+            const day = wpTransferFocusDay({ textContent: cell.title || cell.textContent });
+            return day ? ['date', day, day.replace(/\s+\d{4}$/, '').replace(/\b[a-z]/g, function(letter) { return letter.toUpperCase(); })] : null;
+        }
+        if (cell.classList.contains('wp-pudo-cell')) {
+            const chip = cell.querySelector('.wp-pudo-chip');
+            if (!chip) return null;
+            const dropOff = chip.classList.contains('is-do');
+            return ['pudo', dropOff ? 'do' : 'pu', dropOff ? 'Drop-off' : 'Pickup'];
+        }
+        if (cell.classList.contains('wp-loc-cell')) {
+            const badges = cell.querySelectorAll('.wp-loc-badge');
+            return badges.length === 1 && badges[0].title ? ['place', badges[0].title, badges[0].title] : null;
+        }
+        if (cell.classList.contains('wp-transfer-tags')) {
+            if (cell.querySelector('.wp-transfer-tag-final')) return ['tag', 'final-bc', 'Final BC'];
+            if (cell.querySelector('.wp-transfer-tag-no-tag')) return ['tag', 'no-tag', 'No tag'];
+            return null;
+        }
+        if (cell.classList.contains('wp-autocancel-cell')) {
+            if (cell.classList.contains('wp-autocancel-red')) return ['autocancel', 'red', 'Auto-cancel red'];
+            if (cell.classList.contains('wp-autocancel-orange')) return ['autocancel', 'orange', 'Auto-cancel under 1 h'];
+        }
+        return null;
+    }
+    function wpCmFocusHas(row, filter) {
+        if (filter.group === 'date') {
+            const cell = row.querySelector(':scope > .wp-cm-date-col');
+            return wpTransferFocusDay({ textContent: cell ? (cell.title || cell.textContent) : '' }) === filter.value;
+        }
+        return wpTransferFocusHas(row, filter);
+    }
+    function wpCmFocusApply(panel, group, value, label) {
+        const filters = panel._wpCmFilters || [];
+        const same = filters.find(function(item) { return item.group === group; });
+        const rest = filters.filter(function(item) { return item.group !== group; });
+        panel._wpCmFilters = same && same.value === value ? rest : rest.concat([{ group: group, value: value, label: label }]);
+        wpCmFocusPaint(panel);
+    }
+    function wpCmFocusPaint(panel) {
+        const filters = panel._wpCmFilters || [];
+        let count = 0;
+        panel.querySelectorAll('tr.wp-cm-row').forEach(function(row) {
+            const match = !filters.length || filters.every(function(filter) { return wpCmFocusHas(row, filter); });
+            if (filters.length && match) count++;
+            row.classList.toggle('wp-cm-dim', !match);
+        });
+        let bar = panel.querySelector('.wp-cm-focus-bar');
+        const list = panel.querySelector('.wp-today-city-orders-list');
+        if (!filters.length) { if (bar) bar.remove(); return; }
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.className = 'wp-cm-focus-bar';
+            Object.assign(bar.style, { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', margin: '6px 0 8px', padding: '6px 8px 6px 12px', borderRadius: '999px', background: 'rgba(255,255,255,0.05)', fontSize: '12px', color: '#dfe6e9' });
+            ['click', 'mousedown'].forEach(function(type) { bar.addEventListener(type, function(event) { event.stopPropagation(); }); });
+            if (list) list.insertBefore(bar, list.firstChild); else panel.appendChild(bar);
+        }
+        bar.textContent = '';
+        const total = document.createElement('span');
+        total.textContent = count + ' transfer' + (count === 1 ? '' : 's');
+        total.style.color = count ? '#8fffd5' : '#ffd27a';
+        total.style.fontWeight = '700';
+        bar.appendChild(total);
+        const pill = function(text, title, action, strong) {
+            const node = document.createElement('button');
+            node.type = 'button';
+            node.textContent = text;
+            node.title = title;
+            [['font', 'inherit'], ['cursor', 'pointer'], ['padding', '3px 10px'], ['border-radius', '999px'], ['white-space', 'nowrap'], ['font-weight', strong ? '700' : '500'],
+                ['background', strong ? '#2fbf71' : 'rgba(255,255,255,0.09)'], ['color', strong ? '#06210f' : '#e8ecee'], ['border', '0']]
+                .forEach(function(pair) { node.style.setProperty(pair[0], pair[1], 'important'); });
+            node.addEventListener('click', function(event) { event.preventDefault(); event.stopPropagation(); action(); });
+            bar.appendChild(node);
+        };
+        filters.forEach(function(filter) {
+            pill(filter.label + ' ×', 'Take ' + filter.label + ' off', function() {
+                panel._wpCmFilters = (panel._wpCmFilters || []).filter(function(item) { return item !== filter; });
+                wpCmFocusPaint(panel);
+            }, false);
+        });
+        pill('Clear', 'Show every transfer again', function() { panel._wpCmFilters = []; wpCmFocusPaint(panel); }, true);
+    }
+
+    function wpCmRxStyles() {
+        if (document.getElementById('wp-cm-rx-style')) return;
+        try { wpRxInjectStyles(); } catch (_) {}
+        const source = document.getElementById('wp-rx-style');
+        if (!source) return;
+        const style = document.createElement('style');
+        style.id = 'wp-cm-rx-style';
+        style.textContent = source.textContent.split('html body table.transfers > tbody > ').join('html body table.wp-cm-table > tbody > ') +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-cm-row{cursor:pointer}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-cm-row:hover > td{background-color:rgba(255,255,255,0.04)!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-cm-row.wp-rx-open > td:first-child{box-shadow:inset 2px 0 0 #8fffd5!important}' +
+            // 1.7.403: a bit more flare
+            '\nhtml body table.wp-cm-table{border-collapse:separate!important;border-spacing:0!important}' +
+            '\nhtml body table.wp-cm-table > thead > tr > th{border-bottom:1px solid rgba(143,255,213,0.22)!important;padding-top:8px!important;padding-bottom:7px!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-cm-row > td{padding-left:16px!important;padding-right:16px!important;padding-top:9px!important;padding-bottom:9px!important;transition:background-color .12s ease}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-cm-row:has(> td.wp-cm-tick input:checked) > td{background-color:rgba(143,255,213,0.07)!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-cm-row:has(> td.wp-cm-tick input:checked) > td.wp-cm-tick{box-shadow:inset 3px 0 0 #8fffd5!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-cm-row:has(> td.wp-cm-tick input:checked):hover > td{background-color:rgba(143,255,213,0.11)!important}' +
+            '\nhtml body table.wp-cm-table td.wp-cm-tick input{accent-color:#2fbf71!important}' +
+            '\nhtml body table.wp-cm-table td.wp-cm-date{padding-left:6px!important}' +
+            '\nhtml body table.wp-cm-table th.wp-cm-date-col{text-align:left!important;padding-left:6px!important}' +
+            '\nhtml body table.wp-cm-table .wp-cm-time{font-weight:700!important;font-size:15px!important;color:#ffffff!important;letter-spacing:.01em!important;font-variant-numeric:tabular-nums!important}' +
+            '\nhtml body table.wp-cm-table .wp-cm-day{margin-left:7px!important;padding:1px 7px!important;border-radius:999px!important;background:rgba(255,255,255,0.07)!important;color:#9aa6ad!important;font-size:11px!important;font-weight:600!important}' +
+            '\nhtml body table.wp-cm-table td.wp-cm-expand, html body table.wp-cm-table th.wp-cm-expand{width:40px!important;min-width:40px!important;padding:0 10px 0 4px!important;text-align:right!important;background:transparent!important;border:0!important;border-bottom:1px solid rgba(255,255,255,0.07)!important}' +
+            '\nhtml body table.wp-cm-table th.wp-cm-expand{border-bottom-color:rgba(143,255,213,0.22)!important}' +
+            '\nhtml body table.wp-cm-table .wp-cm-arrow{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:24px!important;height:24px!important;border-radius:999px!important;background:rgba(255,255,255,0.07)!important;color:#cfd6da!important;font-size:12px!important;cursor:pointer!important;transition:transform .15s ease,background .12s ease}' +
+            '\nhtml body table.wp-cm-table td.wp-cm-expand:hover .wp-cm-arrow{background:rgba(143,255,213,0.20)!important;color:#8fffd5!important}' +
+            '\nhtml body table.wp-cm-table tr.wp-rx-open .wp-cm-arrow{transform:rotate(180deg)!important;background:rgba(143,255,213,0.22)!important;color:#8fffd5!important}' +
+            // 1.7.405: the expander as on the dashboard; the expanded view as stacked sections
+            '\nhtml body table.wp-cm-table th.wp-cm-expand, html body table.wp-cm-table td.wp-cm-expand{width:100%!important;min-width:48px!important;padding:0 8px!important;text-align:left!important;background:transparent!important;border:0!important;border-bottom:1px solid rgba(255,255,255,0.07)!important;cursor:pointer!important}' +
+            '\nhtml body table.wp-cm-table th.wp-cm-expand{border-bottom-color:rgba(143,255,213,0.22)!important;cursor:default!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-cm-row.wp-cm-dim > td{opacity:.28!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-cm-row > td:is(.partner,.wp-car-cell,.wp-from-cell,.wp-to-cell,.from,.to,.wp-cm-date-col,.wp-pudo-cell,.wp-loc-cell,.wp-autocancel-cell):hover{background-image:linear-gradient(rgba(255,255,255,.06),rgba(255,255,255,.06))!important;cursor:zoom-in!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail > td{padding:6px 18px 10px 22px!important;background:rgba(255,255,255,0.025)!important;box-shadow:inset 3px 0 0 #8fffd5!important;border-bottom:1px solid rgba(255,255,255,0.08)!important;font-size:14px!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-grid{display:flex!important;flex-direction:column!important;flex-wrap:nowrap!important;gap:0!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone{--wpt:#8b9096;display:grid!important;grid-template-columns:140px minmax(0,1fr)!important;column-gap:18px!important;row-gap:2px!important;align-items:start!important;background:transparent!important;border:0!important;border-radius:0!important;box-shadow:none!important;padding:9px 2px!important;border-bottom:1px solid rgba(255,255,255,0.06)!important;min-width:0!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone-yellow{--wpt:#ffd27a}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone-mint{--wpt:#8fffd5}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone-blue{--wpt:#7fd0ff}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone-orange{--wpt:#ffb347}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone-red{--wpt:#ff9d94}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone-purple{--wpt:#c9a3ff}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone-sky{--wpt:#74b8f4}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone-grey{--wpt:#8b9096}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone > .wp-rx-label{grid-column:1!important;grid-row:1!important;margin:2px 0 0!important;color:var(--wpt)!important;font-size:11px!important;letter-spacing:.08em!important;text-transform:uppercase!important;display:flex!important;align-items:center!important;gap:7px!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone > .wp-rx-label::before{content:\'\';width:8px;height:8px;border-radius:999px;background:var(--wpt);box-shadow:0 0 0 3px rgba(255,255,255,0.04);flex:0 0 auto}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone > :not(.wp-rx-label){grid-column:2!important;min-width:0!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone .wp-rx-item{padding:1px 0!important;margin:0!important;border:0!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone .wp-rx-when{min-width:70px!important;color:#9aa6ad!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-tone .wp-rx-big{font-size:16px!important}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail .wp-rx-block:not(.wp-rx-tone){display:flex!important;gap:8px!important;align-items:center!important;justify-content:flex-end!important;padding:8px 0 0!important;border:0!important;order:99}' +
+            '\nhtml body table.wp-cm-table > tbody > tr.wp-rx-detail > td{border-radius:0 0 12px 12px!important}';
+        (document.head || document.documentElement).appendChild(style);
+    }
+
     function wpTodayCityOpenCityWindow(
         city,
         tabName
@@ -34703,7 +36744,7 @@ async function wpTransferAssistantExtensionEnabled() {
         titleCity.textContent = popupTitle;
         title.appendChild(titleCity);
         title.appendChild(document.createTextNode(
-            ' — ' + (tabName === 'tomorrow' ? 'Tomorrow' : (wpEmPeriod() || 'Today'))
+            ' — ' + (tabName === 'tomorrow' ? 'Tomorrow' : (wpTabPeriod(tabName) || 'Today'))
         ));
         if (popupTitle === city) {
             try { setupCityPriceTooltip(titleCity, getTransferCityHoverData); } catch (_) {}
@@ -34891,9 +36932,11 @@ async function wpTransferAssistantExtensionEnabled() {
 
             render();
             panel._wpSummaryPoll = window.setInterval(function() {
-                if (render() || Date.now() - startedAt > 30 * 60 * 1000) {
+                const finished = render();
+                if (finished || Date.now() - startedAt > 30 * 60 * 1000) {
                     clearInterval(panel._wpSummaryPoll);
                     panel._wpSummaryPoll = null;
+                    if (finished) wpCmReloadWhenIdle('City Manager', batch); // 1.7.346: always refresh after a batch
                 }
             }, 2000);
         }
@@ -34915,7 +36958,7 @@ async function wpTransferAssistantExtensionEnabled() {
         broadcastText.style.whiteSpace = 'nowrap';
         broadcastText.value =
             'Hello everyone we have these transfers available on broadcast for ' +
-            (tabName === 'tomorrow' ? 'tomorrow' : (wpEmPeriod() ? 'the next days' : 'today')) + ':';
+            (tabName === 'tomorrow' ? 'tomorrow' : (wpTabPeriod(tabName) ? 'the next ' + wpTabPeriod(tabName) : 'today')) + ':';
         broadcastText.title = 'Copy this message into WhatsApp';
 
         const taskRow = document.createElement('div');
@@ -35477,7 +37520,7 @@ async function wpTransferAssistantExtensionEnabled() {
         Object.assign(hubStatus.style, { fontSize: '11.5px', lineHeight: '1.4', color: '#9aa6ad', minHeight: '16px', whiteSpace: 'pre-line' });
         const HUB_ACTIONS = [
             { key: '', label: 'Select in Hub', cap: 500, color: '#7fd0ff', title: 'Only tick the same transfers in the Hub. Nothing else happens.' },
-            { key: 'ask', label: 'WA · Ask best drivers', cap: 40, color: '#8fffd5', title: 'Ticks them in the Hub and opens its "Ask best drivers" plan. You confirm it there. The Hub plans at most 40 transfers at a time.' },
+            { key: 'ask', label: 'WA · Ask best drivers', cap: 40, color: '#8fffd5', title: 'Ticks them in the Hub, waits for its "Ask best drivers" plan and presses "Ask N drivers…" for you (with Confirm in the Hub for me ticked; otherwise you confirm it there). The Hub plans at most 40 transfers at a time.' },
             { key: 'share', label: 'Share list', cap: 500, color: '#cfd6da', title: 'Ticks them in the Hub and presses its "Share list".' },
             { key: 'tag', label: 'Tag', cap: 200, color: '#cfd6da', instant: true, title: 'Ticks them in the Hub and presses its "Tag". The Hub runs Tag AT ONCE, without a dialog — so it asks you here first (click twice). At most 200 at a time.' },
             { key: 'note', label: 'Add note', cap: 200, color: '#cfd6da', title: 'Ticks them in the Hub and opens its "Add note" dialog. You type the note and confirm there. At most 200 at a time.' },
@@ -35493,7 +37536,8 @@ async function wpTransferAssistantExtensionEnabled() {
         const hubSent = {};
         // "Confirm in the Hub for me" and what goes into the Hub's dialog.
         const HUB_AUTO_KEY = 'wp_hub_auto_v1';
-        const HUB_AUTO_ACTIONS = ['note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change'];
+        // 1.7.409: + Ask best drivers (its "Ask N drivers about M transfers" button is pressed for you, as in the chain)
+        const HUB_AUTO_ACTIONS = ['ask', 'note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change'];
         let hubAuto = { on: true, note: '', mode: 'pct', value: '' };
         try { hubAuto = Object.assign(hubAuto, JSON.parse(localStorage.getItem(HUB_AUTO_KEY) || '{}') || {}); } catch (_) {}
         const hubAutoSave = function() { try { localStorage.setItem(HUB_AUTO_KEY, JSON.stringify(hubAuto)); } catch (_) {} };
@@ -35548,7 +37592,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 let label = action.label;
                 if (ids.length > action.cap) label += ' · ' + (part.from + 1) + '–' + part.to + ' of ' + ids.length;
                 else if (ids.length) label += ' (' + ids.length + ')';
-                if (hubArmed === action.key) label = action.label + ' ' + (part.to - part.from) + ' now — click again';
+                if (hubArmed && hubArmed === action.key) label = action.label + ' ' + (part.to - part.from) + ' now — click again'; // (1.7.403: not on Select in Hub, whose key is empty)
                 button.textContent = label;
                 button.disabled = hubBusy || ids.length === 0;
                 button.style.opacity = ids.length === 0 ? '0.45' : (hubBusy ? '0.6' : '1');
@@ -35650,6 +37694,14 @@ async function wpTransferAssistantExtensionEnabled() {
                         } catch (_) {}
                         if (gone) answer.details = (Array.isArray(answer.details) ? answer.details : []).concat([gone + ' unticked here (#' + goneIds.slice(0, 6).join(', #') + ')']);
                         const outcome = wpHubAutoOutcome(what, answer, chunk.length);
+                        // 1.7.346: price remembered for the note; a Broadcast → note + image + refresh
+                        if (answer.confirmed && action.key === 'price_change') wpHubRememberPrice(chunk, auto.price);
+                        if (answer.confirmed && action.key === 'broadcast') {
+                            const sent = chunk.filter(function(id) { return goneIds.indexOf(id) < 0; });
+                            const chosen = items.filter(function(item) { const id = (String(item && item.url || '').match(/transfers\/(\d+)/) || [])[1] || ''; return id && sent.indexOf(id) >= 0; });
+                            const note = wpCmAfterHubBroadcast(chosen, sent, tabName, logName);
+                            if (note) outcome.text += '\nNote "' + note + '" + image of ' + chosen.length + ' to the group';
+                        }
                         done(outcome.text + (answer.confirmed && left > 0 ? '\n' + left + ' more to go: press ' + action.label + ' again for the next part.' : ''),
                             outcome.tone === 'ok' ? '#6fd16f' : '#ffd27a', outcome.tone === 'ok' ? undefined : 'warn', answer.confirmed === true);
                         return;
@@ -35695,7 +37747,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const warn = function(text) { hubChainArmed = false; hubStatus.style.color = '#ffd27a'; hubStatus.textContent = text; paintHubButton(); };
             if (plan.error) { warn('Chain: ' + plan.error + '.'); try { hubValueInput.focus(); } catch (_) {} return; }
             if (ids.length > plan.cap) { warn('Chain: at most ' + plan.cap + ' transfers at once' + (plan.price ? ' with a price change' : '') + ' — ' + ids.length + ' are ticked. Untick some and run it again for the rest.'); return; }
-            const order = ['Tag'].concat(plan.price ? ['Price Change (' + wpHubPriceText(plan.price) + ')'] : []).concat(['Remove Auto-C', 'Broadcast', 'wait 30 s', 'Enable Auto-C', 'note "' + plan.note + '" on each transfer']);
+            const order = ['Tag'].concat(plan.price ? ['Price Change (' + wpHubPriceText(plan.price) + ')'] : []).concat(['Remove Auto-C', 'Broadcast', 'Ask best drivers', 'wait 30 s', 'Enable Auto-C', 'note "' + plan.note + '" on each transfer']);
             if (!hubChainArmed) {
                 hubChainArmed = true;
                 if (hubChainTimer) clearTimeout(hubChainTimer);
@@ -35737,7 +37789,18 @@ async function wpTransferAssistantExtensionEnabled() {
             const step = async function(label, key, auto, needsConfirm, keep) {
                 say('Chain · ' + label + '…');
                 const answer = await send(key, auto, keep);
-                const why = problem(answer, needsConfirm);
+                let why = problem(answer, needsConfirm);
+                // 1.7.355: some transfers are not in the Hub's list: they are left out and the
+                // step runs again (selected afresh) with the ones that are there
+                const missing = answer && !answer.filtered ? (answer.missing || []).map(String).filter(function(id) { return ids.indexOf(id) >= 0; }) : [];
+                if (why && missing.length && missing.length < ids.length) {
+                    missing.forEach(function(id) { ids.splice(ids.indexOf(id), 1); });
+                    hubUntick(missing);
+                    done.push(missing.length + ' not in the Hub list, left out (#' + missing.slice(0, 6).join(', #') + ')');
+                    wpDashLog(logName + ' → Ops Hub chain: #' + missing.join(', #') + ' — not in the Hub list, left out; the chain goes on with ' + ids.length, 'warn');
+                    say('Chain · ' + label + ' (without ' + missing.length + ' not in the Hub)…');
+                    return step(label, key, auto, needsConfirm, false);
+                }
                 if (why) {
                     if (answer && (answer.missing || []).length && !answer.filtered) { const gone = hubUntick(answer.missing); if (gone) done.push(gone + ' unticked here'); }
                     wpDashLog(logName + ' → Ops Hub chain: ' + label + ' — NOT done: ' + why, 'warn');
@@ -35767,8 +37830,39 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (why) fail('Select', why);
                 if (!stopped) { why = await step('Tag', 'tag', null, false, true); if (why) fail('Tag', why); }
                 if (!stopped && plan.price) { why = await step('Price Change', 'price_change', { note: '', price: plan.price }, true, true); if (why) fail('Price Change', why); }
-                if (!stopped) { why = await step('Remove Auto-C', 'remove_auto_c', { note: '', price: null }, true, true); if (why) fail('Remove Auto-C', why); else autoCOff = true; }
+                if (!stopped) {
+                    why = await step('Remove Auto-C', 'remove_auto_c', { note: '', price: null }, true, true);
+                    // 1.7.357: every one blocked by a Hub guardrail: Auto-C stays as it is (no Remove,
+                    // no Enable later) and the chain goes on to the Broadcast
+                    if (why && /blocked by a Hub guardrail/i.test(why)) {
+                        done.push('Remove Auto-C skipped (Hub guardrail) — Auto-C left as it was');
+                        wpDashLog(logName + ' → Ops Hub chain: Remove Auto-C blocked by a Hub guardrail — broadcasting without touching Auto-C', 'warn');
+                    } else if (why) fail('Remove Auto-C', why);
+                    else autoCOff = true;
+                }
                 if (!stopped) { why = await step('Broadcast', 'broadcast', { note: '', price: null }, true, true); if (why) fail('Broadcast', why); else broadcast = true; }
+                // 1.7.348: Ask best drivers after the broadcast (40 at a time, the Hub's limit);
+                // when it does not go through the chain goes on, the note just leaves it out
+                let asked = false;
+                if (broadcast) {
+                    const all = ids.slice();
+                    for (let from = 0; from < all.length; from += 40) {
+                        const part = all.slice(from, from + 40);
+                        const label = 'Ask best drivers' + (all.length > 40 ? ' ' + (from + 1) + '–' + (from + part.length) : '');
+                        say('Chain · ' + label + '…');
+                        const answer = await new Promise(function(resolve) {
+                            try {
+                                chrome.runtime.sendMessage({ type: 'WP_HUB_SELECT', ids: part, action: 'ask', quiet: true, keep: false, runId: runId + 'ask' + from, auto: { note: '', price: null } }, function(reply) {
+                                    resolve(chrome.runtime.lastError || !reply ? { ok: false, message: chrome.runtime.lastError ? chrome.runtime.lastError.message : 'the Hub did not answer' } : reply);
+                                });
+                            } catch (error) { resolve({ ok: false, message: String(error && error.message || error) }); }
+                        });
+                        const why = problem(answer, true);
+                        if (why) { done.push(label + ' — not done: ' + why); wpDashLog(logName + ' → Ops Hub chain: ' + label + ' — NOT done: ' + why, 'warn'); }
+                        else { asked = true; done.push(label + ' ✓'); wpDashLog(logName + ' → Ops Hub chain: ' + label + ' ✓' + (answer.result ? ' — Hub: ' + answer.result : '')); }
+                    }
+                }
+                if (asked) plan.note = plan.note + ' / asked best drivers';
                 if (autoCOff) {
                     if (broadcast) {
                         for (let left = 30; left > 0; left--) { say('Chain · Broadcast sent — Enable Auto-C in ' + left + ' s…'); await new Promise(function(resolve) { window.setTimeout(resolve, 1000); }); }
@@ -35792,6 +37886,8 @@ async function wpTransferAssistantExtensionEnabled() {
                         noted = chosen.length;
                         done.push('note on ' + noted);
                     }
+                    // 1.7.346: then the image of only these transfers to the city group
+                    if (chosen.length) { wpGenerateTransfersImage(chosen, tabName, '', true).catch(function() {}); done.push('image of ' + chosen.length); }
                 }
                 const summary = done.join(' · ') + (stopped ? ' · stopped at ' + stoppedAt + ': ' + stopped : '') + (noted ? ' — the note "' + plan.note + '" is being written on ' + noted + ' transfer' + (noted === 1 ? '' : 's') : '');
                 say((stopped ? 'Chain stopped — ' : partialSteps ? 'Chain done, but not every transfer went through — ' : '✓ Chain done — ') + summary, stopped || partialSteps ? '#ffd27a' : '#6fd16f');
@@ -35804,6 +37900,45 @@ async function wpTransferAssistantExtensionEnabled() {
             hubBusy = false;
             paintHubButton();
         };
+        // 1.7.347: auto mode: only the untagged ones ticked, then the chain (no second click)
+        panel._wpAutoChain = async function(skip) {
+            selected.clear();
+            const taken = [];
+            untaggedItems.forEach(function(item) {
+                const index = items.indexOf(item);
+                if (!item || !item.url || index < 0) return;
+                // 1.7.412: one already worked on by auto (not tagged since) is not taken again
+                if (skip && skip[wpCmAutoKey(item.url)]) return;
+                selected.add(index);
+                taken.push(wpCmAutoKey(item.url));
+            });
+            Array.from(panel.querySelectorAll('.wp-city-transfer-select')).forEach(function(input) { input.checked = selected.has(Number(input.dataset.wpIndex)); });
+            try { updateSelectionUI(); } catch (_) {}
+            const count = selected.size;
+            if (!count) return { count: 0, text: '' };
+            hubChainArmed = true;
+            await hubChainRun();
+            return { count: count, text: String(hubStatus.textContent || ''), taken: taken };
+        };
+        // 1.7.352: the phone's Chain: the transfers ticked there, with its price and note (the PC's boxes are left as they are)
+        panel._wpRemoteChain = async function(labels, price, note) {
+            const clean = function(value) { return String(value || '').replace(/\s+/g, ' ').trim(); };
+            const want = labels.map(clean);
+            if (hubBusy) return { count: 0, busy: true, text: '' };
+            selected.clear();
+            items.forEach(function(item, index) { if (item && item.url && want.indexOf(clean(item.orderLabel)) >= 0) selected.add(index); });
+            Array.from(panel.querySelectorAll('.wp-city-transfer-select')).forEach(function(input) { input.checked = selected.has(Number(input.dataset.wpIndex)); });
+            try { updateSelectionUI(); } catch (_) {}
+            const count = selected.size;
+            if (count < want.length) return { count: count, missing: want.length - count, text: '' };
+            const keep = { value: hubAuto.value, mode: hubAuto.mode, note: hubAuto.note };
+            hubAuto.value = price ? String(price.value) : '';
+            hubAuto.mode = price ? price.mode : keep.mode;
+            hubAuto.note = note || '';
+            hubChainArmed = true;
+            try { await hubChainRun(); } finally { hubAuto.value = keep.value; hubAuto.mode = keep.mode; hubAuto.note = keep.note; }
+            return { count: count, text: String(hubStatus.textContent || '') };
+        };
         hubChainButton = document.createElement('button');
         hubChainButton.type = 'button';
         hubChainButton.className = 'wp-hub-action wp-hub-chain';
@@ -35813,7 +37948,8 @@ async function wpTransferAssistantExtensionEnabled() {
             borderRadius: '9px', padding: '8px 10px', fontSize: '12.5px', fontWeight: '800', cursor: 'pointer', boxSizing: 'border-box', textAlign: 'left'
         });
         hubChainButton.addEventListener('click', function(event) { event.preventDefault(); event.stopPropagation(); hubChainRun(); });
-        hubBox.appendChild(hubChainButton);
+        // 1.7.403: the Ops Hub tab laid out like Actions (placed further down)
+        const hubButtonOf = {};
 
         HUB_ACTIONS.forEach(function(action) {
             const button = document.createElement('button');
@@ -35831,7 +37967,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 hubRun(action);
             });
             action.button = button;
-            hubBox.appendChild(button);
+            hubButtonOf[action.key] = button;
         });
         // Confirm in the Hub for me (1.7.224), with the note and the price
         // that go into the Hub's dialog.
@@ -35855,6 +37991,28 @@ async function wpTransferAssistantExtensionEnabled() {
         hubNoteInput.placeholder = 'Note text — for "Add note", and the note of the chain';
         hubNoteInput.value = String(hubAuto.note || '');
         Object.assign(hubNoteInput.style, hubFieldStyle, { width: '100%' });
+        // 1.7.403: Note as in Actions: the same list, plus "from the price" (the chain's
+        // own note) and Custom note… (the text box).
+        const hubLabel = function(text) { const node = document.createElement('div'); node.textContent = text; Object.assign(node.style, { fontSize: '11px', fontWeight: '700', color: '#9aa6ad', margin: '2px 0 0' }); return node; };
+        const hubNoteSel = document.createElement('select');
+        hubNoteSel.className = 'wp-hub-note-select';
+        const hubOption = function(select, value, text) { const option = document.createElement('option'); option.value = value; option.textContent = text; select.appendChild(option); };
+        hubOption(hubNoteSel, '__auto__', 'Note from the price');
+        (typeof wpBuildManagedTaskMessages === 'function' ? wpBuildManagedTaskMessages() : [])
+            .map(function(message) { return String(message || '').trim(); })
+            .filter(function(message, index, all) { return message && !/^em$/i.test(message) && all.indexOf(message) === index; })
+            .forEach(function(message) { hubOption(hubNoteSel, message, message); });
+        hubOption(hubNoteSel, '__custom__', 'Custom note…');
+        // Price increase as in Actions: its % choices the Hub can do (1–25 %), and Custom… (% / € / set).
+        const hubPriceSel = document.createElement('select');
+        hubPriceSel.className = 'wp-hub-price-select';
+        hubOption(hubPriceSel, '', 'No increase');
+        (typeof wpGetManagedCostOptions === 'function' ? wpGetManagedCostOptions() : []).forEach(function(config) {
+            const value = Number(config && config.value);
+            if (!/^\d+(\.\d+)?$/.test(String(config && config.value)) || !(value >= 1 && value <= 25)) return;
+            hubOption(hubPriceSel, 'pct:' + value, String(config.label || ('+' + value + '%')));
+        });
+        hubOption(hubPriceSel, '__custom__', 'Custom…');
         const hubPriceRow = document.createElement('div');
         Object.assign(hubPriceRow.style, { display: 'flex', gap: '5px' });
         const hubModeSelect = document.createElement('select');
@@ -35877,9 +38035,21 @@ async function wpTransferAssistantExtensionEnabled() {
         hubPriceRow.appendChild(hubValueInput);
         const hubHint = document.createElement('div');
         Object.assign(hubHint.style, { fontSize: '10.5px', lineHeight: '1.35', color: '#6f7b81' });
+        const hubFields = document.createElement('div');
+        Object.assign(hubFields.style, { display: 'flex', flexDirection: 'column', gap: '4px' });
+        // what is stored decides where the two dropdowns start
+        (function() {
+            const note = String(hubAuto.note || '').trim();
+            const options = Array.from(hubNoteSel.options).map(function(option) { return option.value; });
+            hubNoteSel.value = !note || note === wpHubPriceNote(null) || /^(raised \+|DC set to)/.test(note) ? '__auto__' : options.indexOf(note) >= 0 ? note : '__custom__';
+            const value = Math.round(Number(String(hubAuto.value || '').replace(',', '.')) * 10) / 10;
+            const wanted = !(value > 0) ? '' : hubAuto.mode === 'pct' ? 'pct:' + value : '__custom__';
+            hubPriceSel.value = Array.from(hubPriceSel.options).some(function(option) { return option.value === wanted; }) ? wanted : '__custom__';
+        })();
         const paintHubAuto = function() {
-            hubNoteInput.style.display = hubAuto.on ? '' : 'none';
-            hubPriceRow.style.display = hubAuto.on ? 'flex' : 'none';
+            hubFields.style.display = hubAuto.on ? 'flex' : 'none';
+            hubNoteInput.style.display = hubNoteSel.value === '__custom__' ? '' : 'none';
+            hubPriceRow.style.display = hubPriceSel.value === '__custom__' ? 'flex' : 'none';
             hubValueInput.placeholder = hubAuto.mode === 'pct' ? '1–25 %' : '€';
             hubValueInput.title = hubAuto.mode === 'pct' ? 'Price Change: % of driver cost, 1 to 25' : hubAuto.mode === 'add' ? 'Price Change: € to add over the original driver cost' : 'Price Change: the new driver cost in €';
             hubHint.style.display = 'none'; // 1.7.244: the explanation is not shown any more
@@ -35890,31 +38060,103 @@ async function wpTransferAssistantExtensionEnabled() {
         };
         hubAutoBox.addEventListener('change', function() { hubAuto.on = hubAutoBox.checked; hubArmed = ''; hubAutoSave(); paintHubAuto(); paintHubButton(); });
         hubNoteInput.addEventListener('input', function() { hubAuto.note = hubNoteInput.value; hubArmed = ''; hubAutoSave(); paintHubButton(); });
-        hubModeSelect.addEventListener('change', function() { hubAuto.mode = hubModeSelect.value; hubArmed = ''; hubAutoSave(); paintHubAuto(); paintHubButton(); });
-        hubValueInput.addEventListener('input', function() { hubAuto.value = hubValueInput.value; hubArmed = ''; hubAutoSave(); paintHubButton(); });
-        [hubAutoRow, hubNoteInput, hubModeSelect, hubValueInput].forEach(hubKeep);
+        hubNoteSel.addEventListener('change', function() {
+            if (hubNoteSel.value === '__auto__') hubNoteFromPrice();
+            else if (hubNoteSel.value !== '__custom__') { hubAuto.note = hubNoteSel.value; hubNoteInput.value = hubAuto.note; }
+            else { try { hubNoteInput.focus(); } catch (_) {} }
+            hubArmed = ''; hubAutoSave(); paintHubAuto(); paintHubButton();
+        });
+        hubPriceSel.addEventListener('change', function() {
+            const pick = hubPriceSel.value;
+            if (!pick) { hubAuto.value = ''; }
+            else if (pick.indexOf('pct:') === 0) { hubAuto.mode = 'pct'; hubAuto.value = pick.slice(4); }
+            hubModeSelect.value = ['pct', 'add', 'set'].indexOf(hubAuto.mode) >= 0 ? hubAuto.mode : 'pct';
+            hubValueInput.value = String(hubAuto.value || '');
+            hubNoteFromPrice(); hubArmed = ''; hubAutoSave(); paintHubAuto(); paintHubButton();
+            if (pick === '__custom__') { try { hubValueInput.focus(); } catch (_) {} }
+        });
+        // 1.7.347: the note follows the price box ("raised +20% DC/ sent to BC, Group",
+        // "raised +€5 DC/ …", "DC set to €55/ …", empty = "sent to BC, Group"); you can still edit it after.
+        const hubNoteFromPrice = function() {
+            if (hubNoteSel.value !== '__auto__') return;
+            const mode = ['pct', 'add', 'set'].indexOf(hubAuto.mode) >= 0 ? hubAuto.mode : 'pct';
+            const value = Math.round(Number(String(hubAuto.value || '').replace(',', '.')) * 10) / 10;
+            hubAuto.note = wpHubPriceNote(Number.isFinite(value) && value > 0 ? { mode: mode, value: value } : null);
+            hubNoteInput.value = hubAuto.note;
+        };
+        if (!String(hubAuto.note || '').trim()) hubNoteFromPrice();
+        hubModeSelect.addEventListener('change', function() { hubAuto.mode = hubModeSelect.value; hubNoteFromPrice(); hubArmed = ''; hubAutoSave(); paintHubAuto(); paintHubButton(); });
+        hubValueInput.addEventListener('input', function() { hubAuto.value = hubValueInput.value; hubNoteFromPrice(); hubArmed = ''; hubAutoSave(); paintHubButton(); });
+        [hubAutoRow, hubNoteInput, hubModeSelect, hubValueInput, hubNoteSel, hubPriceSel].forEach(hubKeep);
+        [hubNoteSel, hubPriceSel].forEach(function(select) { Object.assign(select.style, hubFieldStyle, { width: '100%', height: '28px', fontSize: '12.5px' }); });
+        hubFields.appendChild(hubLabel('Note'));
+        hubFields.appendChild(hubNoteSel);
+        hubFields.appendChild(hubNoteInput);
+        hubFields.appendChild(hubLabel('Price increase'));
+        hubFields.appendChild(hubPriceSel);
+        hubFields.appendChild(hubPriceRow);
+        hubBox.appendChild(hubFields);
+        // the buttons in the card's colours, as in Actions
+        const hubPaint = function(button, background, color) {
+            if (!button) return;
+            button.style.setProperty('background', background, 'important');
+            button.style.setProperty('color', color, 'important');
+            button.style.setProperty('border', '0', 'important');
+            button.style.setProperty('border-radius', '999px', 'important');
+            button.style.setProperty('text-align', 'center', 'important');
+            button.style.setProperty('padding', '8px 10px', 'important');
+            button.style.setProperty('font-weight', '700', 'important');
+        };
+        const hubRow = function(buttons) {
+            const row = document.createElement('div');
+            Object.assign(row.style, { display: 'flex', gap: '6px' });
+            buttons.filter(Boolean).forEach(function(button) { button.style.flex = '1 1 0'; button.style.minWidth = '0'; row.appendChild(button); });
+            return row;
+        };
+        hubPaint(hubChainButton, '#2fbf71', '#06210f');
+        hubChainButton.style.marginTop = '6px';
+        hubBox.appendChild(hubChainButton);
+        hubPaint(hubButtonOf.broadcast, '#74b8f4', '#04192b');
+        hubPaint(hubButtonOf.price_change, 'rgba(255,179,71,0.18)', '#ffb347');
+        hubBox.appendChild(hubRow([hubButtonOf.broadcast, hubButtonOf.price_change]));
+        hubPaint(hubButtonOf.tag, 'rgba(255,255,255,0.09)', '#e8ecee');
+        hubPaint(hubButtonOf.note, 'rgba(255,255,255,0.09)', '#e8ecee');
+        hubBox.appendChild(hubRow([hubButtonOf.tag, hubButtonOf.note]));
+        // the rest, small
+        const hubMore = document.createElement('div');
+        Object.assign(hubMore.style, { display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '2px' });
+        ['', 'ask', 'share', 'remove_auto_c', 'enable_auto_c'].forEach(function(key) {
+            const button = hubButtonOf[key];
+            if (!button) return;
+            hubPaint(button, key === 'remove_auto_c' ? 'rgba(255,138,128,0.14)' : 'rgba(255,255,255,0.07)', key === 'remove_auto_c' ? '#ff9d94' : key === '' ? '#7fd0ff' : '#cfd6da');
+            button.style.setProperty('padding', '5px 10px', 'important');
+            button.style.setProperty('font-size', '11.5px', 'important');
+            button.style.setProperty('font-weight', '600', 'important');
+            button.style.width = 'auto';
+            button.style.flex = '0 0 auto';
+            hubMore.appendChild(button);
+        });
+        hubBox.appendChild(hubMore);
         hubBox.appendChild(hubAutoRow);
-        hubBox.appendChild(hubNoteInput);
-        hubBox.appendChild(hubPriceRow);
         hubBox.appendChild(hubStatus);
         paintHubAuto();
         hubBox.appendChild(hubHint);
 
         // History (1.7.224): what was sent to the Hub, newest first.
         const hubHistoryHead = document.createElement('div');
-        Object.assign(hubHistoryHead.style, { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '6px', paddingTop: '7px', borderTop: '1px solid rgba(127,208,255,0.2)', fontSize: '11px', fontWeight: '700', color: '#7fd0ff' });
+        Object.assign(hubHistoryHead.style, { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '8px', paddingTop: '9px', borderTop: '1px solid rgba(255,255,255,0.08)', fontSize: '11px', fontWeight: '700', color: '#9aa6ad', letterSpacing: '0.08em', textTransform: 'uppercase' });
         const hubHistoryTitle = document.createElement('span');
         hubHistoryTitle.textContent = 'History';
         const hubHistoryClear = document.createElement('span');
         hubHistoryClear.textContent = 'Clear';
         hubHistoryClear.title = 'Empty the Hub history';
-        Object.assign(hubHistoryClear.style, { cursor: 'pointer', fontWeight: '400', color: '#7d8a90' });
+        Object.assign(hubHistoryClear.style, { cursor: 'pointer', fontWeight: '600', color: '#cfd6da', background: 'rgba(255,255,255,0.08)', borderRadius: '999px', padding: '2px 9px', fontSize: '10.5px' });
         hubHistoryClear.addEventListener('click', function(event) { event.preventDefault(); event.stopPropagation(); wpHubHistorySave([]); });
         hubHistoryHead.appendChild(hubHistoryTitle);
         hubHistoryHead.appendChild(hubHistoryClear);
         const hubHistoryList = document.createElement('div');
         hubHistoryList.className = 'wp-hub-history';
-        Object.assign(hubHistoryList.style, { maxHeight: '190px', overflowY: 'auto', fontSize: '11px', lineHeight: '1.4', display: 'flex', flexDirection: 'column', gap: '4px' });
+        Object.assign(hubHistoryList.style, { maxHeight: '260px', overflowY: 'auto', fontSize: '11px', lineHeight: '1.4', display: 'flex', flexDirection: 'column', gap: '6px', paddingRight: '2px' });
         const paintHubHistory = function() {
             const list = wpHubHistoryLoad();
             hubHistoryTitle.textContent = 'History' + (list.length ? ' · ' + list.length : '');
@@ -35926,13 +38168,52 @@ async function wpTransferAssistantExtensionEnabled() {
                 hubHistoryList.appendChild(none);
                 return;
             }
+            // 1.7.405: one card per run: the action as a coloured pill, how many, when; the city;
+            // what the Hub said, quieter; the edge and dot say how it went.
             list.slice(0, 25).forEach(function(entry) {
-                const line = document.createElement('div');
-                line.textContent = wpHubHistoryLine(entry);
-                line.title = new Date(Number(entry.at) || 0).toLocaleString();
-                line.style.color = entry.tone === 'bad' ? '#ff9d94' : entry.tone === 'warn' ? '#ffd27a' : '#cfd6da';
-                line.style.overflowWrap = 'anywhere';
-                hubHistoryList.appendChild(line);
+                const tone = entry.tone === 'bad' ? '#ff8a80' : entry.tone === 'warn' ? '#ffd27a' : '#6fd16f';
+                const action = String(entry.action || '');
+                const pill = /chain/i.test(action) ? ['rgba(47,191,113,0.18)', '#6fe3a3'] : /broadcast/i.test(action) ? ['rgba(116,184,244,0.18)', '#8cc5f6'] :
+                    /price/i.test(action) ? ['rgba(255,179,71,0.18)', '#ffb347'] : /remove/i.test(action) ? ['rgba(255,138,128,0.16)', '#ff9d94'] : ['rgba(255,255,255,0.09)', '#cfd6da'];
+                const when = new Date(Number(entry.at) || 0);
+                const clock = String(when.getHours()).padStart(2, '0') + ':' + String(when.getMinutes()).padStart(2, '0');
+                const day = new Date().toDateString() === when.toDateString() ? '' : when.getDate() + '/' + (when.getMonth() + 1) + ' ';
+                const said = String(entry.text || '')
+                    .replace(/\s*[—–-]\s*not in its list:\s*#?\d+(?:\s*,\s*#?\d+)*/i, '')
+                    .replace(/\s*(?:[·\n]\s*)?Check the Hub.s time window and filters\.?/i, '')
+                    .replace(/\s*(?:[·\n]\s*)?The Hub has a search typed in[^·\n]*/i, '')
+                    .replace(/\s*[·\n]\s*$/, '').trim();
+                const card = document.createElement('div');
+                card.title = when.toLocaleString() + '\n' + wpHubHistoryLine(entry);
+                Object.assign(card.style, { background: 'rgba(255,255,255,0.04)', borderRadius: '10px', padding: '7px 9px 7px 10px', boxShadow: 'inset 3px 0 0 ' + tone, display: 'flex', flexDirection: 'column', gap: '3px' });
+                const top = document.createElement('div');
+                Object.assign(top.style, { display: 'flex', alignItems: 'center', gap: '6px', minWidth: '0' });
+                const name = document.createElement('span');
+                name.textContent = action || '?';
+                Object.assign(name.style, { background: pill[0], color: pill[1], borderRadius: '999px', padding: '1px 8px', fontSize: '11px', fontWeight: '700', whiteSpace: 'nowrap' });
+                const count = document.createElement('span');
+                count.textContent = entry.count + (entry.count === 1 ? ' transfer' : ' transfers');
+                Object.assign(count.style, { color: '#e8ecee', fontSize: '11.5px', fontWeight: '600', whiteSpace: 'nowrap' });
+                const time = document.createElement('span');
+                time.textContent = (entry.by === 'phone' ? '📱 ' : '') + day + clock;
+                Object.assign(time.style, { marginLeft: 'auto', color: '#7d8a90', fontSize: '11px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' });
+                top.appendChild(name);
+                top.appendChild(count);
+                top.appendChild(time);
+                card.appendChild(top);
+                if (entry.city) {
+                    const city = document.createElement('div');
+                    city.textContent = entry.city;
+                    Object.assign(city.style, { color: '#9aa6ad', fontSize: '11px', fontWeight: '600' });
+                    card.appendChild(city);
+                }
+                if (said) {
+                    const text = document.createElement('div');
+                    text.textContent = said;
+                    Object.assign(text.style, { color: entry.tone === 'bad' ? '#ff9d94' : entry.tone === 'warn' ? '#ffd27a' : '#b4bec3', fontSize: '11px', lineHeight: '1.4', overflowWrap: 'anywhere', display: '-webkit-box', webkitLineClamp: '3', webkitBoxOrient: 'vertical', overflow: 'hidden' });
+                    card.appendChild(text);
+                }
+                hubHistoryList.appendChild(card);
             });
         };
         const onHubHistory = function() {
@@ -36158,7 +38439,9 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (!groupItems.length || groupImage.disabled) return;
                 groupImage.disabled = true;
                 groupImage.textContent = 'Generating…';
-                wpGenerateTransfersImage(groupItems, tabName, groupName).finally(function() {
+                // 1.7.346: transfers ticked → the image of only those (one image, whichever group's button)
+                const ticked = items.filter(function(item, index) { return selected.has(index); });
+                wpGenerateTransfersImage(ticked.length ? ticked : groupItems, tabName, ticked.length ? 'selected' : groupName).finally(function() {
                     groupImage.disabled = !groupItems.length;
                     groupImage.textContent = 'Generate image';
                 });
@@ -36173,25 +38456,6 @@ async function wpTransferAssistantExtensionEnabled() {
             groupHeader.appendChild(groupActions);
             section.appendChild(groupHeader);
 
-            // Column labels matching the row columns (same widths).
-            if (groupItems.length) {
-                const columnHead = document.createElement('div');
-                columnHead.className = 'wp-ui-column-head';
-                Object.assign(columnHead.style, {
-                    display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 9px 0',
-                    color: '#566066', fontSize: '10px', fontWeight: '700', letterSpacing: '0.04em', textTransform: 'uppercase'
-                });
-                [['', '1 1 auto'], ['Tags', '0 0 128px'], ['Partner', '0 0 64px'], ['Loc', '0 0 44px'], ['PU / DO', '0 0 86px'], ['Car', '0 0 76px'], ['Price', '0 0 172px'], ['Status', '0 0 130px']]
-                    .forEach(function(spec) {
-                        const cell = document.createElement('span');
-                        cell.textContent = spec[0];
-                        cell.style.flex = spec[1];
-                        if (!spec[0]) cell.style.paddingLeft = '20px';
-                        columnHead.appendChild(cell);
-                    });
-                section.appendChild(columnHead);
-            }
-
             if (!groupItems.length) {
                 const empty = document.createElement('div');
                 empty.className =
@@ -36200,595 +38464,141 @@ async function wpTransferAssistantExtensionEnabled() {
                 section.appendChild(empty);
             }
 
-            groupItems.forEach(function(item, groupIndex) {
-                const globalIndex = items.indexOf(item);
-
-                const row =
-                    document.createElement('div');
-                row.className =
-                    'wp-today-city-order-item';
-
-                const selectBox = document.createElement('input');
-                selectBox.type = 'checkbox';
-                selectBox.className = 'wp-city-transfer-select';
-                selectBox.dataset.wpIndex = String(globalIndex);
-                selectBox.checked = selected.has(globalIndex);
-                selectBox.title = 'Include this transfer when opening and generating the driver message/image';
-                selectBox.style.width = '14px';
-                selectBox.style.height = '14px';
-                selectBox.style.margin = '2px 2px 0 0';
-                selectBox.style.flex = '0 0 auto';
-                selectBox.style.accentColor = '#00cf95';
-                selectBox.addEventListener('click', function(event) {
-                    event.stopPropagation();
-                });
-                selectBox.addEventListener('change', function(event) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    if (selectBox.checked) {
-                        selected.add(globalIndex);
+            if (groupItems.length) {
+                wpCmRxStyles();
+                const firstRow = (groupItems.find(function(item) { return item && item.row && item.row.isConnected; }) || {}).row;
+                const sourceTable = firstRow ? firstRow.closest('table') : null;
+                const sourceHead = sourceTable ? (sourceTable.querySelector(':scope > thead > tr') || Array.from(sourceTable.querySelectorAll('tr')).find(function(tr) { return tr.querySelector(':scope > th'); })) : null;
+                const table = document.createElement('table');
+                table.className = 'wp-cm-table';
+                const tableCs = sourceTable ? window.getComputedStyle(sourceTable) : null;
+                table.style.setProperty('border-collapse', tableCs ? tableCs.borderCollapse : 'collapse', 'important');
+                table.style.setProperty('border-spacing', tableCs ? tableCs.borderSpacing : '0', 'important');
+                table.style.setProperty('table-layout', 'auto', 'important');
+                if (tableCs) ['font-size', 'line-height'].forEach(function(prop) { table.style.setProperty(prop, tableCs.getPropertyValue(prop), 'important'); });
+                // 1.7.402: the card theme: no grid, light text on the window's own background
+                table.style.setProperty('border-collapse', 'collapse', 'important');
+                table.style.setProperty('background', 'transparent', 'important');
+                table.style.setProperty('color', '#e8ecee', 'important');
+                const baseColor = tableCs ? tableCs.color : '';
+                const dropIndexes = wpCmDropIndexes(sourceHead);
+                const dateIndex = wpCmDateIndex(sourceHead);
+                const markDate = function(copyRow) { const cell = dateIndex >= 0 ? copyRow.children[dateIndex] : null; if (cell) cell.classList.add('wp-cm-date-col'); };
+                const dateFirst = function(copyRow) { const cell = copyRow.querySelector(':scope > .wp-cm-date-col'); const tick = copyRow.querySelector(':scope > .wp-cm-tick'); if (cell) copyRow.insertBefore(cell, tick ? tick.nextSibling : copyRow.firstChild); };
+                const tickWidth = 28;
+                table.style.setProperty('width', '100%', 'important');
+                panel._wpWantWidth = 1400;
+                const tickCell = function(tag, model) {
+                    const node = document.createElement(tag);
+                    node.className = 'wp-cm-tick';
+                    const look = model ? window.getComputedStyle(model) : null;
+                    void look;
+                    [['width', tickWidth + 'px'], ['min-width', tickWidth + 'px'], ['max-width', tickWidth + 'px'], ['padding', '0 4px 0 8px'], ['text-align', 'center'], ['vertical-align', 'middle'], ['box-sizing', 'border-box'],
+                        ['background-color', 'transparent'], ['border', '0'], ['border-bottom', '1px solid rgba(255,255,255,0.07)'], ['cursor', 'default']]
+                        .forEach(function(pair) { node.style.setProperty(pair[0], pair[1], 'important'); });
+                    return node;
+                };
+                if (sourceHead) {
+                    const thead = document.createElement('thead');
+                    thead.className = 'wp-cm-thead'; // (the joined layout hides .wp-ui-column-head)
+                    const headRow = wpCmCloneStyled(sourceHead, 1);
+                    markDate(headRow);
+                    wpCmDropCells(headRow, dropIndexes);
+                    wpCmTheme(headRow, true, baseColor);
+                    headRow.insertBefore(tickCell('th', sourceHead.querySelector('th')), headRow.firstChild);
+                    dateFirst(headRow);
+                    // 1.7.405: the last column as on the dashboard: the worked-on column, or an empty one
+                    const expandHead = headRow.querySelector(':scope > th.wp-worked-cell') || document.createElement('th');
+                    expandHead.classList.add('wp-cm-expand');
+                    headRow.appendChild(expandHead);
+                    thead.appendChild(headRow);
+                    table.appendChild(thead);
+                }
+                const tbody = document.createElement('tbody');
+                table.appendChild(tbody);
+                const holder = document.createElement('div');
+                holder.className = 'wp-cm-table-wrap';
+                // too narrow for the rows: this part scrolls sideways
+                holder.style.setProperty('overflow-x', 'auto', 'important');
+                holder.style.setProperty('max-width', '100%', 'important');
+                holder.appendChild(table);
+                section.appendChild(holder);
+                const textOf = function(node) { return String(node ? node.textContent : '').replace(/\s+/g, ' ').trim(); };
+                groupItems.forEach(function(item) {
+                    const globalIndex = items.indexOf(item);
+                    const source = item.row && item.row.isConnected ? item.row : null;
+                    let tr;
+                    if (source) {
+                        tr = wpCmCloneStyled(source, 1);
+                        markDate(tr);
+                        wpCmDropCells(tr, dropIndexes);
+                        wpCmTheme(tr, false, baseColor);
+                        wpCmDateCell(tr.querySelector(':scope > .wp-cm-date-col'));
                     } else {
-                        selected.delete(globalIndex);
+                        tr = document.createElement('tr');
+                        const only = document.createElement('td');
+                        only.colSpan = sourceHead ? Math.max(1, sourceHead.children.length - dropIndexes.length) : 1;
+                        only.textContent = [item.timeLabel, item.city, item.orderLabel, item.partner].filter(Boolean).join(' · ');
+                        tr.appendChild(only);
                     }
-                    updateSelectionUI();
-                });
-
-                const main =
-                    document.createElement('div');
-                main.className =
-                    'wp-today-city-order-main';
-
-                const normalizedSelection =
-                    wpNormalizeDetailText(city || '').toLowerCase();
-                const isBookingSelection =
-                    normalizedSelection === 'booking.com';
-                const isTboExpiringSelection =
-                    normalizedSelection === '__wp_tbo_expiring__' ||
-                    normalizedSelection === '__wp_untagged__' ||
-                    normalizedSelection === '__wp_3days__';
-                if ((isBookingSelection || isTboExpiringSelection) && item && item.city) {
-                    const cityBadge = document.createElement('span');
-                    cityBadge.className = 'wp-today-city-order-booking-city';
-                    cityBadge.textContent = String(item.city);
-                    cityBadge.style.display = 'inline-flex';
-                    cityBadge.style.alignItems = 'center';
-                    cityBadge.style.marginRight = '6px';
-                    cityBadge.style.color = '#8fffd5';
-                    cityBadge.style.fontSize = '11px';
-                    cityBadge.style.fontWeight = '800';
-                    cityBadge.style.letterSpacing = '0.1px';
-                    main.appendChild(cityBadge);
-                }
-
-                /*
-                 * Show the transfer time first and prominently. The CRM's
-                 * trailing countdown, e.g. "(55hrs)", is removed for display
-                 * only; the original item.timeLabel remains untouched for
-                 * sorting/broadcast logic.
-                 */
-                const displayTime = String(
-                    item.timeLabel || ''
-                )
-                    .replace(/\s*\(?\s*\d+\s*(?:h|hr|hrs|hour|hours)\s*\)?\s*$/i, '')
-                    .replace(/\s*\(\s*\)\s*$/i, '')
-                    .trim();
-
-                const displayTimeEl = document.createElement('span');
-                displayTimeEl.textContent =
-                    displayTime ||
-                    'Open transfer';
-                main.appendChild(displayTimeEl);
-
-                const sub =
-                    document.createElement('div');
-                sub.className =
-                    'wp-today-city-order-sub';
-
-                /* Keep the transfer ID blue; use the underlying AutoCancel timer only for logic. */
-                const autoCancelSeconds =
-                    Number(item.autoCancelSeconds);
-
-                if (
-                    Number.isFinite(autoCancelSeconds) &&
-                    autoCancelSeconds < 30 * 60
-                ) {
-                    sub.classList.add('wp-ac-red');
-                } else if (
-                    Number.isFinite(autoCancelSeconds) &&
-                    autoCancelSeconds < 60 * 60
-                ) {
-                    sub.classList.add('wp-ac-orange');
-                } else {
-                    sub.classList.add('wp-ac-white');
-                }
-
-                sub.textContent =
-                    item.orderLabel ||
-                    ('Transfer ' + (groupIndex + 1));
-
-                const subWrap =
-                    document.createElement('div');
-                subWrap.style.display = 'flex';
-                subWrap.style.alignItems = 'center';
-                subWrap.style.gap = '7px';
-                subWrap.style.minWidth = '0';
-
-                subWrap.appendChild(sub);
-
-                // Row columns (fixed widths so they line up down the list):
-                //   Tags | Location (airport / port / station) | PU / DO | Status
-                const makeRowColumn = function(className, width) {
-                    const column = document.createElement('div');
-                    column.className = 'wp-ui-col ' + className;
-                    Object.assign(column.style, {
-                        display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap',
-                        flex: '0 0 ' + width, width: width, minWidth: '0'
-                    });
-                    return column;
-                };
-                const colTags = makeRowColumn('wp-ui-col-tags', '128px');
-                const colPartner = makeRowColumn('wp-ui-col-partner', '64px');
-                const colLocation = makeRowColumn('wp-ui-col-location', '44px');
-                const colDirection = makeRowColumn('wp-ui-col-direction', '86px');
-                const colCar = makeRowColumn('wp-ui-col-car', '76px');
-                colCar.style.fontSize = '11px';
-                colCar.style.color = '#aab4b9';
-                colCar.style.whiteSpace = 'nowrap';
-                colCar.style.overflow = 'hidden';
-                colCar.style.flexWrap = 'nowrap';
-                // Car known already (dashboard's Price/Car loader) shows at once.
-                try {
-                    const known = wpRowCrmLoad()[new URL(item.url, location.href).pathname];
-                    if (known && known.car) { colCar.textContent = known.car; colCar.title = known.car; }
-                } catch (_) {}
-                const colPrice = makeRowColumn('wp-ui-col-price', '172px');
-                const colStatus = makeRowColumn('wp-ui-col-status', '130px');
-
-                const fromHub = Boolean(item.fromTypes && (item.fromTypes.airport || item.fromTypes.port || item.fromTypes.train));
-                const toHub = Boolean(item.toTypes && (item.toTypes.airport || item.toTypes.port || item.toTypes.train));
-                if (fromHub || toHub) {
-                    const directionBadge = document.createElement('span');
-                    directionBadge.className = 'wp-ui-direction-badge';
-                    directionBadge.textContent = fromHub && toHub ? 'PU + DO' : (fromHub ? 'PICKUP' : 'DROP-OFF');
-                    directionBadge.title = fromHub && toHub
-                        ? 'Starts and ends at an airport / port / station'
-                        : (fromHub ? 'Pickup from an airport / port / station' : 'Drop-off at an airport / port / station');
-                    Object.assign(directionBadge.style, {
-                        display: 'inline-flex', alignItems: 'center', padding: '1px 5px', borderRadius: '4px',
-                        fontSize: '10px', lineHeight: '14px', fontWeight: '700', whiteSpace: 'nowrap',
-                        color: fromHub ? '#8fffd5' : '#ffb347',
-                        border: '1px solid ' + (fromHub ? 'rgba(143,255,213,.45)' : 'rgba(255,179,71,.5)')
-                    });
-                    colDirection.appendChild(directionBadge);
-                }
-
-                const crmSlot = document.createElement('span');
-                crmSlot.className = 'wp-ui-crm-badges';
-                crmSlot.textContent = '…';
-                crmSlot.title = 'Loading details from the CRM…';
-                Object.assign(crmSlot.style, { display: 'inline-flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center', color: '#566066', fontSize: '10px' });
-                colStatus.appendChild(crmSlot);
-                crmSlots.set(globalIndex, crmSlot);
-                crmPriceSlots.set(globalIndex, colPrice);
-                crmCarSlots.set(globalIndex, colCar);
-                crmTagSlots.set(globalIndex, colTags);
-
-                        if (item && item.tag && item.tag.text) {
-                    const tag = item.tag;
-                    const badge = document.createElement('span');
-                    badge.className =
-                        'wp-today-city-order-tag wp-today-city-order-tag-' +
-                        String(tag.type || 'default');
-                    badge.textContent = tag.text;
-                    badge.style.display = 'inline-flex';
-                    badge.style.alignItems = 'center';
-                    badge.style.justifyContent = 'center';
-                    badge.style.padding = '2px 6px';
-                    badge.style.minHeight = '16px';
-                    badge.style.borderRadius = '4px';
-                    badge.style.fontSize = '0.72em';
-                    badge.style.lineHeight = '1';
-                    badge.style.fontWeight = '700';
-                    badge.style.letterSpacing = '0.1px';
-                    badge.style.border = '1px solid transparent';
-                    badge.style.boxSizing = 'border-box';
-                    badge.style.whiteSpace = 'nowrap';
-                    badge.style.flex = '0 0 auto';
-                    badge.style.boxShadow = 'inset 0 1px 0 rgba(255,255,255,0.10), 0 1px 2px rgba(0,0,0,0.20)';
-
-                    const tagColors = {
-                        hero: { bg: 'rgba(130,65,200,0.24)', border: 'rgba(160,90,230,0.72)', text: '#c38aff' },
-                        final: { bg: 'rgba(123,63,152,0.24)', border: 'rgba(123,63,152,0.72)', text: '#b66fd4' },
-                        '10': { bg: 'rgba(181,138,5,0.24)', border: 'rgba(181,138,5,0.72)', text: '#d6ad22' },
-                        '20': { bg: 'rgba(220,126,18,0.24)', border: 'rgba(220,126,18,0.72)', text: '#ffb347' },
-                        'raised-save': { bg: 'rgba(123,63,152,0.24)', border: 'rgba(123,63,152,0.72)', text: '#b66fd4' },
-                        raised: { bg: 'rgba(181,138,5,0.24)', border: 'rgba(181,138,5,0.72)', text: '#d6ad22' },
-                        'dc-tc': { bg: 'rgba(50,110,220,0.22)', border: 'rgba(70,130,255,0.70)', text: '#74a7ff' },
-                        'tc-minus': { bg: 'rgba(220,126,18,0.24)', border: 'rgba(220,126,18,0.72)', text: '#ffb347' },
-                        'minus-tc': { bg: 'rgba(220,126,18,0.24)', border: 'rgba(220,126,18,0.72)', text: '#ffb347' }
-                    };
-                    const colors = tagColors[String(tag.type || '')] || {
-                        bg: 'rgba(110,118,124,0.16)',
-                        border: 'rgba(110,118,124,0.48)',
-                        text: '#9da6ad'
-                    };
-                    badge.style.background = colors.bg;
-                    badge.style.borderColor = colors.border;
-                    badge.style.color = colors.text;
-                    colTags.appendChild(badge);
-                }
-
-                /* Partner marker: compact B for Booking.com, A for Airbnb. */
-                const normalizedPartner = wpNormalizeDetailText(
-                    item && item.partner || ''
-                ).toLowerCase().replace(/\s+/g, '');
-                const isBookingPartner = Boolean(
-                    item &&
-                    (item.isBooking ||
-                     normalizedPartner.includes('booking.com') ||
-                     normalizedPartner.includes('bookingcom'))
-                );
-                const isAirbnbPartner = Boolean(
-                    item &&
-                    (item.isAirbnb ||
-                     normalizedPartner.includes('airbnb'))
-                );
-
-                if (isBookingPartner || isAirbnbPartner) {
-                    const partnerBadge = document.createElement('span');
-                    partnerBadge.className = 'wp-today-city-order-partner-badge';
-                    partnerBadge.textContent = isBookingPartner ? 'Booking' : 'Airbnb';
-                    partnerBadge.title = isBookingPartner ? 'Booking.com' : 'Airbnb';
-                    partnerBadge.style.display = 'inline-flex';
-                    partnerBadge.style.alignItems = 'center';
-                    partnerBadge.style.justifyContent = 'center';
-                    partnerBadge.style.width = 'auto';
-                    partnerBadge.style.padding = '0 5px';
-                    partnerBadge.style.height = '16px';
-                    partnerBadge.style.borderRadius = '4px';
-                    partnerBadge.style.fontSize = '10px';
-                    partnerBadge.style.lineHeight = '1';
-                    partnerBadge.style.fontWeight = '800';
-                    partnerBadge.style.boxSizing = 'border-box';
-                    partnerBadge.style.flex = '0 0 auto';
-                    partnerBadge.style.border = isBookingPartner
-                        ? '1px solid rgba(255,77,77,.60)'
-                        : '1px solid rgba(255,196,0,.62)';
-                    partnerBadge.style.background = isBookingPartner
-                        ? 'rgba(255,77,77,.17)'
-                        : 'rgba(255,196,0,.16)';
-                    partnerBadge.style.color = isBookingPartner
-                        ? '#ff7b7b'
-                        : '#ffd45c';
-                    colPartner.appendChild(partnerBadge);
-                }
-
-                /* Compact location markers: ✈️ Airport, ⚓ Port, 🚆 Train. */
-                const locationEmoji = {
-                    airport: '✈️',
-                    port: '⚓',
-                    train: '🚆'
-                };
-
-                (Array.isArray(item.locationTypes) ? item.locationTypes : [])
-                    .map(function(type) {
-                        return String(type || '').toLowerCase();
-                    })
-                    .filter(function(type, index, all) {
-                        return locationEmoji[type] && all.indexOf(type) === index;
-                    })
-                    .forEach(function(type) {
-                        const locationBadge = document.createElement('span');
-                        locationBadge.className = 'wp-today-city-order-location-badge';
-                        locationBadge.textContent = locationEmoji[type];
-                        locationBadge.title =
-                            type === 'airport'
-                                ? 'Airport transfer'
-                                : type === 'port'
-                                    ? 'Port transfer'
-                                    : 'Train / station transfer';
-                        locationBadge.style.display = 'inline-flex';
-                        locationBadge.style.alignItems = 'center';
-                        locationBadge.style.justifyContent = 'center';
-                        locationBadge.style.width = '20px';
-                        locationBadge.style.height = '16px';
-                        locationBadge.style.borderRadius = '4px';
-                        locationBadge.style.fontSize = '11px';
-                        locationBadge.style.lineHeight = '1';
-                        locationBadge.style.boxSizing = 'border-box';
-                        locationBadge.style.background = 'rgba(255,255,255,.055)';
-                        locationBadge.style.border = '1px solid rgba(255,255,255,.10)';
-                        locationBadge.style.flex = '0 0 auto';
-                        colLocation.appendChild(locationBadge);
-                    });
-
-                row.style.display = 'flex';
-                row.style.alignItems = 'flex-start';
-                row.style.gap = '6px';
-
-                const contentWrap = document.createElement('div');
-                contentWrap.style.display = 'flex';
-                contentWrap.style.flexDirection = 'column';
-                contentWrap.style.minWidth = '0';
-                contentWrap.style.flex = '1 1 auto';
-
-                contentWrap.appendChild(main);
-                contentWrap.appendChild(subWrap);
-
-                row.appendChild(selectBox);
-                row.appendChild(contentWrap);
-                row.appendChild(colTags);
-                row.appendChild(colPartner);
-                row.appendChild(colLocation);
-                row.appendChild(colDirection);
-                row.appendChild(colCar);
-                row.appendChild(colPrice);
-                row.appendChild(colStatus);
-                row.style.alignItems = 'center';
-
-                // Quick actions: a normal click on the Order# opens a compact
-                // floating action bar ABOVE the Order# cell. Ctrl/Cmd-click keeps
-                // the original CRM behavior and opens the transfer normally.
-                const quickBar = document.createElement('div');
-                quickBar.className = 'wp-order-quick-actions';
-                quickBar.style.display = 'none';
-                quickBar.style.position = 'fixed';
-                quickBar.style.alignItems = 'center';
-                quickBar.style.flexWrap = 'wrap';
-                quickBar.style.gap = '5px';
-                quickBar.style.padding = '6px';
-                quickBar.style.background = '#111416';
-                quickBar.style.border = '1px solid rgba(143,255,213,0.20)';
-                quickBar.style.borderRadius = '8px';
-                quickBar.style.boxSizing = 'border-box';
-                quickBar.style.width = 'max-content';
-                quickBar.style.maxWidth = 'min(620px, calc(100vw - 16px))';
-                quickBar.style.zIndex = '2147483640';
-                quickBar.style.boxShadow = '0 10px 28px rgba(0,0,0,.45)';
-
-                function makeQuickButton(label, title, handler) {
-                    const button = document.createElement('button');
-                    button.type = 'button';
-                    button.textContent = label;
-                    button.title = title;
-                    Object.assign(button.style, {
-                        background: '#111416',
-                        color: '#8fffd5',
-                        border: '1px solid rgba(143,255,213,0.18)',
-                        borderRadius: '6px',
-                        padding: '5px 8px',
-                        fontSize: '11px',
-                        fontWeight: '700',
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap'
-                    });
-                    button.addEventListener('click', function(event) {
+                    tr.classList.add('wp-cm-row');
+                    // What the phone's City Manager tab shows of each transfer.
+                    const seconds = Number(item.autoCancelSeconds);
+                    const cellText = function(selector) { return source ? textOf(source.querySelector(':scope > ' + selector)) : ''; };
+                    tr.dataset.o = String(item.orderLabel || '');
+                    tr.dataset.t = String(item.timeLabel || '').replace(/\s*\(?\s*\d+\s*(?:h|hr|hrs|hour|hours)\s*\)?\s*$/i, '').trim() + (item.city ? ' · ' + item.city : '');
+                    tr.dataset.ac = Number.isFinite(seconds) && seconds > 0 ? (seconds < 30 * 60 ? '2' : seconds < 60 * 60 ? '1' : '0') : '0';
+                    tr.dataset.g = cellText('td.wp-transfer-tags');
+                    tr.dataset.p = String(item.partner || '');
+                    tr.dataset.d = cellText('td.wp-pudo-cell');
+                    tr.dataset.v = cellText('td.wp-car-cell');
+                    tr.dataset.m = [cellText('td.wp-tcdc-cell'), cellText('td.wp-price-cell')].filter(Boolean).join(' ');
+                    tr.dataset.s = '';
+                    const tick = tickCell('td', source ? source.querySelector(':scope > td') : null);
+                    const selectBox = document.createElement('input');
+                    selectBox.type = 'checkbox';
+                    selectBox.className = 'wp-city-transfer-select';
+                    selectBox.dataset.wpIndex = String(globalIndex);
+                    selectBox.checked = selected.has(globalIndex);
+                    selectBox.title = 'Include this transfer in the actions';
+                    Object.assign(selectBox.style, { width: '15px', height: '15px', margin: '0', accentColor: '#00cf95', cursor: 'pointer', pointerEvents: 'auto' });
+                    selectBox.addEventListener('click', function(event) { event.stopPropagation(); });
+                    selectBox.addEventListener('change', function(event) {
                         event.preventDefault();
                         event.stopPropagation();
-                        handler();
+                        if (selectBox.checked) selected.add(globalIndex); else selected.delete(globalIndex);
+                        updateSelectionUI();
                     });
-                    return button;
-                }
-
-                function openQuickWorkflow(options) {
-                    if (!item.url) return;
-                    const workflowId = 'quick_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-                    try {
-                        const url = new URL(item.url, window.location.href);
-                        url.searchParams.set('wpCityTaskBatchId', workflowId);
-                        url.searchParams.set('wpCityTaskIndex', '0');
-                        url.searchParams.set('wpCityTaskCustomMessage', String(options.customMessage || ''));
-                        // Untagged transfers always get the EM note first.
-                        url.searchParams.set('wpCityTaskNeedsEm', options.needsEm ? '1' : '0');
-                        url.searchParams.set('wpCityTaskRaiseMessage', String(options.raiseMessage || ''));
-                        url.searchParams.set('wpCityPriceIncrease', String(options.priceIncrease || ''));
-                        url.searchParams.delete('wpCityBroadcastMode');
-                        url.searchParams.set('wpAutoRefresh', 'off');
-
-                        wpRememberTransferCity(item.url, item.city || '');
-                        wpRecordTransferHistory({
-                            city: item.city || '',
-                            time: item.timeLabel || '',
-                            partner: item.partner || (item.isBooking ? 'Booking.com' : ''),
-                            url: item.url
-                        });
-
-                        if (typeof wpExtensionOpenInTab === 'function') {
-                            wpExtensionOpenInTab(url.toString(), { active: false, insert: true, setParent: true });
-                        } else {
-                            window.open(url.toString(), '_blank');
-                        }
-                    } catch (_) {}
-                }
-
-                // Untagged transfers always auto-create EM first when Apply is used.
-                const quickAutoEm = !item.tagged;
-
-                const quickRaise = document.createElement('select');
-                quickRaise.title = 'Choose a raise percentage';
-                Object.assign(quickRaise.style, {
-                    height: '27px',
-                    padding: '3px 7px',
-                    background: '#111416',
-                    color: '#8fffd5',
-                    border: '1px solid rgba(143,255,213,0.18)',
-                    borderRadius: '6px',
-                    fontSize: '11px',
-                    outline: 'none'
-                });
-                const noRaise = document.createElement('option');
-                noRaise.value = '';
-                noRaise.textContent = 'Raise %';
-                quickRaise.appendChild(noRaise);
-                (typeof wpGetManagedCostOptions === 'function' ? wpGetManagedCostOptions() : []).forEach(function(config) {
-                    const option = document.createElement('option');
-                    option.value = String(config.value);
-                    option.textContent = String(config.label || ('+' + config.value + '%'));
-                    quickRaise.appendChild(option);
-                });
-
-                // Same task-message options used by the transfer-page quick dropdown.
-                const quickNote = document.createElement('select');
-                quickNote.title = 'Choose a task note';
-                Object.assign(quickNote.style, {
-                    height: '27px',
-                    minWidth: '190px',
-                    maxWidth: '300px',
-                    padding: '3px 7px',
-                    background: '#111416',
-                    color: '#8fffd5',
-                    border: '1px solid rgba(143,255,213,0.18)',
-                    borderRadius: '6px',
-                    fontSize: '11px',
-                    outline: 'none'
-                });
-                const notePlaceholder = document.createElement('option');
-                notePlaceholder.value = '';
-                notePlaceholder.textContent = 'Note';
-                quickNote.appendChild(notePlaceholder);
-                const managedQuickNotes = typeof wpBuildManagedTaskMessages === 'function'
-                    ? wpBuildManagedTaskMessages()
-                    : (Array.isArray(WP_TASK_MESSAGES) ? WP_TASK_MESSAGES : []);
-                managedQuickNotes.forEach(function(message, index) {
-                    const option = document.createElement('option');
-                    option.value = String(message);
-                    option.textContent = (index + 1) + '. ' + String(message);
-                    quickNote.appendChild(option);
-                });
-
-                const quickApplyButton = makeQuickButton('Apply', 'Apply the selected raise/note; untagged transfers automatically get EM first', function() {
-                    const raiseValue = String(quickRaise.value || '').trim();
-                    const selectedNote = String(quickNote.value || '').trim();
-
-                    // Avoid creating EM twice if the user explicitly chooses EM
-                    // from the note dropdown on an untagged transfer.
-                    const raiseMessage = raiseValue
-                        ? wpGetBatchRaiseTaskMessage(raiseValue)
-                        : '';
-                    const normalizedSelected = selectedNote.replace(/\s+/g, ' ').trim().toLowerCase();
-                    const normalizedRaise = raiseMessage.replace(/\s+/g, ' ').trim().toLowerCase();
-
-                    // The raise message is already created by the raise step.
-                    // If the same message is selected in the note dropdown, do
-                    // not create it a second time. EM is likewise automatic for
-                    // initially untagged transfers.
-                    const customMessage =
-                        !selectedNote ||
-                        (quickAutoEm && /^em$/i.test(selectedNote)) ||
-                        (normalizedRaise && normalizedSelected === normalizedRaise)
-                            ? ''
-                            : selectedNote;
-
-                    if (!raiseValue && !customMessage && !quickAutoEm) return;
-
-                    openQuickWorkflow({
-                        priceIncrease: raiseValue,
-                        raiseMessage: raiseMessage,
-                        customMessage: customMessage,
-                        needsEm: quickAutoEm
-                    });
-                });
-
-                quickBar.appendChild(quickRaise);
-                quickBar.appendChild(quickNote);
-                quickBar.appendChild(quickApplyButton);
-
-                document.body.appendChild(quickBar);
-
-                function positionQuickBar() {
-                    if (quickBar.style.display === 'none') return;
-                    const rect = sub.getBoundingClientRect();
-                    const barRect = quickBar.getBoundingClientRect();
-                    const gap = 6;
-                    let left = rect.left;
-                    let top = rect.top - barRect.height - gap;
-
-                    if (top < 6) top = rect.bottom + gap;
-                    if (left + barRect.width > window.innerWidth - 6) {
-                        left = Math.max(6, window.innerWidth - barRect.width - 6);
-                    }
-                    if (left < 6) left = 6;
-
-                    quickBar.style.left = Math.round(left) + 'px';
-                    quickBar.style.top = Math.round(top) + 'px';
-                }
-
-                function closeQuickBar() {
-                    if (quickBar.style.display === 'none') return;
-                    quickBar.style.display = 'none';
-                    wpSetOrderQuickActionOpen(false);
-                    window.removeEventListener('resize', positionQuickBar);
-                    window.removeEventListener('scroll', positionQuickBar, true);
-                }
-
-                function showQuickBar() {
-                    document.querySelectorAll('.wp-order-quick-actions').forEach(function(other) {
-                        if (other !== quickBar) other.style.display = 'none';
-                    });
-                    quickBar.style.display = 'flex';
-                    wpSetOrderQuickActionOpen(true);
-                    positionQuickBar();
-                    window.addEventListener('resize', positionQuickBar);
-                    window.addEventListener('scroll', positionQuickBar, true);
-                }
-
-                function outsideQuickBarClick(event) {
-                    if (event.target && (event.target.closest('.wp-order-quick-actions') || event.target.closest('.wp-today-city-order-sub'))) return;
-                    closeQuickBar();
-                }
-
-                quickBar.__wpClose = closeQuickBar;
-                quickBar.__wpOutsideHandler = outsideQuickBarClick;
-                window.addEventListener('keydown', function(event) {
-                    if (event.key === 'Escape' && quickBar.style.display !== 'none') closeQuickBar();
-                });
-
-                sub.addEventListener('click', function(event) {
-                    if (event.ctrlKey || event.metaKey) {
+                    tick.appendChild(selectBox);
+                    // a click in the tick cell (around the box) ticks too
+                    tick.addEventListener('click', function(event) {
                         event.preventDefault();
                         event.stopPropagation();
-                        wpOpenTransferInNewTab(item.url, {
-                            city: item.city,
-                            time: item.timeLabel,
-                            partner: item.partner || (item.isBooking ? 'Booking.com' : '')
-                        });
-                        return;
-                    }
-                    event.preventDefault();
-                    event.stopPropagation();
-                    const visible = quickBar.style.display !== 'none';
-                    if (visible) closeQuickBar();
-                    else showQuickBar();
-                });
-
-                // One document-level outside click handler closes the floating bar.
-                if (!window.__wpOrderQuickOutsideInstalled) {
-                    window.__wpOrderQuickOutsideInstalled = true;
-                    document.addEventListener('click', function(event) {
-                        document.querySelectorAll('.wp-order-quick-actions').forEach(function(bar) {
-                            if (bar.style.display === 'none') return;
-                            const subEl = bar.__wpOrderSub;
-                            if (event.target && (event.target.closest('.wp-order-quick-actions') || (subEl && subEl.contains(event.target)))) return;
-                            if (typeof bar.__wpClose === 'function') bar.__wpClose();
-                        });
-                    }, true);
-                }
-                quickBar.__wpOrderSub = sub;
-                
-
-                row.addEventListener('click', function(event) {
-                    if (event.target && (event.target.closest('.wp-order-quick-actions') || event.target.closest('.wp-today-city-order-sub'))) return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    wpOpenTransferInNewTab(item.url, {
-                        city: item.city,
-                        time: item.timeLabel,
-                        partner: item.partner || (item.isBooking ? 'Booking.com' : '')
+                        if (event.target === selectBox) return;
+                        selectBox.checked = !selectBox.checked;
+                        selectBox.dispatchEvent(new Event('change'));
                     });
+                    tr.insertBefore(tick, tr.firstChild);
+                    dateFirst(tr);
+                    // The last cell fills the row to the right (no expanding here, 1.7.406).
+                    const fillCell = tr.querySelector(':scope > td.wp-worked-cell') || document.createElement('td');
+                    fillCell.classList.add('wp-cm-expand');
+                    tr.appendChild(fillCell);
+                    // A click on a value (partner, car, From / To, date, PU / DO, place, tag,
+                    // auto-cancel) dims the others, as on the dashboard; anywhere else ticks the row.
+                    tr.addEventListener('click', function(event) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        try { if (String(window.getSelection() || '').trim()) return; } catch (_) {}
+                        const cell = event.target && event.target.closest ? event.target.closest('td') : null;
+                        const focus = cell && !cell.classList.contains('wp-cm-tick') ? wpCmFocusFromCell(tr, cell) : null;
+                        if (focus) { wpCmFocusApply(panel, focus[0], focus[1], focus[2]); return; }
+                        selectBox.checked = !selectBox.checked;
+                        selectBox.dispatchEvent(new Event('change'));
+                    });
+                    tbody.appendChild(tr);
                 });
-
-                section.appendChild(row);
-            });
+            }
 
             list.appendChild(section);
         }
@@ -36869,7 +38679,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     ? 'rgb(17, 20, 22)'
                     : 'rgb(' + parts.slice(0, 3).join(', ') + ')';
             }
-            bg = 'rgba(16,22,24,0.28)'; // 1.7.244: the sticky bars are clear glass too (lighter in 1.7.248)
+            bg = '#1f2529'; // 1.7.404: solid, as the window (no see-through bars)
             const stick = function(el, top, z) {
                 el.style.setProperty('position', 'sticky', 'important');
                 el.style.setProperty('top', top + 'px', 'important');
@@ -36885,7 +38695,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 const title = section.querySelector('.wp-today-city-orders-group-title');
                 if (!title) return;
                 stick(title, headerBottom, 5);
-                const columnHead = section.querySelector('.wp-ui-column-head');
+                const columnHead = section.querySelector('.wp-ui-column-head'); // (1.7.402: the copy's header is not pinned: it sits in a box that scrolls sideways)
                 if (columnHead) {
                     stick(columnHead, headerBottom + title.offsetHeight, 4);
                     columnHead.style.setProperty('padding-bottom', '4px', 'important');
@@ -36945,7 +38755,7 @@ async function wpTransferAssistantExtensionEnabled() {
                                 Object.assign(badge.style, {
                                     display: 'inline-flex', alignItems: 'center', padding: '2px 6px', minHeight: '16px',
                                     borderRadius: '4px', fontSize: '0.72em', lineHeight: '1', fontWeight: '700',
-                                    border: '1px solid ' + color[1], background: color[2], color: color[0],
+                                    border: '0', background: 'transparent', color: color[0], // 1.7.389: coloured text only
                                     boxSizing: 'border-box', whiteSpace: 'nowrap', flex: '0 0 auto', marginLeft: '3px'
                                 });
                                 tagSlot.appendChild(badge);
@@ -39444,7 +41254,26 @@ async function wpTransferAssistantExtensionEnabled() {
 
             tabs.appendChild(todayTab);
             tabs.appendChild(tomorrowTab);
+            wpLater24TabEnsure(tabs); // 1.7.415
+            // 1.7.347: Auto: the Ops Hub chain on every city's untagged transfers, top to bottom
+            const autoTab = document.createElement('button');
+            autoTab.type = 'button';
+            autoTab.className = 'wp-cm-auto';
+            autoTab.textContent = 'Automations';
+            if (WP_NO_AUTO) autoTab.style.display = 'none';
+            autoTab.title = 'Ops Hub chain on the untagged transfers of every city in this list, top to bottom (Tag, price from the Hub box, Broadcast, Auto-C back on, note, image to the group). Click twice to start; click again to stop after the current city.';
+            let autoArmed = 0;
+            const paintAuto = function(where) { autoTab.textContent = where ? 'Auto · ' + where : 'Automations'; autoTab.style.color = where ? '#ffd27a' : ''; };
+            autoTab.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                wpAutomationsWindow(); // 1.7.414: every automation in one window
+            });
+            tabs.appendChild(autoTab);
             content.appendChild(tabs);
+            // 1.7.348: after the refresh between two cities, auto mode goes on by itself
+            wpCmAutoPaint = paintAuto;
+            if (wpCmAutoLoad()) { paintAuto('…'); window.setTimeout(function() { wpCmAutoStep(paintAuto); }, 3000); }
 
             todayTab.addEventListener('click', function(event) {
                 event.preventDefault();
@@ -39536,7 +41365,7 @@ async function wpTransferAssistantExtensionEnabled() {
             headerTitleElement.textContent =
                 wpTodayCitySelectedTab === 'tomorrow'
                     ? 'Transfer Overview — Tomorrow'
-                    : 'Transfer Overview — ' + (wpEmPeriod() || 'Today');
+                    : 'Transfer Overview — ' + (wpTabPeriod(wpTodayCitySelectedTab) || 'Today');
         }
         // 1.7.244: on a later-days page the one tab carries that page's name
         try {
@@ -40164,35 +41993,59 @@ async function wpTransferAssistantExtensionEnabled() {
     // arrangeColumns(); they are re-attached after a CRM re-render.
     const wpRx = { open: new Set(), timer: null, installed: false };
 
+    // 1.7.383: the expanded rows' text one size bigger
     function wpRxInjectStyles() {
         if (document.getElementById('wp-rx-style')) return;
         const T = 'html body table.transfers > tbody > ';
         const css = [
-            T + 'tr.wp-rx-row{cursor:pointer}',
+            // 1.7.381: only the space after the worked-on dot opens a row
+            T + 'tr.wp-rx-row > td.wp-worked-cell{cursor:pointer}',
+            T + 'tr.wp-rx-row > td.wp-worked-cell:hover{background-image:linear-gradient(rgba(143,255,213,.10),rgba(143,255,213,.10))!important}',
             T + 'tr.wp-rx-row.wp-rx-open > td{border-bottom-color:transparent!important}',
             // 1.7.211: drawn as a background line, so a coloured TBO edge on the same cell stays.
             T + 'tr.wp-rx-row.wp-rx-open > td:first-child{background-image:linear-gradient(#8fffd5,#8fffd5)!important;background-size:2px 100%!important;background-position:left top!important;background-repeat:no-repeat!important}',
             // Detail strip (1.7.114): five blocks side by side, read at a glance.
-            T + 'tr.wp-rx-detail > td{padding:10px 16px 12px 18px!important;border-top:0!important;border-bottom:1px solid rgba(255,255,255,.10)!important;box-shadow:inset 2px 0 0 #8fffd5!important;text-align:left!important;white-space:normal!important;cursor:text!important;user-select:text!important;font-size:12px!important;line-height:1.45!important}',
+            T + 'tr.wp-rx-detail > td{padding:10px 16px 12px 18px!important;border-top:0!important;border-bottom:1px solid rgba(255,255,255,.10)!important;box-shadow:inset 2px 0 0 #8fffd5!important;text-align:left!important;white-space:normal!important;cursor:text!important;user-select:text!important;font-size:13px!important;line-height:1.45!important}',
             T + 'tr.wp-rx-detail .wp-rx-grid{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))!important;gap:0!important;align-items:start!important}',
             T + 'tr.wp-rx-detail .wp-rx-block{padding:0 16px!important;border-left:1px solid rgba(128,128,128,.25)!important;min-width:0!important}',
-            T + 'tr.wp-rx-detail .wp-rx-block:first-child{padding-left:0!important;border-left:0!important}',
-            T + 'tr.wp-rx-detail .wp-rx-label{display:block!important;margin-bottom:4px!important;color:#8b9096!important;font-size:10px!important;font-weight:700!important;letter-spacing:.07em!important;text-transform:uppercase!important}',
-            T + 'tr.wp-rx-detail .wp-rx-big{font-size:14px!important;font-weight:700!important;color:inherit!important;white-space:nowrap!important}',
-            T + 'tr.wp-rx-detail .wp-rx-big .wp-rx-unit{color:#8b9096!important;font-weight:400!important;font-size:11px!important;margin-right:3px!important}',
-            T + 'tr.wp-rx-detail .wp-rx-sub{color:#9aa0a6!important;font-size:11.5px!important;margin-top:2px!important}',
+            T + 'tr.wp-rx-detail .wp-rx-label{display:block!important;margin-bottom:4px!important;color:#8b9096!important;font-size:11px!important;font-weight:700!important;letter-spacing:.07em!important;text-transform:uppercase!important}',
+            T + 'tr.wp-rx-detail .wp-rx-big{font-size:15px!important;font-weight:700!important;color:inherit!important;white-space:nowrap!important}',
+            T + 'tr.wp-rx-detail .wp-rx-big .wp-rx-unit{color:#8b9096!important;font-weight:400!important;font-size:12px!important;margin-right:3px!important}',
+            T + 'tr.wp-rx-detail .wp-rx-sub{color:#9aa0a6!important;font-size:12.5px!important;margin-top:2px!important}',
             T + 'tr.wp-rx-detail .wp-rx-item{display:flex!important;gap:6px!important;align-items:baseline!important;margin:1px 0!important;min-width:0!important}',
-            T + 'tr.wp-rx-detail .wp-rx-item > .wp-rx-when{color:#8b9096!important;flex:0 0 auto!important;font-size:11px!important}',
+            T + 'tr.wp-rx-detail .wp-rx-item > .wp-rx-when{color:#8b9096!important;flex:0 0 auto!important;font-size:12px!important}',
             T + 'tr.wp-rx-detail .wp-rx-item > .wp-rx-what{flex:1 1 auto!important;min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}',
             T + 'tr.wp-rx-detail .wp-rx-muted{color:#8b9096!important}',
             T + 'tr.wp-rx-detail .wp-rx-up{color:#ffb347!important}',
             T + 'tr.wp-rx-detail .wp-rx-down{color:#7fd39a!important}',
             T + 'tr.wp-rx-detail .wp-rx-neg{color:#ff8a80!important}',
             T + 'tr.wp-rx-detail .wp-rx-chips{display:flex!important;flex-wrap:wrap!important;gap:4px!important;margin-top:5px!important}',
-            T + 'tr.wp-rx-detail .wp-rx-chip{display:inline-block!important;padding:0 6px!important;border-radius:4px!important;font-size:10.5px!important;font-weight:700!important;line-height:17px!important;border:1px solid rgba(128,128,128,.35)!important;color:inherit!important;white-space:nowrap!important}',
+            T + 'tr.wp-rx-detail .wp-rx-chip{display:inline-block!important;padding:0 6px!important;border-radius:4px!important;font-size:11.5px!important;font-weight:700!important;line-height:17px!important;border:1px solid rgba(128,128,128,.35)!important;color:inherit!important;white-space:nowrap!important}',
             T + 'tr.wp-rx-detail .wp-rx-chip.is-orange{color:#ffd08a!important;border-color:rgba(255,159,26,.55)!important;background:rgba(139,78,0,.22)!important}',
             T + 'tr.wp-rx-detail .wp-rx-chip.is-blue{color:#9cc3ff!important;border-color:rgba(116,167,255,.55)!important}',
-            T + 'tr.wp-rx-detail .wp-rx-more{color:#8b9096!important;font-size:11px!important;margin-top:2px!important}'
+            // 1.7.382: side-by-side columns in the suggestion card's colours (they wrap on a narrow window)
+            T + 'tr.wp-rx-detail .wp-rx-grid{display:flex!important;flex-wrap:wrap!important;gap:6px!important;align-items:stretch!important}',
+            T + 'tr.wp-rx-detail .wp-rx-block:not(.wp-rx-tone){flex:0 0 auto!important;padding:0!important;border:0!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone{padding:6px 11px 7px!important;border:1px solid transparent!important;border-left-width:4px!important;border-radius:10px!important;box-sizing:border-box!important;flex:0 1 auto!important;width:fit-content!important;min-width:120px!important;max-width:440px!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone .wp-rx-what{white-space:normal!important;overflow:visible!important;overflow-wrap:anywhere!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone .wp-rx-when{min-width:58px!important}',
+            T + 'tr.wp-rx-detail .wp-rx-who{color:#9aa0a6!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-yellow{background:rgba(255,210,122,.09)!important;border-color:rgba(255,210,122,.32)!important;border-left-color:#ffd27a!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-yellow > .wp-rx-label{color:#ffd27a!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-mint{background:rgba(143,255,213,.09)!important;border-color:rgba(143,255,213,.32)!important;border-left-color:#8fffd5!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-mint > .wp-rx-label{color:#8fffd5!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-blue{background:rgba(127,208,255,.09)!important;border-color:rgba(127,208,255,.32)!important;border-left-color:#7fd0ff!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-blue > .wp-rx-label{color:#7fd0ff!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-orange{background:rgba(255,179,71,.09)!important;border-color:rgba(255,179,71,.32)!important;border-left-color:#ffb347!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-orange > .wp-rx-label{color:#ffb347!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-red{background:rgba(255,138,128,.09)!important;border-color:rgba(255,138,128,.32)!important;border-left-color:#ff9d94!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-red > .wp-rx-label{color:#ff9d94!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-purple{background:rgba(201,163,255,.09)!important;border-color:rgba(201,163,255,.32)!important;border-left-color:#c9a3ff!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-purple > .wp-rx-label{color:#c9a3ff!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-sky{background:rgba(116,184,244,.09)!important;border-color:rgba(116,184,244,.32)!important;border-left-color:#74b8f4!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-sky > .wp-rx-label{color:#74b8f4!important}',
+            T + 'tr.wp-rx-detail .wp-rx-tone-grey{background:rgba(255,255,255,.05)!important;border-color:rgba(255,255,255,.14)!important;border-left-color:#8b9096!important}',
+            T + 'tr.wp-rx-detail .wp-rx-more{color:#8b9096!important;font-size:12px!important;margin-top:2px!important}'
         ].join('\n');
         const style = document.createElement('style');
         style.id = 'wp-rx-style';
@@ -40219,7 +42072,7 @@ async function wpTransferAssistantExtensionEnabled() {
         }
     }
 
-    // Detail strip: Price · Car · Price history · Surges · Notes.
+    // Detail columns: Comments · Notes · Booking · Price history · Surges · Status · Heroes · Suggested.
     function wpRxFill(detail, row) {
         const url = detail.dataset.url;
         const td = detail.firstElementChild;
@@ -40242,8 +42095,8 @@ async function wpTransferAssistantExtensionEnabled() {
         };
         td.textContent = '';
         const grid = el('div', 'wp-rx-grid');
-        const block = function(label) {
-            const node = el('div', 'wp-rx-block');
+        const block = function(label, tone) {
+            const node = el('div', 'wp-rx-block' + (tone ? ' wp-rx-tone wp-rx-tone-' + tone : ''));
             node.appendChild(el('span', 'wp-rx-label', label));
             grid.appendChild(node);
             return node;
@@ -40276,7 +42129,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 Object.assign(button.style, {
                     border: '0', outline: '0', borderRadius: '9px', background: '#171b1e', color: '#00cf95', cursor: 'pointer',
                     minHeight: '24px', padding: isClock ? '3px 0' : '4px 9px', width: isClock ? '30px' : 'auto',
-                    fontFamily: 'inherit', fontSize: isClock ? '12px' : '10px', fontWeight: '650', lineHeight: '16px',
+                    fontFamily: 'inherit', fontSize: isClock ? '13px' : '11px', fontWeight: '650', lineHeight: '16px',
                     textAlign: 'center', boxShadow: 'none', transition: 'background .16s ease, transform .16s ease'
                 });
                 button.addEventListener('mouseenter', function() { button.style.background = '#202529'; button.style.transform = 'translateY(-1px)'; });
@@ -40302,6 +42155,9 @@ async function wpTransferAssistantExtensionEnabled() {
             return;
         }
 
+        // 1.7.381: one coloured column per kind (1.7.382), like the suggestion card, so what
+        // is inside a transfer shows at a glance. Nothing is cut short. The
+        // price itself is a table column now, so it is not repeated here.
         const prices = data.prices || {};
         const changes = (data.costChanges || []).slice().sort(function(a, b) {
             const ta = Date.parse(a.when) || 0;
@@ -40309,82 +42165,81 @@ async function wpTransferAssistantExtensionEnabled() {
             return tb - ta;
         });
 
-        // PRICE: TC / DC, margin, last DC change + DC surge.
-        const price = block('Price');
-        const big = el('div', 'wp-rx-big');
-        big.appendChild(el('span', 'wp-rx-unit', 'TC'));
-        big.appendChild(document.createTextNode(money(prices.tc) + '  '));
-        big.appendChild(el('span', 'wp-rx-unit', 'DC'));
-        big.appendChild(document.createTextNode(money(prices.dc)));
-        price.appendChild(big);
-        if (Number.isFinite(Number(prices.tc)) && Number.isFinite(Number(prices.dc)) && Number(prices.tc) > 0) {
-            const margin = Number(prices.tc) - Number(prices.dc);
-            const sub = el('div', 'wp-rx-sub' + (margin < 0 ? ' wp-rx-neg' : ''),
-                'Margin ' + money(margin) + ' · ' + Math.round(margin / Number(prices.tc) * 100) + '%');
-            price.appendChild(sub);
-        }
-        const priceChips = el('div', 'wp-rx-chips');
-        const lastDc = changes.find(function(change) { return change.field === 'DC' && change.from !== null; });
-        if (lastDc) {
-            const delta = Math.round((lastDc.to - lastDc.from) * 10) / 10;
-            if (delta) {
-                // Who: Admin History's name; else a raise you made here
-                // (same new price) = "you"; an unnamed Admin History change
-                // (surge) = "system".
-                let who = lastDc.author ? String(lastDc.author).replace(/@.*$/, '') : '';
-                let whoWhen = '';
-                if (!who) {
-                    try {
-                        const mine = (JSON.parse(localStorage.getItem('wp_my_raises_v1') || '{}') || {})[(String(url).match(/transfers\/(\d+)/) || [])[1]];
-                        if (mine && Math.abs(Number(mine.to) - Number(lastDc.to)) < 0.06) {
-                            who = 'you';
-                            whoWhen = new Date(mine.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-                        }
-                    } catch (_) {}
-                }
-                if (!who && !lastDc.synthetic) who = 'system';
-                const chip = el('span', 'wp-rx-chip' + (delta > 0 ? ' is-orange' : ''),
-                    (delta > 0 ? '↑ +' : '↓ ') + delta + ' DC' + (who ? ' · ' + who + (whoWhen ? ' ' + whoWhen : '') : ''));
-                chip.title = 'Last DC change: ' + money(lastDc.from) + ' → ' + money(lastDc.to) + ' (' + (lastDc.synthetic ? 'recent' : shortWhen(lastDc.when)) + ')' +
-                    (who ? ' by ' + who : ' — the CRM does not record who made this change');
-                priceChips.appendChild(chip);
-            }
-        }
-        const dcSurge = (data.surges || []).find(function(surge) { return surge.isDriver && surge.percent; });
-        if (dcSurge) priceChips.appendChild(el('span', 'wp-rx-chip is-blue', 'S ' + dcSurge.percent + '%'));
-        // Total DC change since the first change in Admin History.
-        const dcHistory = (data.costChanges || []).filter(function(change) {
-            return change.field === 'DC' && Number.isFinite(Number(change.from)) && Number(change.from) > 0;
-        });
-        if (dcHistory.length && Number.isFinite(Number(prices.dc))) {
-            const firstDc = dcHistory
-                .map(function(change, index) { return { change: change, index: index }; })
-                .sort(function(a, b) { return ((Date.parse(a.change.when) || 0) - (Date.parse(b.change.when) || 0)) || (b.index - a.index); })[0].change;
-            const base = Number(firstDc.from);
-            const total = Math.round((Number(prices.dc) / base - 1) * 1000) / 10;
-            if (total) {
-                const chip = el('span', 'wp-rx-chip' + (total > 0 ? ' is-orange' : ''), (total > 0 ? '+' : '') + total + '% DC total');
-                chip.title = 'DC ' + money(base) + ' → ' + money(prices.dc) + ' since the first change in Admin History';
-                priceChips.insertBefore(chip, priceChips.firstChild);
-            }
-        }
-        if (priceChips.childNodes.length) price.appendChild(priceChips);
-
-        // CAR: car type + CRM badges (A/C LOCK, assigned…).
-        // The car type is in the table's Car column now; only the CRM
-        // status badges (A/C OFF / LOCK, assigned…) stay, when there are any.
-        const badges = el('div', 'wp-rx-chips');
-        try { wpRenderCrmBadges(badges, data); } catch (_) {}
-        let statusBlock = null;
-        if (badges.childNodes.length) {
-            statusBlock = block('Status');
-            statusBlock.appendChild(badges);
+        // COMMENTS (yellow): traveller, driver and pickup notes, whole.
+        const bookingNotes = wpBookingNotes(data);
+        if (bookingNotes.length) {
+            const comments = block('Comments', 'yellow');
+            bookingNotes.forEach(function(note) {
+                const item = el('div', 'wp-rx-item');
+                item.appendChild(el('span', 'wp-rx-when', note.label.split(' ')[0]));
+                item.appendChild(el('span', 'wp-rx-what', note.text));
+                comments.appendChild(item);
+            });
         }
 
-        // PRICE HISTORY (1.7.176): newest first, up to 5 — each change with
-        // its % and who made it (system / surge / by hand / you), and a DC
-        // summary line: total since creation, split by hand vs system.
-        const history = block('Price history');
+        // NOTES (mint): every task note.
+        const notes = block('Notes', 'mint');
+        const tasks = data.tasks || [];
+        if (!tasks.length) {
+            notes.appendChild(el('div', 'wp-rx-muted', 'None'));
+        } else {
+            tasks.forEach(function(task) {
+                const item = el('div', 'wp-rx-item');
+                if (task.label && !/^task$/i.test(task.label)) item.appendChild(el('span', 'wp-rx-when', task.label));
+                const what = el('span', 'wp-rx-what', task.note || '');
+                const noteBy = wpNoteAuthor(url, task.note);
+                if (noteBy) what.appendChild(el('span', 'wp-rx-muted', ' · ' + noteBy));
+                item.appendChild(what);
+                notes.appendChild(item);
+            });
+        }
+
+        // BOOKING (blue): flight, people, luggage, seats, the two boxes, the
+        // whole route.
+        try {
+            const booked = data.booking || {};
+            const bookingRow = block('Booking', 'blue');
+            const facts = el('div', 'wp-rx-chips');
+            const fact = function(text, cls) { facts.appendChild(el('span', 'wp-rx-chip ' + (cls || ''), text)); };
+            const count = function(value, word) { if (Number(value) > 0) fact(value + ' ' + word); };
+            let parsed = null;
+            try { parsed = data.emDetails ? wpParseCRMClipboardText(data.emDetails) : null; } catch (_) {}
+            const route = String(parsed && parsed.route || '').replace(/\s+/g, ' ').trim();
+            const flight = route.match(/^([A-Z][A-Z0-9]\s?\d{1,4}[A-Z]?|\d[A-Z]\s?\d{1,4}[A-Z]?)\s*[,\-:]\s+/);
+            // 1.7.383: the CRM's own flight fields; the route's first words only when they are empty
+            const flightInfo = booked.flight || {};
+            const flightName = flightInfo.name || (flight ? flight[1] : '');
+            if (flightName) fact('Flight ' + flightName, 'is-blue');
+            const flightAt = String(flightInfo.at || '').match(/^\d{4}-(\d{2})-(\d{2})[T ](\d{2}:\d{2})/);
+            if (flightAt) fact(flightInfo.word + ' ' + flightAt[2] + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(flightAt[1]) - 1] + ' ' + flightAt[3], 'is-blue');
+            count(booked.pax, 'pax');
+            count(booked.kids, Number(booked.kids) === 1 ? 'kid' : 'kids');
+            count(booked.checked, 'checked');
+            count(booked.hand, 'hand');
+            if (!(Number(booked.checked) > 0) && !(Number(booked.hand) > 0)) count(booked.luggage, Number(booked.luggage) === 1 ? 'bag' : 'bags');
+            count(booked.infant, 'infant carrier');
+            count(booked.child, 'child seat');
+            count(booked.booster, 'booster');
+            if (booked.wheelchair) fact('Wheelchair', 'is-orange');
+            if (booked.bulky) fact('Bulky luggage', 'is-orange');
+            if (data.cancelled) fact('Cancelled' + (data.cancelReason ? ': ' + data.cancelReason : ''), 'is-orange');
+            bookingRow.appendChild(facts);
+            if (flightInfo.live) {
+                const liveLine = el('div', 'wp-rx-item');
+                liveLine.appendChild(el('span', 'wp-rx-when', 'Tracking'));
+                liveLine.appendChild(el('span', 'wp-rx-what', flightInfo.live));
+                bookingRow.appendChild(liveLine);
+            }
+            if (route) {
+                const line = el('div', 'wp-rx-item');
+                line.appendChild(el('span', 'wp-rx-what', flight ? route.slice(flight[0].length) : route));
+                bookingRow.appendChild(line);
+            }
+        } catch (_) {}
+
+        // PRICE HISTORY (orange): every change, newest first: when, from → to,
+        // the %, and who. On top: the DC total, split by hand / system.
+        const history = block('Price history', 'orange');
         if (!changes.length) {
             history.appendChild(el('div', 'wp-rx-muted', data._historyLoading ? 'Loading…' : 'No changes'));
         } else {
@@ -40403,7 +42258,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (Math.abs(pct(system)) >= 0.1) parts.push('system ' + (pct(system) > 0 ? '+' : '') + pct(system) + '%');
                 history.appendChild(el('div', 'wp-rx-sub', parts.join(' · ')));
             }
-            changes.slice(0, 5).forEach(function(change) {
+            changes.forEach(function(change) {
                 const who = wpPriceChangeWho(change, data, url);
                 const item = el('div', 'wp-rx-item');
                 item.appendChild(el('span', 'wp-rx-when', change.synthetic ? 'recent' : shortWhen(change.when)));
@@ -40417,19 +42272,16 @@ async function wpTransferAssistantExtensionEnabled() {
                     const stepPct = Math.round((Number(change.to) / Number(change.from) - 1) * 1000) / 10;
                     what.appendChild(el('span', up ? 'wp-rx-up' : 'wp-rx-down', ' (' + (stepPct > 0 ? '+' : '') + stepPct + '%)'));
                 }
-                const whoSpan = el('span', 'wp-rx-muted', ' · ' + who.text);
-                if (who.kind === 'hand') whoSpan.style.color = '#ffb347';
+                const whoSpan = el('span', 'wp-rx-who', ' · ' + who.text);
+                if (who.kind === 'hand' || who.kind === 'person') whoSpan.style.setProperty('color', '#ffd27a', 'important');
                 what.appendChild(whoSpan);
-                what.title = (change.synthetic ? 'Not in Admin History — the current price differs from its last entry' : change.when) +
-                    ' · ' + change.field + ' ' + money(change.from) + ' → ' + money(change.to) + ' · ' + who.text;
                 item.appendChild(what);
                 history.appendChild(item);
             });
-            if (changes.length > 5) history.appendChild(el('div', 'wp-rx-more', '+' + (changes.length - 5) + ' older'));
         }
 
-        // SURGES: one line each — "DC surge 20% · 32€ → 38.4€".
-        const surges = block('Surges');
+        // SURGES (red): one line each — "DC surge 20% · 32€ → 38.4€".
+        const surges = block('Surges', 'red');
         if (!(data.surges || []).length) {
             surges.appendChild(el('div', 'wp-rx-muted', 'None'));
         } else {
@@ -40449,71 +42301,17 @@ async function wpTransferAssistantExtensionEnabled() {
             });
         }
 
-        // NOTES: the transfer's task notes, newest as the CRM lists them.
-        const notes = block('Notes');
-        const tasks = data.tasks || [];
-        if (!tasks.length) {
-            notes.appendChild(el('div', 'wp-rx-muted', 'None'));
-        } else {
-            tasks.slice(0, 5).forEach(function(task) {
-                const item = el('div', 'wp-rx-item');
-                if (task.label && !/^task$/i.test(task.label)) item.appendChild(el('span', 'wp-rx-when', task.label));
-                const what = el('span', 'wp-rx-what', task.note || '');
-                what.title = (task.label ? task.label + ': ' : '') + (task.note || '');
-                const noteBy = wpNoteAuthor(url, task.note);
-                if (noteBy) what.appendChild(el('span', 'wp-rx-muted', ' · ' + noteBy));
-                item.appendChild(what);
-                notes.appendChild(item);
-            });
-            if (tasks.length > 5) notes.appendChild(el('div', 'wp-rx-more', '+' + (tasks.length - 5) + ' more'));
+        // STATUS: the CRM's badges (A/C OFF / LOCK, assigned…), when there are any.
+        const badges = el('div', 'wp-rx-chips');
+        try { wpRenderCrmBadges(badges, data); } catch (_) {}
+        let statusBlock = null;
+        if (badges.childNodes.length) {
+            statusBlock = block('Status', 'grey');
+            statusBlock.appendChild(badges);
         }
 
-        // BOOKING (1.7.208): only when the passenger or the driver note has
-        // text — what was booked, the notes, and (local AI on) what the notes
-        // would change in the booking.
-        try {
-            const bookingNotes = wpBookingNotes(data);
-            if (bookingNotes.length) {
-                const bookingBlock = block('Booking · notes');
-                bookingBlock.appendChild(el('div', 'wp-rx-sub', wpBookingLine(data.booking)));
-                bookingNotes.forEach(function(note) {
-                    const item = el('div', 'wp-rx-item');
-                    item.appendChild(el('span', 'wp-rx-when', note.label.split(' ')[0]));
-                    const what = el('span', 'wp-rx-what', note.text.length > 220 ? note.text.slice(0, 218) + '…' : note.text);
-                    what.style.setProperty('white-space', 'normal', 'important');
-                    what.title = note.label + ': ' + note.text;
-                    item.appendChild(what);
-                    bookingBlock.appendChild(item);
-                    // 1.7.260: not in English → the local AI's translation under it
-                    wpTranslateNote(note.text).then(function(english) {
-                        if (!english || !item.isConnected) return;
-                        const line = el('div', 'wp-rx-item');
-                        line.appendChild(el('span', 'wp-rx-when', 'EN'));
-                        const said = el('span', 'wp-rx-what', english);
-                        said.style.setProperty('white-space', 'normal', 'important');
-                        said.style.setProperty('color', '#c9a3ff', 'important');
-                        said.title = note.label + ' — translated by the local AI on this PC';
-                        line.appendChild(said);
-                        item.insertAdjacentElement('afterend', line);
-                    }, function() {});
-                });
-                const holder = {};
-                wpBookingFor(data, holder).then(function(check) {
-                    if (!check || !bookingBlock.isConnected) return;
-                    check.changes.map(function(change) { return ['✎ ' + change.text + (change.soft ? ' ?' : ''), change.why]; })
-                        .concat(check.other ? [['✎ Also asks: ' + check.other, '']] : [])
-                        .forEach(function(line) {
-                            const item = el('div', 'wp-rx-item');
-                            const what = el('span', 'wp-rx-what wp-rx-up', line[0]);
-                            what.style.setProperty('white-space', 'normal', 'important');
-                            what.style.fontWeight = '700';
-                            what.title = line[1] || line[0];
-                            item.appendChild(what);
-                            bookingBlock.appendChild(item);
-                        });
-                }, function() {});
-            }
-        } catch (_) {}
+        // 1.7.404: the City Manager's copy of a row: no Heroes / Suggested
+        if (row && row.classList && row.classList.contains('wp-cm-row')) return;
 
         // HEROES (purple) and SUGGESTED (blue, the CRM's top 5 suggested
         // drivers when the CRM already has suggestions): click a name =
@@ -40556,7 +42354,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const send = el('button', '', label);
             send.type = 'button';
             Object.assign(send.style, {
-                marginTop: '6px', padding: '3px 9px', borderRadius: '5px', cursor: 'pointer', fontSize: '11px', fontWeight: '700',
+                marginTop: '6px', padding: '3px 9px', borderRadius: '5px', cursor: 'pointer', fontSize: '12px', fontWeight: '700',
                 background: options.colors[0], color: options.colors[1], border: '1px solid ' + options.colors[2]
             });
             send.title = 'Send this transfer (driver message + details) to each of them, one by one, through WhatsApp Web';
@@ -40600,7 +42398,7 @@ async function wpTransferAssistantExtensionEnabled() {
 
         const heroes = heroCity ? wpGetHeroDriversForCity(heroCity) : [];
         if (heroes.length) {
-            const heroBlock = block('Heroes');
+            const heroBlock = block('Heroes', 'purple');
             peopleBlock(heroBlock, heroes.slice(0, 8).map(function(hero) {
                 return {
                     name: String(hero.name || 'Hero'),
@@ -40621,7 +42419,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 const nameButton = el('button', '', nameLabel);
                 nameButton.type = 'button';
                 Object.assign(nameButton.style, {
-                    marginTop: '6px', marginLeft: '6px', padding: '3px 9px', borderRadius: '5px', cursor: 'pointer', fontSize: '11px', fontWeight: '700',
+                    marginTop: '6px', marginLeft: '6px', padding: '3px 9px', borderRadius: '5px', cursor: 'pointer', fontSize: '12px', fontWeight: '700',
                     background: 'transparent', color: '#c98ae6', border: '1px solid rgba(123,63,152,.7)'
                 });
                 nameButton.title = 'Save every ' + heroCity + ' hero in your WhatsApp contacts as First name = their name, Last name = "' + heroCity + ' <car type>" (renames the ones saved under another name). No message is sent.';
@@ -40637,7 +42435,7 @@ async function wpTransferAssistantExtensionEnabled() {
             }
         }
 
-        const suggestedBlock = block('Suggested');
+        const suggestedBlock = block('Suggested', 'sky');
         suggestedBlock.appendChild(el('div', 'wp-rx-muted', 'Loading…'));
         const suggestedLabel = suggestedBlock.firstChild;
         // Loaded after the transfer's own details (they come first).
@@ -40646,7 +42444,7 @@ async function wpTransferAssistantExtensionEnabled() {
             // FLASHING (a flash request round in progress) → Status.
             if (list && list.flashing) {
                 if (!statusBlock) {
-                    statusBlock = block('Status');
+                    statusBlock = block('Status', 'grey');
                     statusBlock.appendChild(el('div', 'wp-rx-chips'));
                     grid.insertBefore(statusBlock, grid.children[1] || null);
                 }
@@ -40656,7 +42454,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     flash.title = 'A flash request round is in progress (Hailing → Flash Request Rounds). BC / Final BC stop it first.';
                     Object.assign(flash.style, {
                         display: 'inline-flex', alignItems: 'center', padding: '1px 5px', borderRadius: '4px',
-                        fontSize: '10px', lineHeight: '14px', fontWeight: '700', color: '#ffd27a',
+                        fontSize: '11px', lineHeight: '14px', fontWeight: '700', color: '#ffd27a',
                         border: '1px solid rgba(255,210,122,.6)', whiteSpace: 'nowrap'
                     });
                     chips.insertBefore(flash, chips.firstChild);
@@ -40824,15 +42622,18 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!row || wpRxIsDetail(row) || !wpRxRowUrl(row)) return;
             // Anything that already does something on click keeps its action.
             if (target.closest('a, button, input, select, textarea, label, [onclick], .wp-order-quick-popout')) return;
-            if (target.closest('td.wp-s-cell, td.wp-tbo-cell')) return;
-            // AutoCancel keeps its own click only when it shows something;
-            // an empty AutoCancel cell expands the row like the others.
-            const acCell = target.closest('td.wp-autocancel-cell');
-            if (acCell && String(acCell.textContent || '').trim()) return;
-            try {
-                const cityCell = getCityCell(row);
-                if (cityCell && cityCell.contains(target)) return;
-            } catch (_) {}
+            // 1.7.381: with the worked-on dot on the row, only the space after it opens the row
+            if (row.querySelector(':scope > td.wp-worked-cell')) {
+                if (!target.closest('td.wp-worked-cell') || target.closest('.wp-worked-dot')) return;
+            } else {
+                if (target.closest('td.wp-s-cell, td.wp-tbo-cell')) return;
+                const acCell = target.closest('td.wp-autocancel-cell');
+                if (acCell && String(acCell.textContent || '').trim()) return;
+                try {
+                    const cityCell = getCityCell(row);
+                    if (cityCell && cityCell.contains(target)) return;
+                } catch (_) {}
+            }
             // Selecting text is not a click to expand.
             try { if (String(window.getSelection() || '').trim()) return; } catch (_) {}
             wpRxToggle(row);
@@ -40842,11 +42643,224 @@ async function wpTransferAssistantExtensionEnabled() {
     }
 
 
+    // 1.7.384: one look for everything, wlcm's suggestion card: dark solid panels
+    // (no glass), Segoe UI, round corners, pill buttons (green = the main action,
+    // grey = the rest). Status colours keep their meaning. A style of its own, last
+    // and strongest, so the older window styles need no editing.
+    const wpWaPanelPrompt = function() {
+        const id = 'wp-wa-need-panel';
+        let pill = document.getElementById(id);
+        if (pill) return;
+        pill = document.createElement('button');
+        pill.type = 'button';
+        pill.id = id;
+        pill.textContent = 'WhatsApp is waiting: click to open its panel';
+        pill.dataset.wpMain = '1';
+        Object.assign(pill.style, { position: 'fixed', left: '50%', top: '14px', transform: 'translateX(-50%)', zIndex: '2147483600', padding: '9px 18px', border: '0', borderRadius: '999px', background: '#2fbf71', color: '#06210f', font: '600 14px "Segoe UI",system-ui,sans-serif', cursor: 'pointer', boxShadow: '0 12px 32px rgba(0,0,0,.55)' });
+        const timer = setTimeout(function() { pill.remove(); }, 170000);
+        pill.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            clearTimeout(timer);
+            pill.remove();
+            try { chrome.runtime.sendMessage({ type: 'WP_WA_PANEL_OPEN' }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+        });
+        document.body.appendChild(pill);
+    };
+    try { chrome.runtime.onMessage.addListener(function(message) { if (message && message.type === 'WP_WA_NEED_PANEL') wpWaPanelPrompt(); }); } catch (_) {}
+
+    // 1.7.423: a mention of you / reply to you in a group, or a direct message,
+    // seen in the muted WhatsApp panel (wp-whatsapp.js keeps wp_wa_alerts_v1):
+    // one card each, top right. Open = the side panel shows that chat; × = gone
+    // (on every CRM tab and the phone). Cards go by themselves after 30 min.
+    const WP_WA_ALERTS_KEY = 'wp_wa_alerts_v1';
+    var wpWaAlertsPhone = [];
+    var wpWaAlertsPhoneSig = ''; // 1.7.423: what the phone app last got
+    const wpWaAlertsDrop = function(id) {
+        try {
+            chrome.storage.local.get(WP_WA_ALERTS_KEY, function(stored) {
+                const list = Array.isArray(stored[WP_WA_ALERTS_KEY]) ? stored[WP_WA_ALERTS_KEY] : [];
+                chrome.storage.local.set({ [WP_WA_ALERTS_KEY]: list.filter(function(a) { return a && a.id !== id; }) });
+            });
+        } catch (_) {}
+    };
+    const wpWaAlertsPaint = function(list) {
+        const now = Date.now();
+        const alerts = (Array.isArray(list) ? list : []).filter(function(a) { return a && a.id && now - Number(a.at) < 1800000; }).slice(0, 5);
+        // for the phone app: name and kind only, never message text
+        wpWaAlertsPhone = alerts.map(function(a) { return { id: String(a.id), title: String(a.title || '').slice(0, 80), kind: a.kind === 'mention' ? 'mention' : 'direct', count: Number(a.count) || 0, at: Number(a.at) || 0 }; });
+        let box = document.getElementById('wp-wa-alerts');
+        if (!alerts.length) { if (box) box.remove(); return; }
+        // 1.7.425: content.js starts before the page has a body (document_start): wait for it
+        if (!document.body) { document.addEventListener('DOMContentLoaded', function() { wpWaAlertsPaint(list); }, { once: true }); return; }
+        if (!box) {
+            box = document.createElement('div');
+            box.id = 'wp-wa-alerts';
+            Object.assign(box.style, { position: 'fixed', right: '16px', top: '60px', zIndex: '2147483600', display: 'flex', flexDirection: 'column', gap: '8px', width: '300px' });
+            document.body.appendChild(box);
+        }
+        const sig = JSON.stringify(alerts); // 1.7.425: unchanged → left as it is
+        if (box.getAttribute('data-sig') === sig) return;
+        box.setAttribute('data-sig', sig);
+        box.textContent = '';
+        alerts.forEach(function(a) {
+            const card = document.createElement('div');
+            Object.assign(card.style, { display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 10px 10px 14px', borderRadius: '14px', background: '#14181b', border: '1px solid ' + (a.kind === 'mention' ? '#8fffd5' : '#2fbf71'), color: '#e8f0ec', font: '13px "Segoe UI",system-ui,sans-serif', boxShadow: '0 12px 32px rgba(0,0,0,.55)' });
+            const text = document.createElement('div');
+            Object.assign(text.style, { flex: '1 1 auto', minWidth: '0' });
+            const head = document.createElement('div');
+            head.textContent = a.kind === 'mention' ? 'Mentioned or replied to' : 'Direct message';
+            Object.assign(head.style, { fontSize: '11px', color: a.kind === 'mention' ? '#8fffd5' : '#2fbf71', fontWeight: '600' });
+            const name = document.createElement('div');
+            name.textContent = String(a.title || '') + (Number(a.count) > 1 ? ' (' + Number(a.count) + ')' : '');
+            Object.assign(name.style, { fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
+            text.append(head, name);
+            const open = document.createElement('button');
+            open.type = 'button';
+            open.textContent = 'Open';
+            Object.assign(open.style, { border: '0', borderRadius: '999px', padding: '6px 14px', background: '#2fbf71', color: '#06210f', font: '600 13px "Segoe UI",system-ui,sans-serif', cursor: 'pointer' });
+            const close = document.createElement('button');
+            close.type = 'button';
+            close.textContent = '×';
+            close.title = 'Close';
+            Object.assign(close.style, { border: '0', borderRadius: '999px', padding: '2px 9px', background: '#2a3034', color: '#c9d3ce', font: '600 16px "Segoe UI",system-ui,sans-serif', cursor: 'pointer' });
+            open.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                try { chrome.runtime.sendMessage({ type: 'WP_WA_ALERT_OPEN', title: String(a.title || '') }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+                wpWaAlertsDrop(a.id);
+            });
+            close.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                wpWaAlertsDrop(a.id);
+            });
+            card.append(text, open, close);
+            box.appendChild(card);
+        });
+    };
+    try {
+        chrome.storage.local.get(WP_WA_ALERTS_KEY, function(stored) { wpWaAlertsPaint(stored[WP_WA_ALERTS_KEY]); });
+        chrome.storage.onChanged.addListener(function(changes, area) {
+            if (area === 'local' && changes[WP_WA_ALERTS_KEY]) wpWaAlertsPaint(changes[WP_WA_ALERTS_KEY].newValue);
+        });
+        // the 30-minute limit, also when nothing changes; 1.7.425: every 3 s, so cards
+        // the page removed (or never had a body for) come back within seconds
+        setInterval(function() { chrome.storage.local.get(WP_WA_ALERTS_KEY, function(stored) { wpWaAlertsPaint(stored[WP_WA_ALERTS_KEY]); }); }, 3000);
+    } catch (_) {}
+
+    // 1.7.387: of the column restyle (1.7.386) only these stay: the PICKUP / DROP-OFF pills and the Minivan cell.
+    // 1.7.388: the pills are quieter: grey fill, dimmed colour, medium weight.
+    function wpColumnThemeCss(R) {
+        const T = 'table.transfers ';
+        return [
+            // 1.7.389: tags and raises are coloured text only: no fill, no edge, no shadow.
+            R + T + 'td.wp-transfer-tags .wp-transfer-tag,' + R + T + 'td.wp-price-cell .wp-transfer-tag{background:transparent!important;border-color:transparent!important;box-shadow:none!important;padding-left:3px!important;padding-right:3px!important}',
+            // 1.7.390: the S column keeps its orange / red text, without the fill and the edge.
+            R + T + 'td.wp-s-cell.wp-s-orange,' + R + T + 'td.wp-s-cell.wp-s-red{background:transparent!important;box-shadow:none!important}',
+            // 1.7.395: Price and Raise are softer: normal weight, greyer numbers, dimmed tag colours.
+            R + T + 'td.wp-tcdc-cell{font-weight:400!important;color:#aab4b9!important}',
+            R + T + 'td.wp-tcdc-cell span{font-weight:400!important;opacity:.78}',
+            R + T + 'td.wp-price-cell .wp-transfer-tag.wp-transfer-tag{font-weight:400!important;opacity:.78}',
+            // 1.7.396: Order#, Partner and S as soft as Price and Raise (colours in rgba, because an opacity on the cell would fight the row dimming).
+            R + T + 'td.wp-order-cell,' + R + T + 'td.wp-order-cell a{font-weight:400!important;color:#aab4b9!important}',
+            R + T + 'td.partner:not(.wp-booking):not(.wp-airbnb),' + R + T + 'td.partner:not(.wp-booking):not(.wp-airbnb) *{font-weight:400!important;color:#aab4b9!important}',
+            R + T + 'td.partner.wp-booking,' + R + T + 'td.partner.wp-booking *{font-weight:400!important;color:rgba(213,138,138,.78)!important}',
+            R + T + 'td.partner.wp-airbnb,' + R + T + 'td.partner.wp-airbnb *{font-weight:400!important;color:rgba(214,194,122,.78)!important}',
+            R + T + 'td.wp-s-cell{background:transparent!important;font-weight:400!important;color:#aab4b9!important}',
+            R + T + 'td.wp-s-cell.wp-s-orange{color:rgba(255,208,138,.78)!important}',
+            R + T + 'td.wp-s-cell.wp-s-red{color:rgba(255,155,155,.78)!important}',
+            R + T + 'td.wp-s-cell > :not(.wp-s-em-label){font-weight:400!important;color:inherit!important}',
+            // 1.7.397: auto-cancel at 1 hour or more is calm; under 1 hour (orange, red) stays strong.
+            R + T + 'td.wp-autocancel-cell.wp-autocancel-white{font-weight:400!important;color:#aab4b9!important}',
+            R + T + 'td.wp-pudo-cell .wp-pudo-chip{border:0!important;border-radius:999px!important;padding:1px 9px!important;font-weight:500!important;font-size:11px!important}',
+            R + T + 'td.wp-pudo-cell .wp-pudo-chip.is-pu{background:rgba(255,255,255,.05)!important;color:rgba(143,255,213,.72)!important}',
+            R + T + 'td.wp-pudo-cell .wp-pudo-chip.is-do{background:rgba(255,255,255,.05)!important;color:rgba(255,179,71,.72)!important}',
+            R + T + 'td.wp-pudo-cell .wp-pudo-chip.is-both{background:rgba(255,255,255,.05)!important;color:rgba(127,208,255,.72)!important}',
+            R + T + 'td.wp-car-cell.wp-car-minivan{color:#8fffd5!important;background:transparent!important;box-shadow:none!important}' // 1.7.391: coloured text only
+        ];
+    }
+
+    function wpInjectCardTheme() {
+        if (document.getElementById('wp-card-theme-v1')) return;
+        const R = 'html:not(#wpy):not(#wpz) body:not(#wpy):not(#wpz) ';
+        const FONT = '"Segoe UI",system-ui,-apple-system,Roboto,sans-serif';
+        const PANEL = '#1f2529';
+        const TEXT = '#e8ecee';
+        const MUTED = '#9aa6ad';
+        const LINE = 'rgba(255,255,255,.09)';
+        const each = function(list, tail) { return list.map(function(item) { return R + item + (tail || ''); }).join(','); };
+        const surfaces = [
+            '#wp-today-city-window:not(.is-closed)', '.wp-today-city-orders-window', '#wp-today-city-actions-window', '#wp-today-city-hub-window', '#wp-transfer-history-panel',
+            '#wp-transfer-history-stats-panel', '#wp-ac-off-watch-panel', '#wp-transfer-watch-panel', '#wp-hero-drivers-panel', '#wp-transfer-city-notes-panel', '.wp-custom-transfer-window',
+            '#wp-city-price-tooltip', '.wp-dropdown-manager-modal', '.wp-hero-drivers-manager', '.wp-transfer-watch-dialog-box', '.wp-transfer-watch-alarm-box', '.wp-city-whatsapp-box',
+            '#wp-suggested-driver-result', '.wp-order-quick-popout', '.wp-order-quick-actions', '#wp-city-transfer-image-modal > div', '#wp-dash-term', '#wp-dash-controls',
+            '#wp-remote-settings', '#wp-suggest-history', '#wp-director-queue', '#wp-queue-mini', '#wp-today-stats', '#wp-cm-frame', '#wp-workflow-debug-panel', '#wp-dashboard-debug-panel',
+            '#wp-transfer-focus-bar', '#wp-send-all-drivers-panel', '#wp-rules-window', '#wp-bulk-pill', '#wp-emp-menu', '#wp-page-quickbar'
+        ];
+        const titles = [
+            '#wp-today-city-window .wp-today-city-window-header', '.wp-today-city-orders-header', '.wp-transfer-history-title', '.wp-history-stats-title', '.wp-ac-off-watch-title',
+            '.wp-transfer-watch-title', '.wp-city-notes-title', '.wp-custom-window-title', '.wp-dropdown-manager-head', '.wp-hero-manager-title', '.wp-transfer-watch-dialog-title',
+            '.wp-transfer-watch-alarm-title', '.wp-city-whatsapp-title', '.wp-suggested-driver-title', '.wp-today-city-actions-title', '#wp-dash-term .wpdt-head', '.wpdc-head'
+        ];
+        // the old theme's bottom-bar items (written with their ids three times, so the same here)
+        const pills = ['#wp-dash-term-pill', '#wp-today-city-window.is-closed #wp-today-city-toggle', '#wp-transfer-history-launcher', '#wp-emp-file-button']
+            .map(function(item) { const last = item.split(' ').pop(); return item.replace(last, last + last + last); })
+            .concat(['#wp-transfer-watch-panel#wp-transfer-watch-panel#wp-transfer-watch-panel.wp-dashboard-panel-collapsed', '#wp-ac-off-watch-panel#wp-ac-off-watch-panel#wp-ac-off-watch-panel.wp-dashboard-panel-collapsed', '#wp-refresh-controls#wp-refresh-controls#wp-refresh-controls > *']);
+        const inside = surfaces.map(function(item) { return item + ' button'; });
+        const allButtons = inside.concat(['button[id^="wp-"]', 'button[class*="wp-"]', '#wp-refresh-toggle']);
+        const skip = ':not(.dc-btn):not(.dc-mini):not(.dc-toggle):not(.wp-panel-collapse-toggle)';
+        const buttons = allButtons.map(function(item) { return R + item + skip; });
+        const on = function(extra) { return buttons.map(function(item) { return item + extra; }).join(','); };
+        const css = [
+            // panels
+            each(surfaces) + '{background:' + PANEL + '!important;background-image:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;color:' + TEXT + '!important;border:1px solid ' + LINE + '!important;border-radius:18px!important;box-shadow:0 18px 48px rgba(0,0,0,.6)!important}',
+            each(surfaces) + ',' + each(surfaces, ' *') + '{font-family:' + FONT + '!important}',
+            // titles: bright, bold, a quiet line under them
+            each(titles) + '{color:' + TEXT + '!important;font-weight:650!important;background:transparent!important;border-bottom:1px solid ' + LINE + '!important;text-shadow:none!important}',
+            each(titles, ' > span:first-child') + '{color:' + TEXT + '!important}',
+            // buttons: grey pills
+            buttons.join(',') + '{font-family:' + FONT + '!important;font-weight:600!important;background:rgba(255,255,255,.09)!important;background-image:none!important;color:' + TEXT + '!important;border:0!important;border-radius:999px!important;box-shadow:none!important;text-shadow:none!important;transition:filter .12s ease!important}',
+            on(':hover:not(:disabled)') + '{background:rgba(255,255,255,.15)!important;filter:none!important}',
+            on(':disabled') + '{opacity:.45!important}',
+            // the main action, the chosen tab: green
+            on(':is(.active,.is-active,.wp-today-city-orders-open-all,[data-wp-main])') + '{background:#2fbf71!important;color:#06210f!important}',
+            on(':is(.active,.is-active,.wp-today-city-orders-open-all,[data-wp-main]):hover:not(:disabled)') + '{background:#37cf7d!important}',
+            // BC blue, Final BC red, raises amber, A/C off green, removing red: the card's own colours
+            on('.wp-today-city-orders-broadcast-action') + '{background:#74b8f4!important;color:#04192b!important}',
+            on('.wp-today-city-orders-broadcast-action:hover:not(:disabled)') + '{background:#8cc5f6!important}',
+            on('.wp-final-bc') + '{background:#ff6b5e!important;color:#2a0603!important}',
+            on('.wp-final-bc:hover:not(:disabled)') + '{background:#ff8378!important}',
+            on('.wp-raise-suggested') + '{background:rgba(255,179,71,.16)!important;color:#ffb347!important}',
+            on('.wp-quick-acoff') + '{background:rgba(111,209,111,.16)!important;color:#6fd16f!important}',
+            on(':is([class*="remove"],[class*="clear"])') + '{background:rgba(255,138,128,.14)!important;color:#ff9d94!important}',
+            on('#wp-ac-save-floating.wp-ac-state-on') + '{background:rgba(255,138,128,.16)!important;color:#ff9d94!important}',
+            on('#wp-ac-save-floating.wp-ac-state-off') + '{background:rgba(143,255,213,.14)!important;color:#8fffd5!important}',
+            // × and collapse: no box
+            on(':is([class*="-close"],[class*="collapse"])') + '{background:transparent!important;color:#7d8a90!important}',
+            on(':is([class*="-close"]):hover:not(:disabled)') + '{background:transparent!important;color:' + TEXT + '!important}',
+            R + '.wp-panel-collapse-toggle{color:' + TEXT + '!important;font-family:' + FONT + '!important;background:transparent!important;border:0!important}',
+            // the small items of the bottom bar
+            each(pills) + '{font-family:' + FONT + '!important;background:' + PANEL + '!important;background-image:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;color:' + TEXT + '!important;border:1px solid ' + LINE + '!important;border-radius:999px!important;box-shadow:0 6px 18px rgba(0,0,0,.45)!important}',
+            each(pills, ':hover') + '{background:#2a3136!important;border-color:rgba(255,255,255,.18)!important}',
+            // fields
+            surfaces.map(function(item) { return R + item + ' :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea)'; }).join(',') + '{background:#161a1d!important;color:' + TEXT + '!important;border:1px solid #4c5358!important;border-radius:10px!important;font-family:' + FONT + '!important;box-shadow:none!important}',
+            surfaces.map(function(item) { return R + item + ' :is(input,select,textarea):focus'; }).join(',') + '{border-color:#8fffd5!important;outline:none!important}',
+            // lists inside the panels
+            R + '.wp-today-city-orders-window .wp-today-city-order-item:hover,' + R + '#wp-today-city-window .wp-today-city-stat:hover{background:rgba(255,255,255,.05)!important}',
+            R + ':is(#wp-today-city-window,.wp-today-city-orders-window) :is(.wp-today-city-summary-head,.wp-today-city-orders-group-title){color:' + MUTED + '!important}'
+        ].concat(wpColumnThemeCss(R)).join('\n');
+        const style = document.createElement('style');
+        style.id = 'wp-card-theme-v1';
+        style.textContent = css;
+        (document.head || document.documentElement).appendChild(style);
+    }
+
     function wpInjectTerminalTheme() {
         if (document.getElementById('wp-terminal-theme-v1')) return;
 
         const R = 'html:not(#wpz) body:not(#wpz) ';
-        const FONT = 'Consolas, "Cascadia Mono", "Courier New", monospace';
+        const FONT = 'Segoe UI,system-ui,sans-serif';
         const MINT = '#8fffd5';
         const LINE = 'rgba(143,255,213,0.35)';
         const LINE_SOFT = 'rgba(143,255,213,0.2)';
@@ -40875,7 +42889,7 @@ async function wpTransferAssistantExtensionEnabled() {
         ];
         const W = ':is(' + windows.join(',') + ')';
         // 1.7.242: every surface of the extension, for the glass look
-        const G = ':is(' + windows.concat(['#wp-dash-term', '#wp-dash-controls', '#wp-director-card', '#wp-ai-settings', '#wp-remote-settings', '#wp-suggest-history', '#wp-director-queue', '#wp-queue-mini', '#wp-today-city-hub-window', '#wp-today-stats']).join(',') + ')';
+        const G = ':is(' + windows.concat(['#wp-dash-term', '#wp-dash-controls', '#wp-director-card', '#wp-remote-settings', '#wp-suggest-history', '#wp-director-queue', '#wp-queue-mini', '#wp-today-city-hub-window', '#wp-today-stats']).join(',') + ')';
         const SANS = FONT; // 1.7.243: the picture's font (Consolas) everywhere
         const JOIN = 'html.wp-cm-joined:not(#wpz) body:not(#wpz) ';
         // 1.7.246: the items of the bottom-bar row, and the lists they open
@@ -40884,7 +42898,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const BAR_HOVER = BAR_LIST.map(function(item) { return R + item + ':hover'; }).join(',');
         const OPENLIST = ':is(#wp-transfer-watch-panel,#wp-ac-off-watch-panel,#wp-transfer-history-panel):not(.wp-dashboard-panel-collapsed)';
         const CMW = '#wp-today-city-window#wp-today-city-window', CMO = '#wp-today-city-orders-window#wp-today-city-orders-window', CMA = '#wp-today-city-actions-window#wp-today-city-actions-window', CMH = '#wp-today-city-hub-window#wp-today-city-hub-window';
-        const GLASS = 'background:linear-gradient(180deg,rgba(255,255,255,0.10),rgba(255,255,255,0.03)),rgba(14,20,22,0.44)!important;backdrop-filter:blur(26px) saturate(180%)!important;-webkit-backdrop-filter:blur(26px) saturate(180%)!important;border:1px solid rgba(255,255,255,0.20)!important;box-shadow:0 16px 44px rgba(0,0,0,0.40),inset 0 1px 0 rgba(255,255,255,0.22)!important;';
+        const GLASS = 'background:#1f2529!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border:1px solid rgba(255,255,255,.09)!important;box-shadow:0 18px 48px rgba(0,0,0,.6)!important;'; // 1.7.384
 
         const headers = [
             '#wp-today-city-window .wp-today-city-window-header',
@@ -40995,7 +43009,7 @@ async function wpTransferAssistantExtensionEnabled() {
             ...(function() {
                 const CELL = 'table.transfers td:is(.wp-transfer-tags,.wp-price-cell)';
                 const kinds = [
-                    ['final', '123,63,152', '#c98ae6'], ['hero', '123,63,152', '#c98ae6'],
+                    ['final', '123,63,152', '#c98ae6'], ['hero', '123,63,152', '#c98ae6'], ['suggested', '186,140,255', '#dcc2ff'],
                     ['10', '181,138,5', '#e0b92e'], ['20', '220,126,18', '#ffb347'],
                     ['no-tag', '165,31,31', '#ff6b6b'],
                     ['bc', '110,118,124', '#aab3ba'], ['bc-grp', '110,118,124', '#aab3ba'], ['high-vol', '110,118,124', '#aab3ba'],
@@ -41011,7 +43025,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 ];
                 kinds.forEach(function(kind) {
                     const tag = '.wp-transfer-tag-' + kind[0] + ':only-child';
-                    rules.push(R + CELL + ':has(> ' + tag + '){background:rgba(' + kind[1] + ',.24)!important;background-color:rgba(' + kind[1] + ',.24)!important;box-shadow:inset 3px 0 0 ' + kind[2] + '!important}');
+                    // 1.7.391: no more fill or left edge on the cell: only the tag's coloured text.
                     rules.push(R + CELL + ' > ' + tag + '{color:' + kind[2] + '!important}');
                 });
                 return rules;
@@ -41020,7 +43034,7 @@ async function wpTransferAssistantExtensionEnabled() {
             // dark glass surfaces, sans-serif, mint titles, pill buttons with a mint edge.
             R + G + '{' + GLASS + 'border-radius:18px!important;color:#dfe4e6!important}',
             // 1.7.243: the card, Controls, history and settings boxes speak the same font
-            R + ':is(#wp-director-card,#wp-dash-controls,:is(#wp-suggest-history,#wp-director-queue),#wp-ai-settings,#wp-remote-settings,#wp-today-city-hub-window),' + R + ':is(#wp-director-card,#wp-dash-controls,:is(#wp-suggest-history,#wp-director-queue),#wp-ai-settings,#wp-remote-settings,#wp-today-city-hub-window) *{font-family:' + FONT + '!important}',
+            R + ':is(#wp-director-card,#wp-dash-controls,:is(#wp-suggest-history,#wp-director-queue),#wp-remote-settings,#wp-today-city-hub-window),' + R + ':is(#wp-director-card,#wp-dash-controls,:is(#wp-suggest-history,#wp-director-queue),#wp-remote-settings,#wp-today-city-hub-window) *{font-family:' + FONT + '!important}',
             R + '#wp-dash-controls .wpdt-go,' + R + ':is(#wp-suggest-history,#wp-director-queue) .wpsh-chip,' + R + ':is(#wp-suggest-history,#wp-director-queue) .wpsh-answer{border-radius:9px!important}',
             R + '#wp-director-card#wp-director-card{border-radius:18px!important}',
             R + W + ',' + R + W + ' *{font-family:' + SANS + '!important}',
@@ -41217,7 +43231,7 @@ async function wpTransferAssistantExtensionEnabled() {
             });
             if (taskIndex < 0) return;
             const addedAfter = headers.filter(function(cell, index) {
-                return index > taskIndex && (cell.classList.contains('wp-transfer-tags') || cell.classList.contains('wp-price-cell'));
+                return index > taskIndex && (cell.classList.contains('wp-transfer-tags') || cell.classList.contains('wp-price-cell') || cell.classList.contains('wp-tcdc-cell'));
             }).length;
             const rows = allRows.filter(function(row) {
                 return row !== header && !row.classList.contains('wp-rx-detail') &&
@@ -41457,6 +43471,7 @@ async function wpTransferAssistantExtensionEnabled() {
 
         wpInjectDarkCrm();
         wpInjectTerminalTheme();
+        wpInjectCardTheme();
         wpDockStart();
         // 1.7.266: Chrome must not throw this tab away to save memory while it works in the background
         try { if (!wpIsTransferDetailPage()) chrome.runtime.sendMessage({ type: 'WP_KEEP_TAB' }, function() { void chrome.runtime.lastError; }); } catch (_) {}
@@ -41471,21 +43486,18 @@ async function wpTransferAssistantExtensionEnabled() {
                             const on = message.value === true;
                             const item = String(message.item || '');
                             if (item === 'terminal') { wpDashEnsureUI(); wpDashSetCollapsed(false); }
+                            else if (item === 'automations') { if (!document.getElementById('wp-automations-window')) wpAutomationsWindow(); }
                             else if (item === 'director') {
-                                if (on && (wpAutoMode() === 'off' || wpAutoPaused())) { wpDashLog('🧩 Toolbar: mod switched on'); wpAutoCycle(); }
+                                if (on && (wpAutoMode() === 'off' || wpAutoPaused())) { wpDashLog('🧩 Toolbar: wlcm switched on'); wpAutoCycle(); }
                                 else if (!on && wpAutoMode() !== 'off') {
                                     const open = document.getElementById('wp-director-card');
                                     if (open && typeof wpDirector.answer === 'function') wpDirector.answer('later');
                                     wpAutoSetMode('off');
                                     wpAutoSetButton();
-                                    wpDashLog('🧩 Toolbar: 🤖 mod: OFF');
+                                    wpDashLog('🧩 Toolbar: 🤖 wlcm: OFF');
                                 }
                             } else if (item === 'full') {
                                 if (on !== wpAutoFullOn()) wpAutoFullSet(on, 'from the toolbar');
-                            } else if (item === 'ai') {
-                                const cfg = wpAiConfig();
-                                if (on && !cfg.model) { sendResponse({ ok: false, error: 'The local AI has no model chosen yet — set it up once in the Terminal (🧠 AI).' }); return false; }
-                                cfg.on = on; wpAiSaveConfig(cfg); wpDashLog('🧩 Toolbar: 🧠 AI ' + (on ? 'ON' : 'OFF'));
                             } else {
                                 const keys = { wa: ['wp_wa_autosend_v1', 'WhatsApp auto-send'], bkcancel: ['wp_booking_autocancel_v1', 'Auto-cancel'], tickbox: ['wp_tick_boxes_v1', 'Tick wheelchair / bulky'], heroes: ['wp_auto_heroes_v1', 'Send to heroes'], pnotify: ['wp_phone_notify_v1', 'Phone notifications'] };
                                 if (!keys[item]) { sendResponse({ ok: false, error: 'unknown switch' }); return false; }
@@ -41511,7 +43523,7 @@ async function wpTransferAssistantExtensionEnabled() {
                             acOff: acOff,
                             switches: {
                                 director: wpAutoMode() !== 'off' && !wpAutoPaused(), full: wpAutoFullOn(), bkcancel: wpBookingCancelOn(),
-                                wa: wpWhatsAppAutoSendOn(), tickbox: wpTickBoxesOn(), heroes: wpAutoHeroesOn(), pnotify: wpPhoneNotifyOn(), ai: Boolean(wpAiConfig().on)
+                                wa: wpWhatsAppAutoSendOn(), tickbox: wpTickBoxesOn(), heroes: wpAutoHeroesOn(), pnotify: wpPhoneNotifyOn()
                             }
                         });
                     } catch (error) { sendResponse({ ok: false, error: String(error && error.message || error) }); }
@@ -41536,8 +43548,6 @@ async function wpTransferAssistantExtensionEnabled() {
         } catch (_) {}
         // 1.7.264: transfer page — its own quickbar
         try { setTimeout(function() { try { wpTransferPageQuickbar(); } catch (_) {} }, 1200); } catch (_) {}
-        // 1.7.260: transfer page — notes that are not in English, translated under their field
-        try { setTimeout(function() { try { wpTranslateTransferPage(); } catch (_) {} }, 1500); } catch (_) {}
 
         if (
             !window.__wpTransferCityNotesResizeHandler
@@ -41743,6 +43753,11 @@ async function wpTransferAssistantExtensionEnabled() {
             'tomorrow',
             wpTodayCitySelectedTab === 'tomorrow'
         );
+
+        // 1.7.415: the 2-4 days list (downloaded in the background)
+        try { wpLater24TabEnsure(); } catch (_) {}
+        if (wpLater24On() && wpLater24Table()) wpTodayCityUpdateTab('later24', wpTodayCitySelectedTab === 'later24');
+        else if (wpTodayCitySelectedTab === 'later24') wpTodayCitySelectedTab = 'today';
 
     }
 
@@ -41963,7 +43978,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 width: '380px', maxHeight: '240px', display: 'flex', flexDirection: 'column',
                 background: 'rgba(17,20,22,0.96)', color: '#dfe4e6',
                 border: '1px solid rgba(143,255,213,0.35)', borderRadius: '8px',
-                boxShadow: '0 10px 28px rgba(0,0,0,.5)', font: '11px/1.45 Consolas, monospace'
+                boxShadow: '0 10px 28px rgba(0,0,0,.5)', font: '11px/1.45 Segoe UI,system-ui,sans-serif'
             });
             const header = document.createElement('div');
             Object.assign(header.style, {
@@ -42288,18 +44303,18 @@ async function wpTransferAssistantExtensionEnabled() {
         };
         const tickFail = function(why) {
             wpStep('FAILED: tick ' + tickWhat + ' — ' + why, true);
-            wpTellDashboard('✗ mod: ' + tickName + ' — ' + tickWhat + ' NOT ticked: ' + why + '. Tick it by hand.');
+            wpTellDashboard('✗ wlcm: ' + tickName + ' — ' + tickWhat + ' NOT ticked: ' + why + '. Tick it by hand.');
             tickReport('failed', why);
         };
         const tickSkip = async function(why) {
             wpStep('✓ ' + why + ' — nothing changed');
-            wpTellDashboard('mod: ' + tickName + ' — ' + tickWhat + ': ' + why);
+            wpTellDashboard('wlcm: ' + tickName + ' — ' + tickWhat + ': ' + why);
             tickReport('skipped', why);
             await wpCloseThisTabWhenDone();
         };
         const tickDone = async function() {
             wpStep('✓ ' + tickWhat + ' ticked and saved');
-            wpTellDashboard('✓ mod: ' + tickName + ' — ' + tickWhat + ' ticked and saved (from the notes)');
+            wpTellDashboard('✓ wlcm: ' + tickName + ' — ' + tickWhat + ' ticked and saved (from the notes)');
             tickReport('done', '');
             await wpCloseThisTabWhenDone();
         };
@@ -42344,6 +44359,20 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (!entry.box.checked) { tickFail('the box "' + tickBoxNames[entry.name] + '" did not tick'); return; }
                 wpStep(tickBoxNames[entry.name] + ' ticked');
             }
+            // 1.7.426: an A/C Off done on this transfer while this tab sat in
+            // the background must not be undone by this Save: the AutoCancel
+            // box is set to what the CRM has now.
+            try {
+                const freshResponse = await fetch(location.pathname, { credentials: 'same-origin', cache: 'no-store' });
+                const freshDoc = freshResponse.ok ? new DOMParser().parseFromString(await freshResponse.text(), 'text/html') : null;
+                const freshAc = freshDoc && freshDoc.getElementById('transfer_autocancel_enabled');
+                const pageAc = document.getElementById('transfer_autocancel_enabled');
+                if (freshAc && pageAc && !pageAc.disabled && pageAc.checked !== freshAc.hasAttribute('checked')) {
+                    if (!freshAc.hasAttribute('checked')) { try { sessionStorage.setItem('wp_ac_off_intent_v1:' + location.pathname, '1'); } catch (_) {} }
+                    pageAc.click();
+                    wpStep('AutoCancel set to ' + (pageAc.checked ? 'ON' : 'OFF') + ' as the CRM has it now (kept as it is)');
+                }
+            } catch (_) {}
             await new Promise(function(resolve) { setTimeout(resolve, 200); });
             const saveButton = await waitFor(function() {
                 const button = findNativeSaveAndAutocheck();
@@ -42362,6 +44391,139 @@ async function wpTransferAssistantExtensionEnabled() {
             document.addEventListener('DOMContentLoaded', function() { runTick(); }, { once: true });
         } else {
             runTick();
+        }
+    }
+
+    // ---- Changes from a Comments card (1.7.358) ----
+    // Opened by the Comments card (PC or phone) with wpCardEdit = { wc, bulky,
+    // chk, hand, inf, child, boost, note } — only what is to change. Here, on
+    // the transfer's own page: the task note first (createTask), then the
+    // boxes / numbers, "Save and Autocheck", and the page is read again from
+    // the CRM to see that every value was kept. Nothing else is changed. The
+    // answer goes to wp_cardedit_result_v1_<id> and the dashboard; a failure
+    // leaves this tab open.
+    const wpCardKey = 'wp_cardedit_pending_v1:' + location.pathname;
+    let wpCardPending = null;
+    try { wpCardPending = JSON.parse(sessionStorage.getItem(wpCardKey) || 'null'); } catch (_) {}
+    if (wpCardPending && Date.now() - Number(wpCardPending.at) > 3 * 60000) {
+        wpCardPending = null;
+        try { sessionStorage.removeItem(wpCardKey); } catch (_) {}
+    }
+    if (params.get('wpCardEdit') || wpCardPending) {
+        const cardBoxIds = { wc: 'transfer_wheelchair', bulky: 'transfer_bulky_luggage' };
+        const cardNumberIds = { chk: 'transfer_checked_luggage_quantity', hand: 'transfer_hand_luggage_quantity', inf: 'transfer_baby_seats_attributes_0_quantity', child: 'transfer_baby_seats_attributes_1_quantity', boost: 'transfer_baby_seats_attributes_2_quantity' };
+        const cardNames = { wc: 'Wheelchair', bulky: 'Bulky luggage', chk: 'Checked luggage', hand: 'Hand luggage', inf: 'Infant carrier', child: 'Child seat', boost: 'Booster' };
+        const cardId = (location.pathname.match(/transfers\/(\d+)/) || [])[1] || '';
+        let cardWant = {};
+        try { cardWant = wpCardPending ? wpCardPending.want : JSON.parse(params.get('wpCardEdit') || '{}'); } catch (_) { cardWant = {}; }
+        const cardLabel = String(params.get('wpCardLabel') || (wpCardPending && wpCardPending.label) || '#' + cardId).slice(0, 40);
+        const cardCity = String(params.get('wpCardCity') || (wpCardPending && wpCardPending.city) || '').slice(0, 40);
+        const cardName = cardLabel + (cardCity ? ' (' + cardCity + ')' : '');
+        const cardWhat = Object.keys(cardWant).filter(function(key) { return key !== 'note' && (cardBoxIds[key] || cardNumberIds[key]); })
+            .map(function(key) { return cardNames[key] + ' ' + (cardBoxIds[key] ? (cardWant[key] ? 'on' : 'off') : cardWant[key]); });
+        const cardNoteDone = Boolean(wpCardPending && wpCardPending.noteDone);
+        try {
+            const cleanParams = new URLSearchParams(location.search);
+            ['wpCardEdit', 'wpCardLabel', 'wpCardCity'].forEach(function(key) { cleanParams.delete(key); });
+            history.replaceState(history.state, document.title, location.pathname + (cleanParams.toString() ? '?' + cleanParams.toString() : '') + location.hash);
+        } catch (_) {}
+        const cardReport = function(status, reason, text) {
+            try { sessionStorage.removeItem(wpCardKey); } catch (_) {}
+            try { localStorage.setItem('wp_cardedit_result_v1_' + cardId, JSON.stringify({ status: status, reason: String(reason || ''), text: String(text || ''), at: Date.now() })); } catch (_) {}
+        };
+        const cardFail = function(why, done) {
+            wpStep('FAILED: card changes — ' + why, true);
+            wpTellDashboard('✗ Comments: ' + cardName + ' — NOT saved: ' + why + (done ? ' (' + done + ')' : '') + '. Do it by hand on the transfer.');
+            cardReport('failed', why + (done ? ' (' + done + ')' : ''), '');
+        };
+        const cardDone = async function(text) {
+            wpStep('✓ ' + text);
+            wpTellDashboard('✓ Comments: ' + cardName + ' — ' + text);
+            cardReport('done', '', text);
+            await wpCloseThisTabWhenDone();
+        };
+        const noteText = function() { return cardWant.note ? 'note "' + cardWant.note + '"' : ''; };
+        // The transfer as the CRM has it now: is every wanted value kept?
+        const cardKept = async function() {
+            const response = await fetch(location.pathname, { credentials: 'same-origin', cache: 'no-store' });
+            if (!response.ok) return null;
+            const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+            return Object.keys(cardWant).every(function(key) {
+                if (cardBoxIds[key]) { const box = doc.getElementById(cardBoxIds[key]); return Boolean(box) && box.hasAttribute('checked') === Boolean(cardWant[key]); }
+                if (cardNumberIds[key]) { const input = doc.getElementById(cardNumberIds[key]); return Boolean(input) && (parseInt(input.getAttribute('value') || '0', 10) || 0) === Number(cardWant[key]); }
+                return true;
+            });
+        };
+        const cardConfirm = async function(noted) {
+            const startedAt = Date.now();
+            let kept = null;
+            while (Date.now() - startedAt < 20000) {
+                await new Promise(function(resolve) { setTimeout(resolve, 2000); });
+                try { kept = await cardKept(); } catch (_) { kept = null; }
+                if (kept) break;
+            }
+            const text = cardWhat.join(' · ') + (noted ? ' · ' + noted : '');
+            if (kept) await cardDone(text + ' — saved');
+            else cardFail(kept === false ? 'Save was pressed but the CRM does not show ' + cardWhat.join(' · ') : 'Save was pressed but the transfer could not be read again to check', noted ? noted + ' written' : '');
+        };
+        const runCard = async function() {
+            if (!cardWhat.length && !cardWant.note) return;
+            // Back on the page after the CRM loaded it again on Save.
+            if (wpCardPending) { await cardConfirm(cardNoteDone ? noteText() : ''); return; }
+            wpStep('Card changes started: ' + [cardWhat.join(' · '), noteText()].filter(Boolean).join(' · '));
+            const ready = await waitFor(function() { return document.getElementById(cardBoxIds.wc) || document.getElementById(cardNumberIds.chk) || null; }, 30000, 250);
+            if (!ready) { cardFail('the transfer form was not found on the page'); return; }
+            if (Array.from(document.querySelectorAll('.flashes, .flash')).some(function(node) { return /CANCELLED TRANSFER/.test(node.textContent || ''); })) { cardFail('the transfer is cancelled'); return; }
+            let noted = '';
+            if (cardWant.note) {
+                wpStep('Creating task: "' + cardWant.note + '"');
+                const ok = await createTask(cardWant.note);
+                if (!ok) { cardFail('the note "' + cardWant.note + '" could not be written'); return; }
+                noted = noteText();
+            }
+            if (!cardWhat.length) { await cardDone(noted + ' written'); return; }
+            const todo = [];
+            for (const key of Object.keys(cardWant)) {
+                if (!cardBoxIds[key] && !cardNumberIds[key]) continue; // the note is written above
+                if (cardBoxIds[key]) {
+                    const box = document.getElementById(cardBoxIds[key]);
+                    if (!box) { cardFail('the box "' + cardNames[key] + '" was not found on the page', noted ? noted + ' written' : ''); return; }
+                    if (box.checked === Boolean(cardWant[key])) continue;
+                    if (box.disabled) { cardFail('the box "' + cardNames[key] + '" cannot be changed', noted ? noted + ' written' : ''); return; }
+                    try { box.click(); } catch (_) {}
+                    if (box.checked !== Boolean(cardWant[key])) { cardFail('the box "' + cardNames[key] + '" did not change', noted ? noted + ' written' : ''); return; }
+                    todo.push(key);
+                } else if (cardNumberIds[key]) {
+                    const input = document.getElementById(cardNumberIds[key]);
+                    if (!input) { cardFail('"' + cardNames[key] + '" was not found on the page', noted ? noted + ' written' : ''); return; }
+                    if ((parseInt(input.value || '0', 10) || 0) === Number(cardWant[key])) continue;
+                    if (input.disabled || input.readOnly) { cardFail('"' + cardNames[key] + '" cannot be changed', noted ? noted + ' written' : ''); return; }
+                    try { input.focus(); } catch (_) {}
+                    input.value = String(cardWant[key]);
+                    ['input', 'change', 'blur'].forEach(function(type) { try { input.dispatchEvent(new Event(type, { bubbles: true })); } catch (_) {} });
+                    todo.push(key);
+                }
+                wpStep(cardNames[key] + ' → ' + (cardBoxIds[key] ? (cardWant[key] ? 'on' : 'off') : cardWant[key]));
+            }
+            if (!todo.length) { await cardDone((cardWhat.join(' · ') + ' already so') + (noted ? ' · ' + noted + ' written' : '')); return; }
+            await new Promise(function(resolve) { setTimeout(resolve, 250); });
+            const saveButton = await waitFor(function() {
+                const button = findNativeSaveAndAutocheck();
+                return isElementUsable(button) ? button : null;
+            }, 15000, 200);
+            if (!saveButton) { cardFail('the "Save and Autocheck" button was not found — the changes are on this page but NOT saved', noted ? noted + ' written' : ''); return; }
+            try { sessionStorage.setItem(wpCardKey, JSON.stringify({ at: Date.now(), want: cardWant, label: cardLabel, city: cardCity, noteDone: Boolean(noted) })); } catch (_) {}
+            try { saveButton.click(); } catch (_) {
+                try { HTMLElement.prototype.click.call(saveButton); } catch (__) { cardFail('the "Save and Autocheck" button could not be pressed', noted ? noted + ' written' : ''); return; }
+            }
+            if (await saveOpenPriceChangeDialog(1500)) wpStep('Price changes popup: "em" + Save pressed');
+            wpStep('Save and Autocheck pressed — checking that the CRM kept it…');
+            await cardConfirm(noted);
+        };
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { runCard(); }, { once: true });
+        } else {
+            runCard();
         }
     }
 
@@ -42409,13 +44571,13 @@ async function wpTransferAssistantExtensionEnabled() {
         const noDriverFail = function(why) {
             try { sessionStorage.removeItem(wpNoDriverKey); } catch (_) {}
             wpStep('FAILED: auto-cancel — ' + why, true);
-            wpTellDashboard('✗ mod: ' + noDriverName + ' — auto-cancel NOT done: ' + why + '. Cancel it by hand NOW.' + (/cancelled as NAD" written/.test(noDriverNotes) ? ' (The note "cancelled as NAD" is already on it.)' : ''));
+            wpTellDashboard('✗ wlcm: ' + noDriverName + ' — auto-cancel NOT done: ' + why + '. Cancel it by hand NOW.' + (/cancelled as NAD" written/.test(noDriverNotes) ? ' (The note "cancelled as NAD" is already on it.)' : ''));
             noDriverReport('failed', why);
         };
         const noDriverDone = async function() {
             try { sessionStorage.removeItem(wpNoDriverKey); } catch (_) {}
             wpStep('✓ Auto-cancelled — No Available driver');
-            wpTellDashboard('✓ mod: ' + noDriverName + ' — auto-cancelled (No Available driver)' + (noDriverNotes ? ' · ' + noDriverNotes : ''));
+            wpTellDashboard('✓ wlcm: ' + noDriverName + ' — auto-cancelled (No Available driver)' + (noDriverNotes ? ' · ' + noDriverNotes : ''));
             // 1.7.265: kept for the History window's "Auto-cancelled by us" list
             try {
                 let cancelled = JSON.parse(localStorage.getItem('wp_autocancelled_v1') || '[]');
@@ -42429,7 +44591,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const noDriverSkip = async function(why) {
             try { sessionStorage.removeItem(wpNoDriverKey); } catch (_) {}
             wpStep('✓ ' + why + ' — not cancelled');
-            wpTellDashboard('mod: ' + noDriverName + ' — auto-cancel not needed: ' + why);
+            wpTellDashboard('wlcm: ' + noDriverName + ' — auto-cancel not needed: ' + why);
             noDriverReport('skipped', why);
             await wpCloseThisTabWhenDone();
         };
@@ -42513,9 +44675,9 @@ async function wpTransferAssistantExtensionEnabled() {
     if (!batchId || !batchIndex) return;
 
     const needsEm = params.get('wpCityTaskNeedsEm') === '1';
-    const raiseMessage = String(params.get('wpCityTaskRaiseMessage') || '').trim();
+    let raiseMessage = String(params.get('wpCityTaskRaiseMessage') || '').trim(); // 1.7.427: let (already-raised check)
     const customMessage = String(params.get('wpCityTaskCustomMessage') || '').trim();
-    const priceIncrease = String(params.get('wpCityPriceIncrease') || '').trim();
+    let priceIncrease = String(params.get('wpCityPriceIncrease') || '').trim(); // 1.7.427: let (already-raised check)
     const broadcastMode = String(params.get('wpCityBroadcastMode') || '').trim();
     const reenableAcAfter30s = params.get('wpCityReenableAc30s') === '1';
     // 1.7.264: a raise made by you (not by mod) on a transfer already sent
@@ -42531,6 +44693,35 @@ async function wpTransferAssistantExtensionEnabled() {
             const finalNow = note.replace(/\s+/g, ' ').replace(/\b(?:on|at|for|before|when|if|until|till|by|after)\s+(?:the\s+)?final\b(?:\s*bc)?/gi, ' ');
             return /\bfinal\s*(?:bc)?\b/i.test(finalNow);
         });
+    }
+    // 1.7.427: the raise level in this transfer's notes (oldest first; the
+    // same reading as wlcm's wpDirectorNoteRaised: "raised to +N%" = level N,
+    // "+N% DC" / "DC+N%" / "raised N%" = N more, "total +N%" = level N).
+    function wpTabNotesRaised() {
+        const cells = Array.from(document.querySelectorAll('#transfer-task-list td.task-name, table.transfer-tasks td.task-name'));
+        const num = function(text) { return parseFloat(String(text).replace(',', '.')); };
+        let level = 0;
+        cells.reverse().forEach(function(cell) {
+            const labelEl = cell.querySelector('.task-label');
+            const label = String(labelEl ? labelEl.textContent : '').replace(/\s+/g, ' ').trim();
+            let text = String(cell.textContent || '').replace(/\s+/g, ' ').trim();
+            if (label && text.indexOf(label) === 0) text = text.slice(label.length);
+            const total = text.match(/total\s*\+?\s*(\d+(?:[.,]\d+)?)\s*%/i);
+            if (total) { level = num(total[1]); return; }
+            const to = text.match(/raised\s+to\s+\+?\s*(\d+(?:[.,]\d+)?)\s*%/i);
+            if (to) { level = Math.max(level, num(to[1])); return; }
+            let best = 0;
+            [
+                /raised\s+(?:by\s+)?\+?\s*(\d+(?:[.,]\d+)?)\s*%/ig,
+                /\bDC\s*\+\s*(\d+(?:[.,]\d+)?)\s*%/ig,
+                /\+\s*(\d+(?:[.,]\d+)?)\s*%\s*(?:on\s+)?DC\b/ig
+            ].forEach(function(pattern) {
+                let match;
+                while ((match = pattern.exec(text))) best = Math.max(best, num(match[1]));
+            });
+            level += best;
+        });
+        return Math.round(level * 10) / 10;
     }
     function wpIsAutoRaiseText(value) {
         const text = String(value || '').replace(/\s+/g, ' ').trim();
@@ -42841,6 +45032,13 @@ async function wpTransferAssistantExtensionEnabled() {
             const option = document.createElement('option');
             option.value = value;
             option.textContent = '+' + suggestedOption[1] + '% (suggested, total +' + suggestedOption[2] + '%)';
+            select.appendChild(option);
+            optionExists = true;
+        }
+        if (!optionExists && /^eur:[\d.]+$/.test(value)) { // 1.7.343: Custom amount
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = 'DC ' + value.slice(4) + '€';
             select.appendChild(option);
             optionExists = true;
         }
@@ -43554,7 +45752,7 @@ async function wpTransferAssistantExtensionEnabled() {
 
         wpStep('Workflow started' +
             (broadcastMode === 'send' ? ' — BC (A/C Off)' : broadcastMode === 'final' ? ' — Final BC (A/C On)' : '') +
-            (priceIncrease && priceIncrease !== '0' ? ', price ' + (/^pct:/.test(priceIncrease) ? '+' + priceIncrease.split(':')[1] + '% (suggested, total +' + priceIncrease.split(':')[2] + '%)' : priceIncrease === 'dctc' ? 'DC = TC' : '+' + priceIncrease) : '') +
+            (priceIncrease && priceIncrease !== '0' ? ', price ' + (/^pct:/.test(priceIncrease) ? '+' + priceIncrease.split(':')[1] + '% (suggested, total +' + priceIncrease.split(':')[2] + '%)' : priceIncrease === 'dctc' ? 'DC = TC' : /^eur:/.test(priceIncrease) ? 'DC ' + priceIncrease.slice(4) + '€' : '+' + priceIncrease) : '') +
             (needsEm ? ', untagged' : ', tagged'));
 
         // Already assigned to a driver: nothing to do (no notes, raise,
@@ -43567,6 +45765,31 @@ async function wpTransferAssistantExtensionEnabled() {
             if (closeWhenDone) await wpCloseThisTabWhenDone();
             return;
         }
+
+        // 1.7.427: "What is already raised counts" for your own raise from the
+        // quickbar too (it only worked for wlcm): the raises in the notes
+        // ("raised to +5% DC", "DC+10%"…) are taken off, so +10% picked on a
+        // transfer already at +5% raises +5% more; already at +10% or more =
+        // no raise and no raise note. Off in the Rules window / city exception
+        // = the full % as before.
+        try {
+            if (/^\d+(?:\.\d+)?$/.test(priceIncrease) && Number(priceIncrease) > 0 && !wpByDirector && !lastResortNote && !wpTransferHasFinalNote()) {
+                let notedOff = false;
+                try { notedOff = typeof window.wpRuleExceptionFor === 'function' && typeof window.wpFindTransferCity === 'function' && Boolean(window.wpRuleExceptionFor('noted', window.wpFindTransferCity() || '')); } catch (_) {}
+                const wanted = Number(priceIncrease);
+                const already = notedOff ? 0 : wpTabNotesRaised();
+                if (already > 0 && already >= wanted - 0.5) {
+                    wpStep('Already raised +' + already + '% (notes) — +' + wanted + '% picked: no raise, no raise note');
+                    const at = sequence.indexOf(raiseMessage);
+                    if (at >= 0) sequence.splice(at, 1);
+                    priceIncrease = '';
+                } else if (already > 0) {
+                    const add = Math.round((wanted - already) * 10) / 10;
+                    priceIncrease = 'pct:' + add + ':' + wanted;
+                    wpStep('Already raised +' + already + '% (notes) → only +' + add + '% more to reach +' + wanted + '%');
+                }
+            }
+        } catch (_) {}
 
         // 1.7.264: your raise on a transfer already sent to Final → the only
         // note is "raised a bit more to save" (no raise note, no other note;
@@ -43584,7 +45807,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // added, as the quickbar does. Already sent to Final: no second one.
         if ((broadcastMode === 'final' || broadcastMode === 'send') && !sequence.some(function(note) { return !sameNote(note, 'em'); })) {
             if (broadcastMode === 'send') sequence.push('sent to BC and Group');
-            else if (!wpTransferHasFinalNote()) sequence.push('sent to suggested / final BC');
+            else if (!wpTransferHasFinalNote()) sequence.push('final BC');
             else wpStep('Already sent to Final — no second Final BC note');
         }
 
