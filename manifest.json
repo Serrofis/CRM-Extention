@@ -1,16 +1,18 @@
 {
   "manifest_version": 3,
-  "name": "mod",
-  "version": "1.7.320",
+  "name": "wlcm",
+  "version": "1.7.547",
   "description": "Welcome Pickups CRM transfer tools with transfer details collection, WhatsApp image copy, batch task tools, and city vehicle capacity info.",
   "permissions": [
     "storage",
+    "cookies",
     "clipboardRead",
     "clipboardWrite",
     "scripting",
     "alarms",
     "offscreen",
     "sidePanel",
+    "debugger",
     "declarativeNetRequestWithHostAccess"
   ],
   "side_panel": {
@@ -19,10 +21,9 @@
   "host_permissions": [
     "https://crm.welcomepickups.com/*",
     "https://web.whatsapp.com/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*",
     "https://*.workers.dev/*",
     "https://*.ts.net/*",
+    "https://*.eserris.com/*",
     "https://ops-intelligence-hub.vercel.app/*",
     "https://docs.google.com/*",
     "https://drive.google.com/*",
@@ -34,7 +35,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "mod",
+    "default_title": "wlcm",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icon16.png",
@@ -48,6 +49,7 @@
         "https://crm.welcomepickups.com/admin/transfers/*"
       ],
       "js": [
+        "wp-reader.js",
         "content.js"
       ],
       "run_at": "document_start"
@@ -86,9 +88,9 @@
     {
       "matches": [
         "https://ops-intelligence-hub.vercel.app/*",
-    "https://docs.google.com/*",
-    "https://drive.google.com/*",
-    "https://*.googleusercontent.com/*"
+        "https://docs.google.com/*",
+        "https://drive.google.com/*",
+        "https://*.googleusercontent.com/*"
       ],
       "js": [
         "wp-hub.js"
@@ -105,6 +107,25 @@
       "all_frames": true,
       "run_at": "document_start",
       "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.slack.com/*"
+      ],
+      "js": [
+        "wp-slack.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://crm.welcomepickups.com/*",
+        "https://ops-intelligence-hub.vercel.app/*"
+      ],
+      "js": [
+        "wp-signin.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "icons": {
@@ -123,5 +144,13 @@
         "https://crm.welcomepickups.com/*"
       ]
     }
-  ]
+  ],
+  "commands": {
+    "wp-open-wa": {
+      "suggested_key": {
+        "default": "Alt+Shift+W"
+      },
+      "description": "Open WhatsApp in the side panel"
+    }
+  }
 }

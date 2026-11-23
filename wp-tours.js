@@ -145,7 +145,7 @@
       toast.style.color = '#2E3B4D';
       toast.textContent = `✓ S-rides WhatsApp groups synced: ${count} cities`;
     } catch (err) {
-      console.log('[mod tours] S-rides sync failed:', err);
+      console.log('[wlcm tours] S-rides sync failed:', err);
       toast.style.background = '#E05252';
       toast.textContent = '⚠ S-rides sync failed: ' + (err.message || err);
     }
@@ -168,7 +168,7 @@
         const reply = await chrome.runtime.sendMessage({ type: 'WP_WA_OPEN', url, city: group.city || '' });
         opened = Boolean(reply && reply.ok);
       } catch (_) {}
-      if (!opened) openInTab(url);
+      // 1.7.386: never a new WhatsApp tab; the background shows the panel prompt when it needs a click
     } else {
       openInTab(`https://chat.whatsapp.com/${code}`);
     }
@@ -325,7 +325,7 @@
       });
     }
 
-    console.log('[mod tours] No-driver highlighter running...');
+    console.log('[wlcm tours] No-driver highlighter running...');
     scan();
     new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
     setInterval(scan, 2000);
@@ -507,7 +507,7 @@
     if (!tourDetailsPromise) {
       const url = findTourDetailsUrl();
       tourDetailsPromise = url
-        ? fetchDoc(url).catch(err => { console.log('[mod tours] Tour details fetch failed:', err); tourDetailsPromise = null; return null; })
+        ? fetchDoc(url).catch(err => { console.log('[wlcm tours] Tour details fetch failed:', err); tourDetailsPromise = null; return null; })
         : Promise.resolve(null);
     }
     return tourDetailsPromise;
@@ -778,7 +778,7 @@
           copyTourBtn.textContent = `Copied ✓${missingNote} — no S-rides group for ${summary.city || 'this city'}`;
         }
       } catch (err) {
-        console.log('[mod tours] Copy tour info failed:', err);
+        console.log('[wlcm tours] Copy tour info failed:', err);
         copyTourBtn.textContent = '⚠ Copy failed';
       }
       reset();
@@ -1050,7 +1050,7 @@
   function initNotepad() {
     const orderId = getOrderId();
     if (!orderId) {
-      console.log('[mod tours] Notepad: no order ID found on this page.');
+      console.log('[wlcm tours] Notepad: no order ID found on this page.');
       return;
     }
     buildNotepad(orderId);
@@ -1094,8 +1094,7 @@
   // The CRM's drivers list (/admin/drivers) filtered by city has an
   // "available for tours" part. mod reads that list (read-only GET) and
   // messages each driver through WhatsApp Web, one at a time.
-  // The list address is learned on the drivers page ("use this list for
-  // tour drivers"); until then mod guesses it from the page's filters.
+  // The list address comes from the page's filters and its "Available For Tours" button.
   const TOUR_DRIVERS_PATH_KEY = 'wp_tour_drivers_path_v1';  // { search, cityParam, savedAt }
   const TOUR_DRIVERS_SENT_KEY = 'wp_tour_drivers_sent_v1';  // { orderId: { phone: at } }
   const TOUR_WORD = /tour/i;
@@ -1163,16 +1162,6 @@
     return out;
   }
 
-  // Phone from a driver's own page (when the list has none)
-  async function fetchDriverPhone(id) {
-    try {
-      const doc = await fetchDoc('/admin/drivers/' + id);
-      const row = Array.from(doc.querySelectorAll('tr, li, .row'))
-        .find(r => /phone|mobile|whats/i.test((r.querySelector('th, label') || {}).textContent || ''));
-      return phoneFrom(row ? (row.querySelector('td') || row) : null);
-    } catch (e) { return ''; }
-  }
-
   // City id: the drivers filter's own option first, else the transfer's city select
   function cityIdFrom(doc, param, city) {
     const sel = doc && param ? doc.querySelector(`select[name="${CSS.escape(param)}"]`) : null;
@@ -1222,7 +1211,12 @@
     const url = await tourDriversUrl(city);
     const doc = await fetchDoc(url);
     const drivers = parseTourDrivers(doc).slice(0, 40);
-    for (const d of drivers) if (!d.phone && d.id) d.phone = await fetchDriverPhone(d.id);
+    // 1.7.363: the list has no phone column and a driver's own page redirects: name, phone,
+    // city and car type from the Edit page, never from other numbers in the row (dates, ids).
+    for (const d of drivers) {
+      d.phone = '';
+      if (d.id) { try { await readDriverEdit(d); } catch (e) {} }
+    }
     return { url, drivers };
   }
 
@@ -1245,7 +1239,7 @@
             resolve({ ok: false, info: chrome.runtime.lastError?.message || r?.error || 'no answer — refresh this tab (F5)' });
             return;
           }
-          const timer = setTimeout(() => { delete tourWaWaiters[r.jobId]; resolve({ ok: false, info: 'no answer from WhatsApp Web in 90s' }); }, 90000);
+          const timer = setTimeout(() => { delete tourWaWaiters[r.jobId]; resolve({ ok: false, info: 'no answer from WhatsApp Web in 3 min — look in the chat before sending again' }); }, 180000);
           tourWaWaiters[r.jobId] = (m) => { clearTimeout(timer); resolve(m); };
         });
       } catch (e) { resolve({ ok: false, info: String(e && e.message || e) }); }
@@ -1337,12 +1331,14 @@
     const sent = sentAll[orderId] || {};
     for (const d of found.drivers) {
       const line = log(d.name + (d.phone ? ' (…' + d.phone.slice(-4) + ')' : '') + ': ');
-      if (!d.phone) { line.textContent += 'no phone'; continue; }
+      if (!d.phone) { line.textContent += d.badPhone ? 'no country code on the number' : 'no phone'; continue; }
       if (sent[d.phone]) { line.textContent += 'already sent ' + new Date(sent[d.phone]).toLocaleTimeString().slice(0, 5); continue; }
       const base = line.textContent;
       line.textContent = base + 'sending…';
-      const res = await tourWaSend(d.phone, d.name, driverText);
-      line.textContent = base + (res.ok ? 'sent' : 'failed: ' + (res.info || ''));
+      // 1.7.363: saved as a contact first ("name" + "city car type"), as for heroes
+      const contactLast = ((d.city || summary.city || '') + ' ' + (d.car || '')).trim();
+      const res = await tourWaSend(d.phone, d.name, driverText, { contactFirst: d.name, contactLast, contactName: (d.name + ' ' + contactLast).trim(), contactKeep: true });
+      line.textContent = base + (res.ok ? (res.info || 'sent') : 'failed: ' + (res.info || ''));
       if (res.ok) {
         const all = await storeGet(TOUR_DRIVERS_SENT_KEY, {});
         (all[orderId] = all[orderId] || {})[d.phone] = Date.now();
@@ -1354,27 +1350,296 @@
     log('Done.');
   }
 
-  // On the drivers list: remember the filtered address (the city in it is
-  // swapped for each tour's city)
-  function initDriversPageLearner() {
-    const chip = document.createElement('div');
-    chip.textContent = 'mod: use this list for tour drivers';
-    Object.assign(chip.style, {
-      position: 'fixed', right: '16px', bottom: '16px', zIndex: 999999, padding: '6px 12px',
-      borderRadius: '999px', background: 'rgba(20,24,28,0.85)', color: '#8fffd5',
-      font: '12px Consolas, monospace', cursor: 'pointer', backdropFilter: 'blur(6px)'
-    });
-    chip.addEventListener('click', async () => {
-      const params = new URLSearchParams(location.search);
-      const cityParam = Array.from(params.keys()).find(k => /city/i.test(k) && params.get(k));
-      if (!cityParam) { chip.textContent = 'mod: filter a city first, then click again'; return; }
-      const found = parseTourDrivers(document);
-      params.delete('page');
-      await storeSet(TOUR_DRIVERS_PATH_KEY, { search: params.toString(), cityParam, savedAt: Date.now() });
-      chip.textContent = `mod: saved — ${found.length} tour driver(s) read on this page`;
-    });
-    document.body.appendChild(chip);
+  // ============================================================
+  // 1.7.361: SEND TO ALL DRIVERS — on every /admin/drivers list
+  // ============================================================
+  // The button reads the list on screen (its city, scope and filters, every
+  // page of it, read-only GETs), you type the message, and each driver gets it
+  // through WhatsApp Web, one at a time, like the tour drivers. Nothing goes out
+  // without the second click on Send. A driver who already got this same text
+  // is skipped, so running it again after a failure only sends the rest.
+  const LIST_SENT_KEY = 'wp_list_drivers_sent_v1'; // { text: { phone: at } }
+  const LIST_SEND_GAP = 5000;
+  const LIST_MAX_PAGES = 60;
+
+  // A phone only from a phone column or a tel: / WhatsApp link: other numbers
+  // in the row (ids, dates) must never be taken for one.
+  function phoneFromLink(el) {
+    const link = el && el.querySelector('a[href^="tel:"], a[href*="wa.me/"], a[href*="whatsapp.com/send"]');
+    if (!link) return '';
+    const href = link.getAttribute('href') || '';
+    const m = href.match(/phone=(\d+)/) || href.match(/wa\.me\/(\d+)/);
+    return phoneDigits(m ? m[1] : href.replace(/^tel:/, ''));
   }
+  function parseListDrivers(doc) {
+    const out = [];
+    doc.querySelectorAll('table').forEach(table => {
+      const heads = Array.from(table.querySelectorAll('thead th')).map(th => (th.textContent || '').trim());
+      const phoneCol = heads.findIndex(h => /phone|mobile|whats/i.test(h));
+      const nameCols = heads.map((h, i) => (/name/i.test(h) && !/company|user/i.test(h) ? i : -1)).filter(i => i >= 0);
+      table.querySelectorAll('tbody tr').forEach(tr => {
+        const cells = tr.children;
+        const link = Array.from(tr.querySelectorAll('a[href]')).find(a => driverIdFromHref(a.getAttribute('href')));
+        const id = link ? driverIdFromHref(link.getAttribute('href')) : '';
+        if (!id) return; // not a driver's row
+        let name = nameCols.map(i => (cells[i] ? cells[i].textContent.trim() : '')).filter(Boolean).join(' ');
+        if (!name && !/^\s*(view|edit|\d+)\s*$/i.test(link.textContent)) name = link.textContent.trim();
+        const phone = (phoneCol >= 0 ? phoneFrom(cells[phoneCol]) : '') || phoneFromLink(tr);
+        out.push({ id, name: name.replace(/\s+/g, ' ').slice(0, 60) || ('Driver ' + id), phone });
+      });
+    });
+    return out;
+  }
+  // 1.7.362: name, phone and city from the driver's Edit page (read only, its form
+  // is never touched): the list has no phone column and /admin/drivers/<id>
+  // redirects to the dashboard. A number must have its country code: without
+  // one it could be someone else's, so that driver is listed instead.
+  async function readDriverEdit(driver) {
+    const doc = await fetchDoc('/admin/drivers/' + driver.id + '/edit');
+    const value = (id) => { const el = doc.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+    const picked = (id) => { const el = doc.getElementById(id); return el ? Array.from(el.selectedOptions || []).map(o => o.textContent.trim()).filter(Boolean) : []; };
+    const raw = [value('driver_whatsapp_number'), value('driver_user_attributes_phone')].find(Boolean) || '';
+    driver.phone = /^(\+|00)/.test(raw) ? phoneDigits(raw) : '';
+    driver.badPhone = Boolean(raw && !driver.phone);
+    const name = (value('driver_user_attributes_first_name') + ' ' + value('driver_user_attributes_last_name')).replace(/\s+/g, ' ').trim();
+    if (name) driver.name = name.slice(0, 60);
+    driver.city = (picked('driver_welcome_city_id')[0] || '').replace(/\s+/g, ' ');
+    driver.car = (picked('driver_accepts_car_types_pricing')[0] || '').replace(/\s+/g, ' ');
+  }
+  // Every page of the list on screen, then each driver's Edit page, three at a time.
+  // 1.7.364: the page on screen by default (the CRM shows 30 a page, with no total: a
+  // list of 883 looked like 30 and the button read all of them); all pages when asked.
+  async function readListDrivers(say, allPages) {
+    const url = new URL(location.href);
+    url.searchParams.delete('page');
+    url.searchParams.delete('wp_send_all'); // 1.7.367: the phone's job
+    url.searchParams.delete('wp_city_tried');
+    const drivers = [];
+    const seen = new Set();
+    let next = allPages ? url.pathname + url.search : '';
+    let more = false;
+    if (!allPages) parseListDrivers(document).forEach(d => { if (!seen.has(d.id)) { seen.add(d.id); drivers.push(d); } });
+    for (let page = 1; next; page++) {
+      say('Reading the list, page ' + page + '… (' + drivers.length + ' drivers so far)');
+      const doc = await fetchDoc(next);
+      parseListDrivers(doc).forEach(d => { if (!seen.has(d.id)) { seen.add(d.id); drivers.push(d); } });
+      const link = doc.querySelector('a[rel="next"], .pagination .next a');
+      next = link ? link.getAttribute('href') : '';
+      if (next && page >= LIST_MAX_PAGES) { more = true; next = ''; }
+    }
+    let at = 0;
+    let read = 0;
+    const worker = async () => {
+      while (at < drivers.length) {
+        const driver = drivers[at++];
+        driver.phone = '';
+        try { await readDriverEdit(driver); } catch (e) { driver.readFailed = true; }
+        say('Reading phone numbers… ' + (++read) + '/' + drivers.length);
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    return { drivers, more };
+  }
+  function initDriversSendAll() {
+    const chip = document.createElement('div');
+    chip.id = 'wp-send-all-drivers';
+    chip.textContent = 'wlcm: send to the drivers on this page';
+    const glass = { background: '#1f2529', color: '#e8ecee', font: '12px Segoe UI,system-ui,sans-serif', };
+    Object.assign(chip.style, glass, { position: 'fixed', right: '16px', bottom: '16px', zIndex: 999999, padding: '6px 12px', borderRadius: '999px', cursor: 'pointer' });
+    document.body.appendChild(chip);
+
+    let panel = null;
+    let running = false;
+    let stop = false;
+    const close = () => { if (panel && !running) { panel.remove(); panel = null; } };
+    chip.addEventListener('click', async () => {
+      if (panel) { close(); return; }
+      panel = document.createElement('div');
+      panel.id = 'wp-send-all-drivers-panel';
+      Object.assign(panel.style, glass, {
+        position: 'fixed', right: '16px', bottom: '52px', zIndex: 999999, width: 'min(420px, calc(100vw - 32px))', maxHeight: 'calc(100vh - 120px)',
+        overflow: 'auto', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid rgba(143,255,213,0.35)', color: '#dfe6e9', lineHeight: '1.45'
+      });
+      document.body.appendChild(panel);
+      const line = (text, color) => {
+        const div = document.createElement('div');
+        div.textContent = text;
+        if (color) div.style.color = color;
+        panel.appendChild(div);
+        return div;
+      };
+      const hasMore = Boolean(document.querySelector('a[rel="next"], .pagination .next a'));
+      const build = async (allPages) => {
+      panel.textContent = '';
+      const status = line('Reading the list…');
+      let found;
+      try {
+        found = await readListDrivers(text => { status.textContent = text; }, allPages);
+      } catch (e) {
+        status.textContent = 'Could not read the list: ' + (e && e.message || e) + ' — nothing sent.';
+        status.style.color = '#ff9d94';
+        return;
+      }
+      // two drivers on one phone: one message
+      const byPhone = new Map();
+      found.drivers.forEach(d => { if (d.phone && !byPhone.has(d.phone)) byPhone.set(d.phone, d); });
+      const targets = Array.from(byPhone.values());
+      const noPhone = found.drivers.filter(d => !d.phone);
+      const where = allPages ? 'in all pages of this list' : 'on this page';
+      status.textContent = found.drivers.length + ' driver' + (found.drivers.length === 1 ? '' : 's') + ' ' + where + ' · ' + targets.length + ' can be messaged' + (found.drivers.length !== targets.length ? ' (some share a phone or have none)' : '');
+      status.style.color = '#8fffd5';
+      if (found.more) line('Only the first ' + LIST_MAX_PAGES + ' pages were read.', '#ffd27a');
+      if (noPhone.length) line('Not messaged (no phone, or no country code): ' + noPhone.map(d => d.name).join(', '), '#ffd27a');
+      line('Each one is saved as a WhatsApp contact first ("name" + "city car type"), then texted.');
+      if (!allPages && hasMore) {
+        const wider = line('This list has more pages — read all of them instead', '#74b8f4');
+        wider.style.cursor = 'pointer';
+        wider.style.textDecoration = 'underline';
+        wider.addEventListener('click', () => build(true));
+      }
+      line('It sends only the text you type here, nothing is sent until you press Send twice.');
+      const box = document.createElement('textarea');
+      box.placeholder = 'Type the message for these drivers (Ctrl+V pastes a picture)';
+      box.rows = 5;
+      Object.assign(box.style, { display: 'block', width: '100%', boxSizing: 'border-box', margin: '8px 0', padding: '7px 9px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.14)', background: '#111416', color: '#e6ecef', font: 'inherit', resize: 'vertical' });
+      panel.appendChild(box);
+      // 1.7.365: a picture pasted into the box goes with the message (the text is its caption)
+      let picture = '';
+      const preview = document.createElement('div');
+      Object.assign(preview.style, { display: 'none', position: 'relative', margin: '0 0 8px' });
+      const thumb = document.createElement('img');
+      Object.assign(thumb.style, { display: 'block', maxWidth: '100%', maxHeight: '140px', borderRadius: '8px' });
+      const dropPicture = document.createElement('span');
+      dropPicture.textContent = 'Remove picture';
+      Object.assign(dropPicture.style, { display: 'inline-block', marginTop: '3px', cursor: 'pointer', textDecoration: 'underline', color: '#74b8f4' });
+      dropPicture.addEventListener('click', () => { picture = ''; preview.style.display = 'none'; armedAt = 0; send.textContent = sendLabel; });
+      preview.append(thumb, dropPicture);
+      panel.appendChild(preview);
+      box.addEventListener('paste', (event) => {
+        const item = Array.from((event.clipboardData && event.clipboardData.items) || []).find(it => /^image\//.test(it.type));
+        if (!item) return;
+        event.preventDefault();
+        const file = item.getAsFile();
+        if (!file) return;
+        const image = new Image();
+        image.onload = () => {
+          // PNG or JPEG only reach WhatsApp; anything else is redrawn as PNG
+          const finish = (url) => { picture = url; thumb.src = url; preview.style.display = 'block'; URL.revokeObjectURL(image.src); };
+          if (file.size > 2500000) {
+            const scale = Math.min(1, 2000 / Math.max(image.naturalWidth, image.naturalHeight));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(image.naturalWidth * scale);
+            canvas.height = Math.round(image.naturalHeight * scale);
+            canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+            finish(canvas.toDataURL('image/jpeg', 0.85));
+          } else if (/^image\/(png|jpeg)$/.test(file.type)) {
+            const reader = new FileReader();
+            reader.onload = () => finish(String(reader.result));
+            reader.readAsDataURL(file);
+          } else {
+            const canvas = document.createElement('canvas');
+            canvas.width = image.naturalWidth;
+            canvas.height = image.naturalHeight;
+            canvas.getContext('2d').drawImage(image, 0, 0);
+            finish(canvas.toDataURL('image/png'));
+          }
+        };
+        image.src = URL.createObjectURL(file);
+      });
+      const row = document.createElement('div');
+      Object.assign(row.style, { display: 'flex', gap: '8px' });
+      const button = (text, mint) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = text;
+        if (mint) b.dataset.wpMain = '1'; // 1.7.384: green in the card theme
+        Object.assign(b.style, { flex: mint ? '2 1 0' : '1 1 0', padding: '8px', borderRadius: '999px', font: 'inherit', fontWeight: '700', cursor: 'pointer', background: mint ? '#2fbf71' : 'rgba(255,255,255,0.09)', color: mint ? '#06210f' : '#e8ecee', border: '0' });
+        row.appendChild(b);
+        return b;
+      };
+      const sendLabel = 'Send to ' + targets.length + ' driver' + (targets.length === 1 ? '' : 's') + ' ' + where;
+      const send = button(sendLabel, true);
+      const cancel = button('Close', false);
+      panel.appendChild(row);
+      const results = document.createElement('div');
+      results.style.marginTop = '8px';
+      panel.appendChild(results);
+      send.disabled = !targets.length;
+      cancel.addEventListener('click', () => { if (running) { stop = true; cancel.textContent = 'Stopping…'; } else close(); });
+      let armedAt = 0;
+      send.addEventListener('click', async () => {
+        if (running) return;
+        const text = box.value.trim();
+        if (!text && !picture) { box.focus(); box.placeholder = 'Type a message or paste a picture first'; return; }
+        if (Date.now() - armedAt > 8000) {
+          armedAt = Date.now();
+          send.textContent = 'Really send to ' + targets.length + '? Click again';
+          setTimeout(() => { if (!running && Date.now() - armedAt >= 8000) send.textContent = sendLabel; }, 8100);
+          return;
+        }
+        running = true;
+        stop = false;
+        // what counts as "this same message" for skipping: the text and the picture
+        const sentKey = text + (picture ? '|picture:' + picture.length + ':' + picture.slice(-40) : '');
+        send.disabled = true;
+        box.disabled = true;
+        cancel.textContent = 'Stop';
+        results.textContent = '';
+        const counts = { sent: 0, skipped: 0, failed: 0 };
+        for (let i = 0; i < targets.length && !stop; i++) {
+          const d = targets[i];
+          send.textContent = 'Sending ' + (i + 1) + '/' + targets.length + '…';
+          const row = document.createElement('div');
+          const name = d.name + ' (…' + d.phone.slice(-4) + '): ';
+          row.textContent = name + 'sending…';
+          results.appendChild(row);
+          const all = await storeGet(LIST_SENT_KEY, {});
+          if (all[sentKey] && all[sentKey][d.phone]) { row.textContent = name + 'already got this message'; counts.skipped++; continue; }
+          const contactLast = ((d.city || '') + ' ' + (d.car || '')).trim();
+          const res = await tourWaSend(d.phone, d.name, text, Object.assign({ contactFirst: d.name, contactLast, contactName: (d.name + ' ' + contactLast).trim(), contactKeep: true }, picture ? { image: picture } : {}));
+          row.textContent = name + (res.ok ? (res.info || 'sent') : 'failed: ' + (res.info || ''));
+          if (!res.ok) row.style.color = '#ff9d94';
+          if (res.ok) {
+            counts.sent++;
+            const now = await storeGet(LIST_SENT_KEY, {});
+            (now[sentKey] = now[sentKey] || {})[d.phone] = Date.now();
+            const keys = Object.keys(now);
+            if (keys.length > 30) keys.slice(0, keys.length - 30).forEach(k => delete now[k]);
+            await storeSet(LIST_SENT_KEY, now);
+          } else counts.failed++;
+          if (i < targets.length - 1 && !stop) await new Promise(resolve => setTimeout(resolve, LIST_SEND_GAP));
+        }
+        running = false;
+        send.textContent = (stop ? 'Stopped' : 'Done') + ': ' + counts.sent + ' sent · ' + counts.failed + ' failed · ' + counts.skipped + ' skipped';
+        cancel.textContent = 'Close';
+      });
+      };
+      await build(false);
+    });
+  }
+
+  // 1.7.386: WhatsApp needs a click to open its side panel
+  const wpWaPanelPrompt = function() {
+        const id = 'wp-wa-need-panel';
+        let pill = document.getElementById(id);
+        if (pill) return;
+        pill = document.createElement('button');
+        pill.type = 'button';
+        pill.id = id;
+        pill.textContent = 'WhatsApp is waiting: click to open its panel';
+        pill.dataset.wpMain = '1';
+        Object.assign(pill.style, { position: 'fixed', left: '50%', top: '14px', transform: 'translateX(-50%)', zIndex: '2147483600', padding: '9px 18px', border: '0', borderRadius: '999px', background: '#2fbf71', color: '#06210f', font: '600 14px "Segoe UI",system-ui,sans-serif', cursor: 'pointer', boxShadow: '0 12px 32px rgba(0,0,0,.55)' });
+        const timer = setTimeout(function() { pill.remove(); }, 170000);
+        pill.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            clearTimeout(timer);
+            pill.remove();
+            try { chrome.runtime.sendMessage({ type: 'WP_WA_PANEL_OPEN' }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+        });
+        document.body.appendChild(pill);
+    };
+  try { chrome.runtime.onMessage.addListener((m) => { if (m && m.type === 'WP_WA_NEED_PANEL') wpWaPanelPrompt(); }); } catch (_) {}
 
   // ============================================================
   // ROUTER
@@ -1384,8 +1649,88 @@
     return;
   }
 
+  // 1.7.367: the phone's "Message all drivers of a city". The PC opens this list in a
+  // background tab (?wp_send_all=<job>), the tab filters the city (active drivers when the
+  // list has that button), reads every page and each driver's Edit page, sends the text
+  // like the button does (contact first, one at a time, skips who already got it), then
+  // closes. Status goes back through chrome.storage; nothing is ever saved in the CRM.
+  const PHONE_JOB_KEY = 'wp_drivers_phone_job_v1';       // { id, city, text, at, stop }
+  const PHONE_STATUS_KEY = 'wp_drivers_phone_status_v1'; // { id, city, text, log, warn, done, at }
+  const PHONE_MAX = 300;
+  async function runPhoneDriversJob(jobId) {
+    const job = await storeGet(PHONE_JOB_KEY, null);
+    const city = job && job.city || '';
+    const say = (text, log, warn, done) => storeSet(PHONE_STATUS_KEY, { id: jobId, city, text, log: Boolean(log), warn: Boolean(warn), done: Boolean(done), at: Date.now() });
+    const finish = async (text, warn) => {
+      await say(text, true, warn, true);
+      try { chrome.runtime.sendMessage({ type: 'WP_TRANSFER_ASSISTANT_CLOSE_SELF' }); } catch (e) {}
+    };
+    if (!job || job.id !== jobId || Date.now() - Number(job.at) > 30 * 60000) return finish('the job is gone — nothing sent', true);
+    const params = new URLSearchParams(location.search);
+    const sel = Array.from(document.querySelectorAll('form select[name]')).find(s => /city/i.test(s.name));
+    if (!sel) return finish('no city filter on the drivers page — nothing sent', true);
+    const opt = Array.from(sel.options).find(o => o.value && normCity(o.textContent) === normCity(city));
+    if (!opt) return finish('city "' + city + '" not found in the drivers filter — nothing sent', true);
+    if (params.get(sel.name) !== opt.value) {
+      if (params.get('wp_city_tried')) return finish('the drivers list did not filter ' + city + ' — nothing sent', true);
+      const next = new URLSearchParams();
+      next.set(sel.name, opt.value);
+      const active = Array.from(document.querySelectorAll('.scopes a, .table_tools a, a[href*="scope="]')).find(a => /^\s*active\b/i.test(a.textContent || ''));
+      const scope = active ? new URL(active.getAttribute('href'), location.origin).searchParams.get('scope') : '';
+      if (scope) next.set('scope', scope);
+      next.set('wp_send_all', jobId);
+      next.set('wp_city_tried', '1');
+      location.replace('/admin/drivers?' + next.toString());
+      return;
+    }
+    let found;
+    try {
+      found = await readListDrivers(text => say(text), true);
+    } catch (e) {
+      return finish('could not read the list (' + (e && e.message || e) + ') — nothing sent', true);
+    }
+    const byPhone = new Map();
+    found.drivers.forEach(d => { if (d.phone && !byPhone.has(d.phone)) byPhone.set(d.phone, d); });
+    const targets = Array.from(byPhone.values());
+    const noPhone = found.drivers.filter(d => !d.phone).length;
+    if (!targets.length) return finish(found.drivers.length + ' drivers, none with a usable phone — nothing sent', true);
+    if (targets.length > PHONE_MAX) return finish(targets.length + ' drivers — more than ' + PHONE_MAX + ', not sent from the phone (use the button on the drivers list)', true);
+    await say(found.drivers.length + ' drivers · ' + targets.length + ' to message' + (noPhone ? ' · ' + noPhone + ' without a usable phone' : '') + (found.more ? ' · only the first ' + LIST_MAX_PAGES + ' pages read' : '') + ' — sending…', true);
+    const text = String(job.text || '').trim();
+    const counts = { sent: 0, skipped: 0, failed: 0 };
+    let stopped = false;
+    for (let i = 0; i < targets.length; i++) {
+      const now = await storeGet(PHONE_JOB_KEY, null);
+      if (!now || now.id !== jobId || now.stop) { stopped = true; break; }
+      const d = targets[i];
+      const all = await storeGet(LIST_SENT_KEY, {});
+      if (all[text] && all[text][d.phone]) { counts.skipped++; continue; }
+      await say('sending ' + (i + 1) + '/' + targets.length + '…');
+      const contactLast = ((d.city || city) + ' ' + (d.car || '')).trim();
+      const res = await tourWaSend(d.phone, d.name, text, { contactFirst: d.name, contactLast, contactName: (d.name + ' ' + contactLast).trim(), contactKeep: true });
+      if (res.ok) {
+        counts.sent++;
+        const after = await storeGet(LIST_SENT_KEY, {});
+        (after[text] = after[text] || {})[d.phone] = Date.now();
+        const keys = Object.keys(after);
+        if (keys.length > 30) keys.slice(0, keys.length - 30).forEach(k => delete after[k]);
+        await storeSet(LIST_SENT_KEY, after);
+      } else {
+        counts.failed++;
+        await say(d.name + ' (…' + d.phone.slice(-4) + '): failed — ' + (res.info || ''), true, true);
+      }
+      if (i < targets.length - 1) await new Promise(resolve => setTimeout(resolve, LIST_SEND_GAP));
+    }
+    return finish((stopped ? 'stopped' : 'done') + ': ' + counts.sent + ' sent · ' + counts.failed + ' failed · ' + counts.skipped + ' already had it', counts.failed > 0 || stopped);
+  }
+
   // 1.7.298: the drivers list (not a driver's own page)
-  if (/^\/admin\/drivers\/?$/.test(location.pathname)) { initDriversPageLearner(); return; }
+  if (/^\/admin\/drivers\/?$/.test(location.pathname)) {
+    const phoneJob = new URLSearchParams(location.search).get('wp_send_all');
+    if (phoneJob) { runPhoneDriversJob(phoneJob).catch(() => {}); return; }
+    initDriversSendAll();
+    return;
+  }
 
   const isIndexPage = /tour_transfers\/index_v2/.test(location.href);
   if (isIndexPage) {
