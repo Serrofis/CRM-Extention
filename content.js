@@ -32051,7 +32051,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (!tasks.length) return 'chain';
         const done = tasks.some(function(task) {
             const text = String(task && task.note || '').replace(/\s+/g, ' ');
-            if (/sent to\s+bc\s*(?:,|and|&|\+|\/)\s*(?:the\s+)?(?:city\s+)?group|\bbc\s*(?:&|and)\s*g(?:roup)?\b/i.test(text)) return true;
+            if (/\bBC\b[^\n]*?\b(?:group|grp)\b/i.test(text) || /\bBC\s*(?:&|and|,|\/|\+)\s*G\b/i.test(text)) return true; // Today's BC & Group test (wpDetectTransferTag)
             try { const tag = wpDetectTransferTag(text); return Boolean(tag && ['final', 'hero', 'suggested'].indexOf(tag.type) >= 0); } catch (_) { return false; }
         });
         return done ? '' : 'bcg';
