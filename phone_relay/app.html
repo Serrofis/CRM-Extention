@@ -1496,9 +1496,10 @@ body.dpopen.dpact #dpActs>:not(.dphead){display:none!important}
             var card = el('div', 'card rqcard', null, host);
             var top = el('div', 'top', null, card);
             el('span', 'city', q.city, top);
-            el('span', 'sub', (q.day === 'later' ? '2-4 days' : 'Tomorrow') + ' \u00b7 ' + q.ids.length + ' untagged', top);
-            el('div', 'q', 'Run the Ops Hub chain on ' + q.city + '?', card);
-            el('div', 'sub', 'Tag \u2192 Remove A/C \u2192 Broadcast \u2192 Ask best drivers \u2192 A/C back on \u2192 note \u2192 city group image. Not in the Hub yet: BC & Group in the CRM.', card);
+            var bcg = q.step === 'bcg'; // 1.7.549: BC & Group for tagged ones
+            el('span', 'sub', (q.day === 'later' ? '2-4 days' : 'Tomorrow') + ' \u00b7 ' + q.ids.length + (bcg ? ' tagged, no BC & Group yet' : ' untagged'), top);
+            el('div', 'q', (bcg ? 'Send BC & Group on ' : 'Run the Ops Hub chain on ') + q.city + '?', card);
+            el('div', 'sub', (bcg ? 'Broadcast \u2192 Ask best drivers \u2192 note \u2192 city group image (no second EM tag)' : 'Tag \u2192 Broadcast \u2192 Ask best drivers \u2192 note \u2192 city group image') + '. A/C stays off where wlcm turned it off. Not in the Hub yet: BC & Group in the CRM.', card);
             el('div', 'sub rqlist', q.labels.join(', '), card);
             var b = el('div', 'buttons', null, card);
             var yes = el('button', 'yes', 'Yes, run it', b); yes.type = 'button';
@@ -1507,7 +1508,7 @@ body.dpopen.dpact #dpActs>:not(.dphead){display:none!important}
                 yes.disabled = no.disabled = true;
                 call('/api/command', 'POST', { type: 'rauto', op: 'answer', id: q.id, answer: a }).then(function(r) {
                     if (!r || !r.ok) { toast((r && r.error) || 'Not sent', 'bad'); yes.disabled = no.disabled = false; return; }
-                    toast(a === 'yes' ? 'The chain runs on ' + q.city : q.city + ': asked again in 30 min', 'ok');
+                    toast(a === 'yes' ? (q.step === 'bcg' ? 'BC & Group runs on ' : 'The chain runs on ') + q.city : q.city + ': asked again in 30 min', 'ok');
                     rautoData.q = null; rqSig = ''; renderRq();
                 });
             };
