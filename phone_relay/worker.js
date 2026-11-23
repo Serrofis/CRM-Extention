@@ -42,6 +42,14 @@ let jobsBusy = false;
 // (Yes / Not now); Full auto = at once. Yes: the machine that serves runs the Ops Hub chain it already knows on exactly
 // those transfers (answer cm / chain, by relay). The box's own City Manager auto is not used for these days.
 const RAUTO_DAYS = { tomorrow: 'Tomorrow', later: '2-4 days' };
+// 1.7.549: like Today, per transfer by its notes (read by the box, sent as row.st: 'chain' = no notes yet → the whole chain,
+// 'bcg' = EM tag but no "sent to BC and Group" (or only "sent to BC") → BC & Group, '' = every step done, '?' = not read yet).
+// An older box sends no st: untagged = the chain, as before.
+const RAUTO_STEP = { chain: 'the Ops Hub chain', bcg: 'BC & Group (Ops Hub first, the CRM if not)' };
+function rautoStepOf(row) {
+    if (typeof row.st === 'string') return row.st === 'chain' || row.st === 'bcg' ? row.st : '';
+    return !row.g && !(Array.isArray(row.tg) && row.tg.length) ? 'chain' : '';
+}
 async function rautoLog(env, x, k) {
     try {
         const hist = (await get(env, 'acthist')) || { lines: [], last: 0 };
@@ -53,13 +61,14 @@ async function rautoLog(env, x, k) {
 }
 async function rautoRun(env, st, g, now, why) {
     const answers = (await get(env, 'answers')) || [];
-    answers.push({ type: 'cm', op: 'chain', city: g.city, day: g.day, item: 'chain', sel: g.labels, ids: g.ids, note: '', mode: '', value: 0, by: 'relay', key: 'rauto:' + g.day + ':' + g.city + ':' + now, at: now });
+    const step = g.step === 'bcg' ? 'bcg' : 'chain'; // 1.7.549
+    answers.push({ type: 'cm', op: 'chain', step: step, city: g.city, day: g.day, item: 'chain', sel: g.labels, ids: g.ids, note: '', mode: '', value: 0, by: 'relay', key: 'rauto:' + g.day + ':' + g.city + ':' + step + ':' + now, at: now });
     await put(env, 'answers', answers.slice(-10));
-    g.ids.forEach((id) => { st.done[id] = now; });
-    st.run = { day: g.day, city: g.city, ids: g.ids, labels: g.labels, at: now };
+    g.ids.forEach((id) => { st.done[id + ':' + step] = now; });
+    st.run = { day: g.day, city: g.city, step: step, ids: g.ids, labels: g.labels, at: now };
     const active = await get(env, 'activepc');
     const who = active && now - active.at < 60000 ? (active.main ? 'the box' : 'the PC') : 'the box (when it is back)';
-    await rautoLog(env, RAUTO_DAYS[g.day] + ' · ' + g.city + ' (' + g.ids.length + ': ' + g.labels.slice(0, 6).join(', ') + (g.labels.length > 6 ? '…' : '') + ') — ' + why + ': ' + who + ' runs the Ops Hub chain');
+    await rautoLog(env, RAUTO_DAYS[g.day] + ' · ' + g.city + ' (' + g.ids.length + ': ' + g.labels.slice(0, 6).join(', ') + (g.labels.length > 6 ? '…' : '') + ') — ' + why + ': ' + who + ' runs ' + RAUTO_STEP[step]);
 }
 let rautoBusy = false;
 async function rautoTick(env, now) {
@@ -74,13 +83,13 @@ async function rautoTick(env, now) {
         const fresh = (l, ms) => Boolean(l && l.ok && now - Number(l.at) < ms);
         const rows = [].concat(fresh(rl, 5 * 60000) ? rl.rows : [], fresh(r24, 15 * 60000) ? r24.rows : []);
         const touched = (await get(env, 'touched')) || {};
-        const untagged = (row) => !row.g && !(Array.isArray(row.tg) && row.tg.length);
         let changed = false;
         // 1 the chain that runs: over when its transfers are tagged or gone from the list, or after 6 min
         if (st.run) {
-            const left = rows.filter((row) => st.run.ids.indexOf(String(row.id)) >= 0 && untagged(row));
+            const runStep = st.run.step || 'chain'; // 1.7.549
+            const left = rows.filter((row) => st.run.ids.indexOf(String(row.id)) >= 0 && rautoStepOf(row) === runStep);
             if (rows.length && (!left.length || now - st.run.at > 6 * 60000)) {
-                await rautoLog(env, RAUTO_DAYS[st.run.day] + ' · ' + st.run.city + ' — ' + (!left.length ? 'chain done: the ' + st.run.ids.length + ' are tagged (or taken) in the CRM' : 'no sign of the chain after 6 min (' + left.length + ' still untagged): not tried again by the relay — see the box\'s lines'), !left.length ? 'ok' : 'warn');
+                await rautoLog(env, RAUTO_DAYS[st.run.day] + ' · ' + st.run.city + ' — ' + (!left.length ? (runStep === 'bcg' ? 'BC & Group' : 'chain') + ' done: the ' + st.run.ids.length + ' show it in their notes (or are taken)' : 'no sign of ' + (runStep === 'bcg' ? 'BC & Group' : 'the chain') + ' after 6 min (' + left.length + ' still without it): asked again in 30 min at the earliest — see the box\'s lines'), !left.length ? 'ok' : 'warn');
                 st.run = null; changed = true;
             }
         }
@@ -89,18 +98,18 @@ async function rautoTick(env, now) {
             if (on.indexOf(st.q.day) >= 0) { st.snooze[st.q.day + '|' + st.q.city] = now + 30 * 60000; await rautoLog(env, RAUTO_DAYS[st.q.day] + ' · ' + st.q.city + ' — no answer in 15 min: asked again in 30 min'); }
             st.q = null; changed = true;
         }
-        // 3 the next city (Tomorrow first, then 2-4 days; the soonest pickup first)
+        // 3 the next city (Tomorrow first, then 2-4 days; 1.7.549: from the top of the list down, one step kind at a time)
         if (!st.run && !st.q && on.length && rows.length) {
             const groups = {};
-            rows.forEach((row) => {
+            rows.forEach((row, index) => {
                 const id = String(row.id);
-                if (on.indexOf(row.d) < 0 || !untagged(row) || st.done[id]) return;
+                const step = on.indexOf(row.d) >= 0 ? rautoStepOf(row) : '';
+                if (!step || st.done[id + ':' + step] || st.done[id] /* an older relay's mark */) return; // '' = all steps done: nothing asked
                 if (touched[id] && now - Number(touched[id]) < 2 * 60000) return; // you are working on it by hand
-                const key = row.d + '|' + row.c;
-                if (Number(st.snooze[key] || 0) > now) return;
-                const g = groups[key] = groups[key] || { day: row.d, city: String(row.c || ''), ids: [], labels: [], first: Infinity };
+                if (Number(st.snooze[row.d + '|' + row.c] || 0) > now) return;
+                const key = row.d + '|' + row.c + '|' + step;
+                const g = groups[key] = groups[key] || { day: row.d, city: String(row.c || ''), step: step, ids: [], labels: [], first: index };
                 g.ids.push(id); g.labels.push(String(row.l || '#' + id));
-                g.first = Math.min(g.first, Number.isFinite(Number(row.m)) && row.m !== null ? Number(row.m) : Infinity);
             });
             const next = Object.values(groups).sort((a, b) => (a.day === b.day ? 0 : a.day === 'tomorrow' ? -1 : 1) || a.first - b.first)[0];
             if (next) {
@@ -108,12 +117,12 @@ async function rautoTick(env, now) {
                 if (modes[next.day] === 'full') await rautoRun(env, st, next, now, 'Full auto');
                 else {
                     st.q = Object.assign({ id: now.toString(36), at: now }, next);
-                    await rautoLog(env, RAUTO_DAYS[next.day] + ' · ' + next.city + ' (' + next.ids.length + ' untagged: ' + next.labels.slice(0, 6).join(', ') + ') — Ask me: waiting for your Yes on the tablet');
+                    await rautoLog(env, RAUTO_DAYS[next.day] + ' · ' + next.city + ' (' + next.ids.length + (next.step === 'bcg' ? ' tagged, no BC & Group yet' : ' untagged') + ': ' + next.labels.slice(0, 6).join(', ') + ') — Ask me: ' + RAUTO_STEP[next.step] + ', waiting for your Yes on the tablet');
                 }
                 changed = true;
             }
         }
-        Object.keys(st.done).forEach((id) => { if (now - st.done[id] > 3 * 86400000) { delete st.done[id]; changed = true; } });
+        Object.keys(st.done).forEach((id) => { if (now - st.done[id] > (id.indexOf(':') > 0 ? 30 * 60000 : 3 * 86400000)) { delete st.done[id]; changed = true; } }); // 1.7.549: a step is asked again after 30 min when the notes still lack it
         Object.keys(st.snooze).forEach((k) => { if (st.snooze[k] < now) { delete st.snooze[k]; changed = true; } });
         if (changed) await put(env, 'rautost', st);
     } catch (error) { console.log('rauto: ' + (error && error.message || error)); }
@@ -721,7 +730,7 @@ async function api(request, env, ctx, url) {
         const phoneSeen = await get(env, 'phone');
         const touchedOut = {}; // 1.7.538
         Object.keys(touched).forEach((id) => { if (now - Number(touched[id]) < 3 * 60000) touchedOut[id] = Number(touched[id]); });
-        return json({ ok: true, prefer: prefer && prefer.to ? { to: prefer.to, at: Number(prefer.at) || 0 } : null, answers: answers, phoneAge: phoneSeen ? now - phoneSeen.at : null, devices: ((await get(env, 'devices')) || []).length, touched: Object.keys(touchedOut).length ? touchedOut : undefined, lease: { ep: lease.ep } }); // 1.7.548
+        return json({ ok: true, prefer: prefer && prefer.to ? { to: prefer.to, at: Number(prefer.at) || 0 } : null, answers: answers, phoneAge: phoneSeen ? now - phoneSeen.at : null, devices: ((await get(env, 'devices')) || []).length, touched: Object.keys(touchedOut).length ? touchedOut : undefined, lease: { ep: lease.ep }, rauto: (await get(env, 'rauto')) || {} }); // 1.7.548; 1.7.549: + the day modes (Tomorrow / 2-4 days) for the box's A/C Off and note reading
     }
 
     // Settings shared between the user's own PCs (the same extension key on
