@@ -30387,13 +30387,23 @@ async function wpTransferAssistantExtensionEnabled() {
             state.listSeenAt = now; // 1.7.484
             // 4. What is due, most urgent first; up to 6 per tick, 2 at a time.
             if (!paused) {
-                const due = entries.filter(function(entry) {
+                const dueAll = entries.filter(function(entry) {
                     return ['inflight', 'approved'].indexOf(entry.item.status) < 0 && Number(entry.item.nextAt || 0) <= now;
                 }).sort(function(a, b) {
                     // Final (by the row's timing, also before it was read), no tag, rest.
                     const pre = function(entry) { return Object.assign({}, entry.item, { finalMode: entry.timing.finalMode || entry.item.finalMode }); };
                     return wpAutoCompare(pre(a), pre(b));
-                }).slice(0, state.readAll ? 80 : 6);
+                });
+                // 1.7.547: long lists (~135) left far transfers hours late: only the 6 nearest were read each round.
+                // With a backlog: up to 12 a round, the most urgent 8 first, then the ones waiting longest (oldest nextAt).
+                let due = dueAll.slice(0, 6);
+                if (state.readAll) due = dueAll.slice(0, 80);
+                else if (dueAll.length > 6) {
+                    const cap = Math.min(12, dueAll.length);
+                    due = dueAll.slice(0, cap - 4);
+                    const waiting = dueAll.slice(cap - 4).sort(function(a, b) { return Number(a.item.nextAt || 0) - Number(b.item.nextAt || 0); });
+                    due = due.concat(waiting.slice(0, cap - due.length));
+                }
                 state.readAll = false;
                 for (let i = 0; i < due.length; i += 2) {
                     await Promise.all(due.slice(i, i + 2).map(async function(entry) {

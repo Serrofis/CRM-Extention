@@ -45,7 +45,7 @@ The user has a tight budget. Keep replies short, read only the code you need (gr
 - 1.7.373: no BC / HIGH VOL tags. Em Hailing columns (since 375): Price ("TC • DC", e.g. 57 • 50, DC in the raise tag colour; td.wp-tcdc-cell) | Tags | Raise (the old Price tags, td.wp-price-cell). Send to suggested rotates: drivers sent in the last 3 h go to the back (wp_sug_rot_v1, by phone).
 - 1.7.376: WhatsApp side panel starts at 60% (key wp_wa_panel_zoom_v2); a WhatsApp tab ghas opens is set to 60%. Remembered BC / HIGH VOL tags (wp_last_note_tag_v1) are no longer shown.
 - 1.7.378: one settings window: Terminal "☰ Settings" opens wpRulesWindow ("ghas settings": ghas, Steps in order, Raises, WhatsApp, Phone, Your rules). Controls switches are shown there through the hidden #wp-dash-controls rows (row opts.toggle = data-act, clicked). @all setting wp_at_all_mode_v1: smart (more than one transfer or Final BC, default) / always / off, applied in wpBuildBroadcastWhatsAppText only. 1.7.379: the window has the suggestion card look (Segoe UI, #1f2529, pill ON/OFF on the right).
-- Known, not fixed: on long lists (~135) re-checks for raises/BC can be hours late (6 read per round, nearest first).
+- Long lists (~135): re-checks for raises/BC used to be hours late (6 read per round, nearest first); fixed in 1.7.547.
 - 1.7.398: the local AI is gone for good: no model calls, no explanations, no note reading or translation, no chat or typed orders in the Terminal (the box takes rules and WhatsApp links). Do not add it back unless asked.
 - 1.7.494: colleague watch re-reads our transfers after 90 s (checked every 20 s, was 5 min / 60 s); its pop-ups make no sound and sit in one top-right column (window.wpPopStack) under the WhatsApp alerts (#wp-wa-alerts) — they used to overlap.
 - 1.7.495: Final BC "canceled in N minutes" = the row's AutoCancel timer (then the tab's _acmin, then 59). wlcm's own auto-cancel point (wpTopCancelMinutes) is no longer used for it — under 1 hour it gave "1 minute".
@@ -213,3 +213,6 @@ The user has a tight budget. Keep replies short, read only the code you need (gr
 
 ## 1.7.546
 - Overview page (overview.html): the top bar and the tabs (Home / Cities / Slack / Event retro / Month) stay at the top while the page scrolls (user asked); --barh set from the bar height in overview.js.
+
+## 1.7.547
+- Long lists: wpAutoTick read only the 6 most urgent due transfers per 30 s round, so far ones waited hours for raise / BC re-checks. With more than 6 due: up to 12 a round (still 2 at a time), the 8 most urgent first (wpAutoCompare: Final, no tag, nearest), the rest of the slots for the ones waiting longest (oldest nextAt). 6 or fewer due: unchanged. WP_BG_BUILD bumped (was left at 1.7.545 in 1.7.546).
