@@ -367,7 +367,7 @@ body[data-shift="other"] #tabCm{display:none}
  #list:not(.hidden),#cm:not(.hidden){display:grid!important;grid-template-columns:minmax(380px,5fr) 7fr;gap:20px;align-items:start} #list:not(.hidden){grid-template-columns:minmax(380px,6fr) 5fr}
  #listMain.hidden,#cmMain.hidden{display:block!important}
  #detail.hidden,#cmCity.hidden{display:block!important}
- #detail,#cmCity{position:sticky;top:12px;max-height:calc(100vh - 120px);overflow-y:auto;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
+ /* 23 Nov: no longer sticky, scrolls away with the page (Evan) */ #detail,#cmCity{position:relative;top:0;max-height:calc(100vh - 120px);overflow-y:auto;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
  #detail.hidden #detailCard,#detail.hidden #back,#cmCity.hidden>*{display:none}
  #detail.hidden #actSide{display:block}
  #detail.hidden #actSideList{max-height:none}
