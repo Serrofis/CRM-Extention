@@ -212,6 +212,70 @@ async function put(env, key, value) {
 async function del(env, key) {
     await (await database(env)).prepare('DELETE FROM kv WHERE k = ?').bind(key).run();
 }
+// 1.7.548: ONE action list + the leader lease. Before wlcm's automations send to WhatsApp, write a note or cancel,
+// they claim the step here under a key (kind:transfer[:variant]). One table row per key: claimed -> done / failed.
+// A key is refused while it is claimed (free again after its hold time without a result, or when it was claimed under
+// an older lease number), and for its window (ttl) after it was done; failed = free again (retries). A claim from a
+// machine whose lease number is old (another machine serves now) is refused. The lease number (KV 'lease') only
+// grows: +1 whenever another machine starts serving. Taps of yours (force) are recorded, never refused.
+const actPrepared = new WeakSet();
+let actPrunedAt = 0;
+async function actDb(env) {
+    const db = await database(env);
+    if (!actPrepared.has(db)) {
+        await db.prepare('CREATE TABLE IF NOT EXISTS actions (k TEXT PRIMARY KEY, kind TEXT NOT NULL, item TEXT, st TEXT NOT NULL, ep INTEGER, m TEXT, by TEXT, n INTEGER NOT NULL DEFAULT 1, ttl INTEGER NOT NULL, hold INTEGER NOT NULL, at INTEGER NOT NULL, up INTEGER NOT NULL, x TEXT)').run();
+        await db.prepare('CREATE INDEX IF NOT EXISTS actions_up ON actions (up)').run();
+        actPrepared.add(db);
+    }
+    return db;
+}
+async function actRoute(env, data, now) {
+    const db = await actDb(env);
+    const op = String(data.op || '');
+    if (op === 'list') {
+        const limit = Math.min(500, Math.max(1, Math.round(Number(data.limit) || 100)));
+        const rows = await db.prepare('SELECT k, kind, item, st, ep, m, by, n, ttl, hold, at, up, x FROM actions ORDER BY up DESC LIMIT ?').bind(limit).all();
+        const lease = await get(env, 'lease');
+        return json({ ok: true, lease: lease ? { ep: lease.ep, holder: lease.role, at: lease.at } : null, rows: (rows && rows.results) || [] });
+    }
+    const k = String(data.k || '');
+    if (!/^[a-z]{2,12}:[A-Za-z0-9:._-]{1,100}$/.test(k)) return fail(400, 'bad key');
+    if (op === 'done') {
+        const st = data.st === 'done' ? 'done' : 'failed';
+        const at = Number(data.at) || 0;
+        const r = await db.prepare("UPDATE actions SET st = ?, up = ?, x = ? WHERE k = ? AND at = ? AND st = 'claimed'").bind(st, now, String(data.x || '').slice(0, 200), k, at).run();
+        return json({ ok: true, changed: Number(r && r.meta && r.meta.changes) || 0 });
+    }
+    if (op !== 'claim') return fail(400, 'bad op');
+    const auto = data.auto === true;
+    const force = data.force === true && !auto; // a tap of yours: recorded, never refused
+    const pc = String(data.pc || '').slice(0, 40);
+    const m = data.m === 'box' ? 'box' : 'pc';
+    const lease = await get(env, 'lease');
+    const leaseEp = lease ? Math.round(Number(lease.ep) || 0) : 0;
+    if (auto && lease && (Number(data.ep) !== leaseEp || pc !== String(lease.id || ''))) {
+        return json({ ok: false, why: 'stale', ep: leaseEp, holder: lease.role || '' });
+    }
+    const kind = String(data.kind || k.split(':')[0]).replace(/[^a-z]/g, '').slice(0, 12) || 'step';
+    const ttl = Math.min(48 * 3600000, Math.max(60000, Math.round(Number(data.ttl) || 30 * 60000)));
+    const hold = Math.min(6 * 3600000, Math.max(60000, Math.round(Number(data.hold) || 10 * 60000)));
+    const item = String(data.item || '').replace(/[^A-Za-z0-9#:._ -]/g, '').slice(0, 40);
+    const by = data.by === 'hand' ? 'hand' : 'wlcm';
+    const ep = auto ? Math.round(Number(data.ep) || 0) : leaseEp; // a tap is booked under the lease of the moment
+    // one statement: inserted, or taken over only when the old row is free (failed / claim past its hold time or
+    // from an older lease / done past its window)
+    const r = await db.prepare("INSERT INTO actions (k, kind, item, st, ep, m, by, n, ttl, hold, at, up, x) VALUES (?, ?, ?, 'claimed', ?, ?, ?, 1, ?, ?, ?, ?, '') " +
+        "ON CONFLICT(k) DO UPDATE SET kind = excluded.kind, item = excluded.item, st = 'claimed', ep = excluded.ep, m = excluded.m, by = excluded.by, n = actions.n + 1, ttl = excluded.ttl, hold = excluded.hold, at = excluded.at, up = excluded.up, x = '' " +
+        "WHERE ? = 1 OR actions.st = 'failed' OR (actions.st = 'claimed' AND (actions.up < ? - actions.hold OR actions.ep < ?)) OR (actions.st = 'done' AND actions.up < ? - actions.ttl)")
+        .bind(k, kind, item, ep, m, by, ttl, hold, now, now, force ? 1 : 0, now, leaseEp, now).run();
+    if (now - actPrunedAt > 3600000) {
+        actPrunedAt = now;
+        try { await db.prepare('DELETE FROM actions WHERE up < ?').bind(now - 3 * 24 * 3600000).run(); } catch (_) {}
+    }
+    if (Number(r && r.meta && r.meta.changes) > 0) return json({ ok: true, at: now });
+    const old = await db.prepare('SELECT st, m, by, at, up, n FROM actions WHERE k = ?').bind(k).first();
+    return json({ ok: false, why: 'dup', st: old ? old.st : '', m: old ? old.m : '', by: old ? old.by : '', at: old ? Number(old.at) : 0, up: old ? Number(old.up) : 0 });
+}
 
 // 1.7.438: Wake the PC — a Wake-on-LAN magic packet from this Chromebox
 // (same LAN) to Evan's PC (wired Ethernet, wakes from sleep). Needs Bun (the
@@ -529,9 +593,16 @@ async function api(request, env, ctx, url) {
         }
         if (isMain) { const tick = rautoTick(env, now).catch(() => {}); if (ctx && ctx.waitUntil) ctx.waitUntil(tick); }
         if (otherPicked || pcWaits || otherPcServes || (!mePicked && active && active.id !== pcId && now - active.at < 25000 && !(isMain && !active.main))) {
-            return json({ ok: true, standby: true, why: pcWaits && !otherPicked ? 'tap' : '', answers: [], phoneAge: null, devices: ((await get(env, 'devices')) || []).length });
+            return json({ ok: true, standby: true, why: pcWaits && !otherPicked ? 'tap' : '', answers: [], phoneAge: null, devices: ((await get(env, 'devices')) || []).length, lease: { ep: 0 } }); // 1.7.548: no lease on standby
         }
         if (!active || active.id !== pcId || now - active.at > 8000) await put(env, 'activepc', { id: pcId, at: now, main: isMain });
+        // 1.7.548: the leader lease: its number grows whenever another machine starts serving; claims with an old number are refused
+        let lease = await get(env, 'lease');
+        if (!lease || lease.id !== pcId) {
+            lease = { ep: (Number(lease && lease.ep) || 0) + 1, id: pcId, role: role, at: now };
+            await put(env, 'lease', lease);
+            console.log('lease ' + lease.ep + ' -> ' + role);
+        }
         if (data.state && typeof data.state === 'object') {
             const previous = await get(env, 'state');
             const question = data.state.question && typeof data.state.question === 'object' && data.state.question.id ? data.state.question : null;
@@ -650,7 +721,7 @@ async function api(request, env, ctx, url) {
         const phoneSeen = await get(env, 'phone');
         const touchedOut = {}; // 1.7.538
         Object.keys(touched).forEach((id) => { if (now - Number(touched[id]) < 3 * 60000) touchedOut[id] = Number(touched[id]); });
-        return json({ ok: true, prefer: prefer && prefer.to ? { to: prefer.to, at: Number(prefer.at) || 0 } : null, answers: answers, phoneAge: phoneSeen ? now - phoneSeen.at : null, devices: ((await get(env, 'devices')) || []).length, touched: Object.keys(touchedOut).length ? touchedOut : undefined });
+        return json({ ok: true, prefer: prefer && prefer.to ? { to: prefer.to, at: Number(prefer.at) || 0 } : null, answers: answers, phoneAge: phoneSeen ? now - phoneSeen.at : null, devices: ((await get(env, 'devices')) || []).length, touched: Object.keys(touchedOut).length ? touchedOut : undefined, lease: { ep: lease.ep } }); // 1.7.548
     }
 
     // Settings shared between the user's own PCs (the same extension key on
@@ -663,6 +734,12 @@ async function api(request, env, ctx, url) {
     // 1.7.526: the box's Ops Hub sign-in (its cookies for ops-intelligence-hub.vercel.app), handed over by wlcm on
     // the box so the relay can call the Hub itself. Kept only here (KV 'hubsession'), never sent back; the relay
     // never renews it (the box's browser does), so it cannot sign the box out.
+    if (path === '/api/act' && request.method === 'POST') { // 1.7.548: the action list (claim / done / list)
+        if (!await isPc(request, env)) return fail(401, 'not the PC key');
+        const data = await body(request);
+        if (!data || typeof data !== 'object') return fail(400, 'bad request');
+        return await actRoute(env, data, now);
+    }
     if (path === '/api/hubsession' && request.method === 'POST') {
         if (!await isPc(request, env)) return fail(401, 'not the PC key');
         const data = await body(request);
