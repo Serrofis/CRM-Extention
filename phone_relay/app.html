@@ -399,6 +399,7 @@ body[data-shift="other"] #tabCm{display:none}
 #rows.tcols .c-p{color:#aab4b9}#rows.tcols .c-p.p-bk{color:rgba(213,138,138,.9)}#rows.tcols .c-p.p-ab{color:rgba(214,194,122,.9)}
 #rows.tcols .acp{font-weight:700;font-size:13px;font-variant-numeric:tabular-nums}
 .acp.a1{color:#ff8f87}.acp.a2{color:#ffc163}.acp.a3{color:#e8c46a}
+.acp.aoff{color:#2fbf71}.acoffdot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#2fbf71;vertical-align:middle} /* 1.7.551: AutoCancel OFF */
 .wlbar:not(.hidden){display:flex;align-items:center;gap:10px;padding:6px 10px!important}
 .wlbar .r1{display:contents}
 .wlbar .r1::before{order:1}
@@ -1842,7 +1843,8 @@ body.dpopen.dpact #dpActs>:not(.dphead){display:none!important}
             var pn = String(row.p || ''); el('div', 'tc c-p' + (/booking/i.test(pn) ? ' p-bk' : /airbnb/i.test(pn) ? ' p-ab' : ''), pn.replace(/^booking(\.com)?\b.*$/i, 'B.com').replace(/^trip\.?com\b.*$/i, 'Trip'), item); // 1.7.447: B.com, PC partner colours
             el('div', 'tc tbo', row.m === null || row.m === undefined ? '\u2014' : clock(row.m - elapsed), item);
             var ac = el('div', 'tc c-ac', null, item);
-            if (row.a !== null && row.a !== undefined) { var acm = Math.max(0, row.a - elapsed); el('span', 'acp ' + (acm <= 10 ? 'a1' : acm <= 30 ? 'a2' : 'a3'), acm < 60 ? acm + 'm' : Math.floor(acm / 60) + 'h' + (acm % 60 ? ' ' + (acm % 60) + 'm' : ''), ac); } // 1.7.447: just the coloured number
+            if (row.ao === 1 && (row.a === null || row.a === undefined)) { var aod = el('span', 'acoffdot', null, ac); aod.title = 'AutoCancel is OFF'; } // 1.7.551: A/C off, no timer = green dot
+            if (row.a !== null && row.a !== undefined) { var acm = Math.max(0, row.a - elapsed); el('span', 'acp ' + (row.ao === 1 ? 'aoff' : acm <= 10 ? 'a1' : acm <= 30 ? 'a2' : 'a3'), acm < 60 ? acm + 'm' : Math.floor(acm / 60) + 'h' + (acm % 60 ? ' ' + (acm % 60) + 'm' : ''), ac); } // 1.7.447: just the coloured number
             tagsOf(Array.isArray(row.tg) && row.tg.length ? row.tg : (row.g ? String(row.g).split(' \u00b7 ').map(function(t) { return [t, /no tag/i.test(t) ? 'no-tag' : '']; }) : []), el('div', 'tc c-tg', null, item));
             var prc = el('div', 'tc c-pr', null, item); // 1.7.454: Price "TC • DC" (DC in the raise colour), as on the PC
             var prp = String(row.pr || '').split(/\s*\u2022\s*/);

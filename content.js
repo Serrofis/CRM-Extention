@@ -11042,6 +11042,25 @@ async function wpTransferAssistantExtensionEnabled() {
     // APPLY AUTOCANCEL WARNING
     // ============================================================
 
+    // 1.7.551: AutoCancel is OFF on this transfer (user, 23 Nov: "I need to re-enable these"): on wlcm's A/C Off list,
+    // or OFF in wlcm's latest read of the transfer (details cache / row store, the newer of the two)
+    var wpAcOffIdSet = null, wpAcOffIdSetAt = 0;
+    function wpRowAcOff(row) {
+        let path = '';
+        try { path = row.dataset && row.dataset.wpCrmPath || wpRowCrmPath(row); } catch (_) {}
+        if (!path) return false;
+        const id = wpOutcomeId(path);
+        if (!wpAcOffIdSet || Date.now() - wpAcOffIdSetAt > 3000) {
+            wpAcOffIdSet = new Set();
+            try { (wpGetAcOffWatch() || []).forEach(function(watch) { const wid = wpOutcomeId(watch && watch.url); if (wid) wpAcOffIdSet.add(String(wid)); }); } catch (_) {}
+            wpAcOffIdSetAt = Date.now();
+        }
+        if (id && wpAcOffIdSet.has(String(id))) return true;
+        let at = 0, off = false;
+        try { const entry = wpRowCrmLoad()[path]; if (entry && entry.ao !== undefined) { at = Number(entry.at) || 0; off = entry.ao === 1; } } catch (_) {}
+        try { const cached = WP_CRM_DETAILS_CACHE.get(path); if (cached && cached.data && typeof cached.data.acOn === 'boolean' && Number(cached.at) > at) off = cached.data.acOn === false; } catch (_) {}
+        return off;
+    }
     function setAutoCancelState(row) {
 
         const autoCancelCell =
@@ -11083,6 +11102,24 @@ async function wpTransferAssistantExtensionEnabled() {
             parseAutoCancelMinutes(timerText);
 
         if (autoCancelCell.style.color) autoCancelCell.style.color = '';
+        // 1.7.551: AutoCancel OFF: the timer in Welcome green, or a green dot when there is no timer; no red / orange
+        let acOff = false;
+        try { acOff = wpRowAcOff(row); } catch (_) {}
+        let dot = autoCancelCell.querySelector(':scope > .wp-acoff-dot');
+        if (acOff) {
+            ['white', 'orange', 'red'].forEach(function(name) { autoCancelCell.classList.remove('wp-autocancel-' + name); });
+            row.classList.remove('wp-autocancel-danger');
+            autoCancelCell.classList.add('wp-acoff-cell');
+            autoCancelCell.title = 'AutoCancel is OFF — re-enable it when it is time';
+            if (minutes === null) {
+                if (!dot) { dot = document.createElement('span'); dot.className = 'wp-acoff-dot'; dot.style.cssText = 'display:inline-block;width:9px;height:9px;border-radius:50%;background:#2fbf71;vertical-align:middle'; autoCancelCell.appendChild(dot); }
+            } else if (dot) dot.remove();
+            autoCancelCell.style.setProperty('color', '#2fbf71', 'important');
+            autoCancelCell.style.fontWeight = '700';
+            return;
+        }
+        if (dot) dot.remove();
+        if (autoCancelCell.classList.contains('wp-acoff-cell')) { autoCancelCell.classList.remove('wp-acoff-cell'); autoCancelCell.title = ''; autoCancelCell.style.fontWeight = ''; }
 
         // Performance (1.7.185): none/60+ = white, 30-59 = orange, under 30
         // = red + row danger — as before, but only the difference is written
@@ -13751,7 +13788,7 @@ async function wpTransferAssistantExtensionEnabled() {
             wpRowCrmBusy++;
             wpFetchTransferCrmDetails(path, true).then(function(data) {
                 const store = wpRowCrmLoad();
-                store[path] = { at: Date.now(), tags: wpCrmPriceTags(data), tc: data && data.prices ? data.prices.tc : null, dc: data && data.prices ? data.prices.dc : null, car: data && data.carType || '', seats: wpChildSeatCount(data && data.booking), seatsV: WP_SEATS_VERSION };
+                store[path] = { at: Date.now(), tags: wpCrmPriceTags(data), tc: data && data.prices ? data.prices.tc : null, dc: data && data.prices ? data.prices.dc : null, car: data && data.carType || '', seats: wpChildSeatCount(data && data.booking), seatsV: WP_SEATS_VERSION, ao: data && data.acOn === false ? 1 : 0 }; // 1.7.551: ao = AutoCancel OFF in the CRM
                 try { localStorage.setItem(WP_ROW_CRM_KEY, JSON.stringify(store)); } catch (_) {}
                 document.querySelectorAll('table.transfers > tbody > tr').forEach(function(row) {
                     if (row.dataset.wpCrmPath === path) wpRowCrmPaint(row);
@@ -32242,6 +32279,7 @@ async function wpTransferAssistantExtensionEnabled() {
         } catch (_) { row.tg = []; row.g = ''; }
         // worked dot (1 = you, 2 = only wlcm, 0 = nobody)
         try { const st = wpWorkedState(row.id); row.wk = st.on ? 1 : st.wlcm && st.wlcm.at ? 2 : 0; } catch (_) { row.wk = 0; }
+        try { row.ao = wpRowAcOff(tr) ? 1 : 0; } catch (_) { row.ao = 0; } // 1.7.551: AutoCancel OFF
     }
     var wpRemoteTomorrowHeading = null;
     var wpRemoteTomorrowMissAt = 0;
@@ -32301,6 +32339,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 pd: (function() { const chip = row.querySelector('td.wp-pudo-cell .wp-pudo-chip'); return chip ? [clean(chip, 8), chip.classList.contains('is-pu') ? 'pu' : chip.classList.contains('is-do') ? 'do' : 'both'] : null; })(),
                 lo: Array.from(row.querySelectorAll('td.wp-loc-cell .wp-loc-badge')).slice(0, 3).map(function(badge) { return [clean(badge, 6), String(badge.title || '').slice(0, 40)]; }),
                 wk: (function() { try { const st = wpWorkedState(id); return st.on ? 1 : st.wlcm && st.wlcm.at ? 2 : 0; } catch (_) { return 0; } })(),
+                ao: (function() { try { return wpRowAcOff(row) ? 1 : 0; } catch (_) { return 0; } })(), // 1.7.551: AutoCancel OFF
                 // 1.7.454: Price column ("TC • DC") and the DC colour, for the tablet's Price column
                 pr: clean(row.querySelector(':scope > td.wp-tcdc-cell'), 20),
                 pk: (function() { const sp = row.querySelector(':scope > td.wp-tcdc-cell > span'); return sp && sp.style.color ? String(sp.style.color).slice(0, 30) : ''; })(),

@@ -232,3 +232,6 @@ The user has a tight budget. Keep replies short, read only the code you need (gr
 
 ## 1.7.550
 - Tomorrow / 2-4 days: untagged = no EM tag (a note "em" or a task labelled EM), not "no notes at all" (user, 23 Nov). A transfer with only other notes ("passenger called") gets the whole chain; EM + other notes = BC & Group; a BC & Group / suggested / hero / final note = nothing (even without EM). Today keeps its own rule (untagged = no notes, user 14 Nov, 1.7.441).
+
+## 1.7.551
+- A/C column (user, 23 Nov: "I need to re-enable these"): a transfer with AutoCancel OFF (on wlcm's A/C Off list, or OFF in wlcm's latest read: details cache / row store field ao, the newer wins; wpRowAcOff) shows its timer in Welcome green (#2fbf71, bold) or, with no timer, a green dot (span.wp-acoff-dot); no red / orange / row danger then. Tablet: list rows carry ao (page list and reader rows); app.html .acp.aoff green number, .acoffdot green dot.
