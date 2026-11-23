@@ -15,7 +15,7 @@
     };
     // ---- tabs ----
     const tabs = {
-        wa: { frame: frame, view: document.getElementById('view-wa'), zoomKey: 'wp_wa_panel_zoom_v1', zoom: 0.8 }
+        wa: { frame: frame, view: document.getElementById('view-wa'), zoomKey: 'wp_wa_panel_zoom_v2', zoom: 0.6 } // 1.7.376: starts at 60% (new key, old 80% choice dropped)
     };
     Object.keys(tabs).forEach(function(name) {
         try { const saved = Number(localStorage.getItem(tabs[name].zoomKey)); if (saved >= 0.5 && saved <= 1) tabs[name].zoom = saved; } catch (_) {}
@@ -86,7 +86,9 @@
         muteButton.textContent = on ? 'Muted' : 'Mute';
         muteButton.title = on ? 'WhatsApp is muted here — click for its sounds again' : 'Mute WhatsApp\'s sounds (this panel only)';
     };
-    chrome.storage.local.get(MUTE_KEY, function(stored) { paintMute(Boolean(stored && stored[MUTE_KEY])); });
+    // 1.7.355: the panel always starts muted (click Muted for the sounds)
+    chrome.storage.local.set({ [MUTE_KEY]: true });
+    paintMute(true);
     muteButton.addEventListener('click', function() {
         const on = !muteButton.classList.contains('on');
         chrome.storage.local.set({ [MUTE_KEY]: on });
@@ -118,4 +120,24 @@
         else { try { frame.contentWindow.postMessage({ wpPanel: inner }, WA); } catch (_) {} }
         sendResponse({ ok: true });
     });
+    // 1.7.512: the box's Chromium kept running a cached background.js from 1.7.457 (16 Nov) while the files
+    // on disk were newer (a version bump did not re-read it). This page is always loaded from disk: when the
+    // background does not answer the ping, or answers with another build than the manifest, wlcm is reloaded
+    // once (at most every 30 min), which makes Chromium read background.js again.
+    setTimeout(function() {
+        const want = chrome.runtime.getManifest().version;
+        chrome.runtime.sendMessage({ type: 'WP_BG_PING' }, function(answer) {
+            const lost = chrome.runtime.lastError;
+            const code = answer && answer.code;
+            if (!lost && code === want) return;
+            // 1.7.523: once per new version (was: at most every 30 min, which skipped a new version right after
+            // the last one); then again only after 30 min, so a background that never answers cannot loop
+            let last = null;
+            try { last = JSON.parse(localStorage.getItem('wp_bg_reload_v2') || 'null'); } catch (_) {}
+            if (last && last.want === want && Date.now() - Number(last.at) < 30 * 60000) return;
+            try { localStorage.setItem('wp_bg_reload_v2', JSON.stringify({ want: want, at: Date.now() })); } catch (_) {}
+            try { chrome.storage.local.set({ wp_bg_reload_v1: { at: Date.now(), want: want, had: code || '', why: lost ? String(lost.message || '').slice(0, 80) : 'other build' } }); } catch (_) {}
+            chrome.runtime.reload();
+        });
+    }, 4000);
 })();

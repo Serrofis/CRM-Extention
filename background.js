@@ -1,4 +1,5 @@
-
+// 1.7.512: the build of THIS background.js; bump it with the manifest version on every build (wa-panel.js reloads wlcm when it differs)
+const WP_BG_BUILD = '1.7.545';
 
 // ---- WhatsApp Web in the side panel (1.7.282) ----
 // WhatsApp refuses to load inside a frame. For the extension's own side
@@ -41,6 +42,45 @@ chrome.windows.onBoundsChanged.addListener((win) => {
 });function wpWaBoxReady(box) {
     return Boolean(box && box.ready && Date.now() - Number(box.at) < 60000);
 }
+// 1.7.386: WhatsApp opens in the side panel, never in a new tab. Chrome opens a panel
+// only right after a click, so it is asked at once (before anything async); when it
+// says no: a WhatsApp tab that is already open, else the tab that asked shows a
+// one-click "Open WhatsApp panel" (the job waits in the queue).
+function wpWaTryPanel(message, sender) {
+    try {
+        const windowId = sender && sender.tab && Number.isInteger(sender.tab.windowId) ? sender.tab.windowId : Number(message.windowId);
+        if (!chrome.sidePanel || !Number.isInteger(windowId)) return Promise.resolve(false);
+        return chrome.sidePanel.open({ windowId: windowId }).then(() => true, () => false);
+    } catch (_) { return Promise.resolve(false); }
+}
+const wpWaKickAt = {}; // 1.7.465: windowId → last corner click
+function wpWaAskForPanel(sender) {
+    const tabId = sender && sender.tab && sender.tab.id;
+    if (Number.isInteger(tabId)) chrome.tabs.sendMessage(tabId, { type: 'WP_WA_NEED_PANEL' }, () => void chrome.runtime.lastError);
+}
+// A message for the panel once it is up (it needs a moment to load and log in).
+function wpWaDeliverToPanel(msg) {
+    const startedAt = Date.now();
+    const look = () => {
+        chrome.storage.local.get(WP_WA_BOX_KEY, (box) => {
+            if (wpWaBoxReady(box[WP_WA_BOX_KEY])) {
+                chrome.runtime.sendMessage({ type: 'WP_WA_PANEL', msg: msg }, () => void chrome.runtime.lastError);
+            } else if (Date.now() - startedAt < 45000) {
+                setTimeout(look, 1000);
+            }
+        });
+    };
+    look();
+}
+// Any WhatsApp link → the address WhatsApp Web uses.
+function wpWaWebUrl(url) {
+    const text = String(url || '');
+    const code = (text.match(/chat\.whatsapp\.com\/(?:invite\/)?([A-Za-z0-9]+)/) || [])[1];
+    if (code) return 'https://web.whatsapp.com/accept?code=' + code;
+    const phone = (text.match(/[?&]phone=\+?(\d+)/) || text.match(/wa\.me\/\+?(\d+)/) || [])[1];
+    if (/whatsapp\.com|wa\.me/.test(text) && phone) return 'https://web.whatsapp.com/send?phone=' + phone;
+    return /^https:\/\/web\.whatsapp\.com\//.test(text) ? text : '';
+}
 function wpWaPanelRules() {
     const action = {
         type: 'modifyHeaders',
@@ -77,11 +117,17 @@ function wpRefreshAlarmName(tabId) {
     return WP_REFRESH_ALARM_PREFIX + String(tabId);
 }
 
+// 1.7.419: the newest on/off of a tab wins. An "on" still being handled when an
+// "off" came in (a wlcm round ending just as you switched the refresh off) used to
+// set the timer again after the off, and the page kept reloading every minute.
+const wpRefreshSetVersion = {};
 async function wpSetBackgroundAutoRefresh(tabId, enabled, intervalSeconds) {
     if (!Number.isInteger(tabId)) return;
+    const version = (wpRefreshSetVersion[tabId] || 0) + 1;
+    wpRefreshSetVersion[tabId] = version;
     const alarmName = wpRefreshAlarmName(tabId);
     await chrome.alarms.clear(alarmName);
-    if (!enabled) return;
+    if (!enabled || wpRefreshSetVersion[tabId] !== version) return;
     const seconds = Number(intervalSeconds) === 60 ? 60 : 30;
     chrome.alarms.create(alarmName, { delayInMinutes: seconds / 60, periodInMinutes: seconds / 60 });
 }
@@ -97,6 +143,15 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
             await chrome.alarms.clear(alarm.name);
             return;
         }
+        // 1.7.419: the page decides: its refresh switched off (or held) = no reload, timer gone
+        const answer = await new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(null), 2500);
+            try {
+                chrome.tabs.sendMessage(tabId, { type: 'WP_AUTO_REFRESH_ASK' }, (reply) => { clearTimeout(timer); void chrome.runtime.lastError; resolve(reply || null); });
+            } catch (_) { clearTimeout(timer); resolve(null); }
+        });
+        if (answer && answer.enabled === false) { await chrome.alarms.clear(alarm.name); return; }
+        if (answer && answer.held) return;
         await chrome.tabs.reload(tabId);
     } catch (_) {
         await chrome.alarms.clear(alarm.name);
@@ -110,8 +165,122 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // Welcome Pickups Transfer Assistant - extension background service worker
 'use strict';
 
+// 1.7.386: open a chat or a group: the side panel; a WhatsApp tab only if one is already open.
+function wpWaOpenChat(target, sender, sendResponse) {
+    const panelTry = wpWaTryPanel({}, sender);
+    const url = target.url;
+    const code = (url.match(/[?&]code=([A-Za-z0-9]{10,40})/) || [])[1] || '';
+    const msg = code ? { type: 'WP_WA_SHOW', code: code, city: String(target.city || '').slice(0, 60) } : { type: 'WP_WA_GO', url: url };
+    chrome.storage.local.get(WP_WA_BOX_KEY, (box) => {
+        if (wpWaBoxReady(box[WP_WA_BOX_KEY])) {
+            chrome.runtime.sendMessage({ type: 'WP_WA_PANEL', msg: msg }, () => void chrome.runtime.lastError);
+            sendResponse({ ok: true, panel: true });
+            return;
+        }
+        panelTry.then((opened) => {
+            if (opened) {
+                wpWaDeliverToPanel(msg);
+                sendResponse({ ok: true, panel: true });
+                return;
+            }
+            chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (tabs) => {
+                const tab = tabs && tabs[0];
+                if (tab) {
+                    wpWaSendToTab(tab.id, msg, url);
+                    chrome.tabs.update(tab.id, { active: true }, () => void chrome.runtime.lastError);
+                    if (Number.isInteger(tab.windowId)) chrome.windows.update(tab.windowId, { focused: true }, () => void chrome.runtime.lastError);
+                    sendResponse({ ok: true });
+                    return;
+                }
+                // no tab is made: this waits for the click on "Open WhatsApp panel"
+                chrome.storage.local.set({ wp_wa_open_pending_v1: { msg: msg, at: Date.now() } }, () => void chrome.runtime.lastError);
+                wpWaAskForPanel(sender);
+                sendResponse({ ok: true, needPanel: true });
+            });
+        });
+    });
+}
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) return;
+    // 1.7.511: which background code runs (the box seemed to run an older one) and whether it has chrome.cookies
+    // 1.7.524: the Ops Hub's "signed out / back in" for the app (wp-signin.js on the Hub has no relay settings;
+    // a CRM page stored them in wp_signin_relay_v1)
+    // 1.7.530: a Hub job for the relay (it works the Ops Hub itself): create it, then wait for its result (at most 4 min)
+    if (message.type === 'WP_RELAY_JOB') {
+        (async () => {
+            const got = await chrome.storage.local.get('wp_signin_relay_v1');
+            const cfg = got && got.wp_signin_relay_v1;
+            const base = String(cfg && cfg.url || '').replace(/\/+$/, '');
+            if (!cfg || !cfg.key || !/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/.test(base)) return { ok: false, error: 'no relay settings on this machine' };
+            const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + String(cfg.key) };
+            const made = await fetch(base + '/api/pcjobs', { method: 'POST', headers: headers, body: JSON.stringify(message.job || {}) });
+            const madeData = await made.json().catch(() => ({}));
+            if (!made.ok || !madeData.job) return { ok: false, error: madeData.error || ('HTTP ' + made.status) };
+            const id = madeData.job.id;
+            const until = Date.now() + 240000;
+            while (Date.now() < until) {
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+                const r = await fetch(base + '/api/pcjobs?id=' + encodeURIComponent(id), { headers: headers }).catch(() => null);
+                const data = r ? await r.json().catch(() => ({})) : {};
+                const job = data && data.job;
+                if (job && (job.state === 'done' || job.state === 'failed')) return { ok: true, job: job };
+            }
+            return { ok: false, error: 'the relay job did not finish in 4 min' };
+        })().catch((error) => ({ ok: false, error: String(error && error.message || error) })).then(sendResponse);
+        return true;
+    }
+    // 1.7.538: the box's Slack tab (wp-slack.js) -> the relay /api/slack (the tablet's Chats tab); the answer carries
+    // the tablet's Slack commands (open / reply) and the picked channels
+    if (message.type === 'WP_SLACK_SYNC') {
+        (async () => {
+            const got = await chrome.storage.local.get('wp_signin_relay_v1');
+            const cfg = got && got.wp_signin_relay_v1;
+            const base = String(cfg && cfg.url || '').replace(/\/+$/, '');
+            if (!cfg || !cfg.key || !/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/.test(base)) return { ok: false, error: 'no relay settings on this machine' };
+            const r = await fetch(base + '/api/slack', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + String(cfg.key) }, body: JSON.stringify(Object.assign({ main: true }, message.body || {})) });
+            const data = await r.json().catch(() => ({}));
+            return r.ok ? data : { ok: false, error: data.error || ('HTTP ' + r.status) };
+        })().catch((error) => ({ ok: false, error: String(error && error.message || error) })).then(sendResponse);
+        return true;
+    }
+    // 1.7.538: a Slack web API call for wp-slack.js when the page's own request is blocked (CORS); only from a Slack tab
+    if (message.type === 'WP_SLACK_API') {
+        const from = String(sender && (sender.url || (sender.tab && sender.tab.url)) || '');
+        const url = String(message.url || '');
+        if (!/^https:\/\/([a-z0-9-]+\.)*slack\.com\//.test(from) || !/^https:\/\/[a-z0-9-]+(\.enterprise)?\.slack\.com\/api\/[a-zA-Z.]+$/.test(url)) { sendResponse({ ok: false, error: 'not allowed' }); return; }
+        (async () => {
+            const form = new FormData();
+            Object.keys(message.form || {}).forEach((k) => form.append(k, String(message.form[k])));
+            const r = await fetch(url, { method: 'POST', body: form, credentials: 'include' });
+            return await r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status }));
+        })().catch((error) => ({ ok: false, error: String(error && error.message || error) })).then(sendResponse);
+        return true;
+    }
+    if (message.type === 'WP_HUB_SESSION_PAGE') { // 1.7.529
+        wpHubSessionFromPage(message.cookie, message.count).catch((e) => wpHubSessionNote('error: ' + (e && e.message || e)));
+        sendResponse({ ok: true });
+        return;
+    }
+    if (message.type === 'WP_SIGNIN_TELL') {
+        const body = message.body || {};
+        const hub = body.hub === 'out' || body.hub === 'ok' ? body.hub : '';
+        if (hub) {
+            chrome.storage.local.get('wp_signin_relay_v1').then((got) => {
+                const cfg = got && got.wp_signin_relay_v1;
+                const base = String(cfg && cfg.url || '').replace(/\/+$/, '');
+                if (!cfg || !cfg.key || !/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/.test(base)) return;
+                return fetch(base + '/api/boxinfo', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + String(cfg.key) }, body: JSON.stringify({ main: body.main === true, hub: hub }) });
+            }).catch(() => {});
+        }
+        sendResponse({ ok: true });
+        return;
+    }
+    if (message.type === 'WP_BG_PING') {
+        let version = '?';
+        try { version = chrome.runtime.getManifest().version; } catch (_) {}
+        sendResponse({ ok: true, v: version, code: WP_BG_BUILD, cookies: typeof chrome.cookies });
+        return;
+    }
 
     if (message.type === 'WP_AUTO_REFRESH_SET') {
         const tabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
@@ -135,6 +304,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === 'WP_TRANSFER_ASSISTANT_OPEN_TAB') {
+        // 1.7.386: a WhatsApp address goes to the side panel, not a new tab
+        if (/^https?:\/\/(?:[a-z]+\.)?(?:whatsapp\.com|wa\.me)\//i.test(String(message.url || ''))) {
+            wpWaOpenChat({ url: wpWaWebUrl(message.url) || 'https://web.whatsapp.com/', city: '' }, sender, sendResponse);
+            return true;
+        }
         const createProperties = {
             url: message.url,
             active: message.options?.active === true
@@ -164,7 +338,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'WP_TRANSFER_ASSISTANT_CLOSE_SELF') {
         const tab = sender && sender.tab;
         const url = String((tab && tab.url) || '');
-        if (!tab || !Number.isInteger(tab.id) || !url.startsWith('https://crm.welcomepickups.com/admin/transfers/')) {
+        // 1.7.367: also the drivers list tab of a phone "message all drivers" job
+        const driversJob = url.startsWith('https://crm.welcomepickups.com/admin/drivers?') && /[?&]wp_send_all=/.test(url);
+        if (!tab || !Number.isInteger(tab.id) || !(url.startsWith('https://crm.welcomepickups.com/admin/transfers/') || driversJob)) {
             sendResponse({ ok: false });
             return;
         }
@@ -190,11 +366,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // WhatsApp Web auto-send: queue the job, make sure a WhatsApp Web tab
     // exists (opened in the background if needed) and nudge it.
     if (message.type === 'WP_WA_SEND') {
+        const panelTry = wpWaTryPanel(message, sender); // 1.7.386: at once, while the click still counts
         const text = String(message.text || '');
         const city = String(message.city || '');
         // 1.7.281: a hero's contact saved / renamed, no message
         const contactOnly = Boolean(message.contactOnly && /^\d{7,15}$/.test(String(message.phone || '')));
-        if ((!text && !contactOnly) || !city) {
+        // 1.7.365: a picture alone is a message too
+        if ((!text && !contactOnly && !/^data:image\/(png|jpeg);base64,/.test(String(message.image || ''))) || !city) {
             sendResponse({ ok: false, error: 'Missing city or text.' });
             return;
         }
@@ -210,6 +388,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             contactFirst: String(message.contactFirst || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80),
             contactLast: String(message.contactLast || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80),
             contactOnly: contactOnly,
+            read: Boolean(message.read), // 1.7.440: read the chat for the phone, send nothing
+            chat: Boolean(message.chat), // 1.7.440: a reply to one chat (group or not), matched by its exact title
+            contactKeep: Boolean(message.contactKeep), // 1.7.365: a saved contact keeps its name
             expect: Array.isArray(message.expect) ? message.expect.map(String).filter(Boolean).slice(0, 6).map((word) => word.slice(0, 40)) : [],
             fromTabId: sender && sender.tab ? sender.tab.id : null,
             createdAt: Date.now()
@@ -224,19 +405,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     sendResponse({ ok: true, jobId: job.id, opened: false, panel: true });
                     return;
                 }
-                chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (tabs) => {
-                    if (tabs && tabs.length) {
-                        const tabId = tabs[0].id;
-                        // A WhatsApp tab opened before the extension was
-                        // installed/reloaded gets both scripts added first.
-                        wpWaSendToTab(tabId, { type: 'WP_WA_RUN' }, '');
-                        sendResponse({ ok: true, jobId: job.id, opened: false });
-                        return;
-                    }
-                    chrome.tabs.create({ url: 'https://web.whatsapp.com/', active: false }, () => {
-                        sendResponse({ ok: !chrome.runtime.lastError, jobId: job.id, opened: true });
-                    });
-                });
+                // 1.7.464: answered at once (the CRM tab used to wait for the side panel's open, which
+                // could hang a send run for good); side panel only — a WhatsApp tab never sends.
+                // The panel takes the waiting jobs as soon as it has loaded.
+                sendResponse({ ok: true, jobId: job.id, opened: false, panel: true });
+                panelTry.then((opened) => { if (!opened) wpWaAskForPanel(sender); }, () => wpWaAskForPanel(sender));
             });
         });
         return true;
@@ -247,6 +420,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (Number.isInteger(message.fromTabId)) {
             chrome.tabs.sendMessage(message.fromTabId, message, () => void chrome.runtime.lastError);
         }
+        // 1.7.437: the end of every send also to the CRM tabs (wlcm activity / phone): no message text
+        if (!message.progress) {
+            const note = { type: 'WP_WA_LOG', jobId: String(message.jobId || ''), label: String(message.label || ''), city: String(message.city || ''), ok: Boolean(message.ok), info: message.ok ? '' : String(message.info || '') };
+            try { chrome.tabs.query({ url: ['https://crm.welcomepickups.com/*', 'https://*.ts.net/*'] }, (tabs) => { (tabs || []).forEach((tab) => chrome.tabs.sendMessage(tab.id, note, () => void chrome.runtime.lastError)); }); } catch (_) {}
+        }
         sendResponse({ ok: true });
         return;
     }
@@ -254,37 +432,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Open a group in WhatsApp Web (existing tab if there is one) instead of
     // the chat.whatsapp.com invite link, which launches the desktop app.
     if (message.type === 'WP_WA_OPEN') {
-        const url = String(message.url || '');
-        if (!url.startsWith('https://web.whatsapp.com/')) {
+        const url = wpWaWebUrl(message.url);
+        if (!url) {
             sendResponse({ ok: false });
             return;
         }
-        const code = (url.match(/[?&]code=([A-Za-z0-9]{10,40})/) || [])[1] || '';
-        chrome.storage.local.get(WP_WA_BOX_KEY, (box) => {
-        // 1.7.282: open in the side panel's WhatsApp when it is there
-        if (wpWaBoxReady(box[WP_WA_BOX_KEY])) {
-            chrome.runtime.sendMessage({ type: 'WP_WA_PANEL', msg: code ? { type: 'WP_WA_SHOW', code: code, city: String(message.city || '').slice(0, 60) } : { type: 'WP_WA_GO', url: url } }, () => void chrome.runtime.lastError);
-            sendResponse({ ok: true, panel: true });
-            return;
-        }
-        chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (tabs) => {
-            const tab = tabs && tabs[0];
-            if (tab && code) {
-                // Group: the WhatsApp tab opens it by name (no reload) when it can.
-                wpWaSendToTab(tab.id, { type: 'WP_WA_SHOW', code: code, city: String(message.city || '').slice(0, 60) }, url);
-                chrome.tabs.update(tab.id, { active: true }, () => void chrome.runtime.lastError);
-                if (Number.isInteger(tab.windowId)) chrome.windows.update(tab.windowId, { focused: true }, () => void chrome.runtime.lastError);
-            } else if (tab) {
-                // The WhatsApp tab changes its own page (skips "Leave site?").
-                wpWaSendToTab(tab.id, { type: 'WP_WA_GO', url: url }, url);
-                chrome.tabs.update(tab.id, { active: true }, () => void chrome.runtime.lastError);
-                if (Number.isInteger(tab.windowId)) chrome.windows.update(tab.windowId, { focused: true }, () => void chrome.runtime.lastError);
-            } else {
-                chrome.tabs.create({ url: url, active: true }, () => void chrome.runtime.lastError);
-            }
-            sendResponse({ ok: true });
-        });
-        });
+        wpWaOpenChat({ url: url, city: String(message.city || '') }, sender, sendResponse);
         return true;
     }
 
@@ -334,68 +487,75 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
+    // 1.7.423: Open on a mention / direct-message card: the side panel, then that chat.
+    if (message.type === 'WP_WA_ALERT_OPEN') {
+        const title = String(message.title || '').slice(0, 80);
+        const windowId = sender && sender.tab && Number.isInteger(sender.tab.windowId) ? sender.tab.windowId : NaN;
+        const deliver = () => { if (title) wpWaDeliverToPanel({ type: 'WP_WA_OPEN_TITLE', title: title }); };
+        if (!chrome.sidePanel || !Number.isInteger(windowId)) { deliver(); sendResponse({ ok: false }); return; }
+        chrome.sidePanel.open({ windowId: windowId }).then(() => { deliver(); sendResponse({ ok: true }); }, () => { deliver(); sendResponse({ ok: false }); });
+        return true;
+    }
+    // 1.7.473: "open in CRM" from a transfer in the WhatsApp side panel — only a CRM transfer page
+    if (message.type === 'WP_OPEN_CRM') {
+        const path = String(message.path || '');
+        if (!/^\/admin\/transfers\/\d+(?:\/[a-z0-9_]+)?$/i.test(path)) { sendResponse({ ok: false }); return; }
+        const create = (windowId) => chrome.tabs.create(Object.assign({ url: 'https://crm.welcomepickups.com' + path, active: true }, Number.isInteger(windowId) ? { windowId: windowId } : {}), () => { void chrome.runtime.lastError; sendResponse({ ok: true }); });
+        chrome.windows.getLastFocused({ windowTypes: ['normal'] }, (win) => { void chrome.runtime.lastError; create(win && win.id); });
+        return true;
+    }
+    // 1.7.465: a CRM tab asks for one click on its see-through corner spot (content.js wpWaPanelKick):
+    // Chrome counts it as a real click, so the tab's own WP_WA_PANEL_OPEN may open the side panel.
+    // Once per window every 2 min, only while the panel is not up.
+    if (message.type === 'WP_WA_PANEL_KICK') {
+        const tabId = sender && sender.tab && sender.tab.id;
+        const windowId = sender && sender.tab && sender.tab.windowId;
+        if (!chrome.debugger || !Number.isInteger(tabId)) { sendResponse({ ok: false }); return; }
+        if (Date.now() - Number(wpWaKickAt[windowId] || 0) < 110000) { sendResponse({ ok: false, error: 'tried lately' }); return; }
+        chrome.storage.local.get(WP_WA_BOX_KEY, (box) => {
+            if (wpWaBoxReady(box[WP_WA_BOX_KEY])) { sendResponse({ ok: true, up: true }); return; }
+            wpWaKickAt[windowId] = Date.now();
+            const target = { tabId: tabId };
+            const x = Math.max(0, Number(message.x) || 2), y = Math.max(0, Number(message.y) || 2);
+            const mouse = (type) => new Promise((resolve) => chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: type, x: x, y: y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 }, () => { void chrome.runtime.lastError; resolve(); }));
+            chrome.debugger.attach(target, '1.3', async () => {
+                if (chrome.runtime.lastError) { sendResponse({ ok: false, error: chrome.runtime.lastError.message }); return; }
+                try { await mouse('mousePressed'); await mouse('mouseReleased'); } catch (_) {}
+                setTimeout(() => chrome.debugger.detach(target, () => void chrome.runtime.lastError), 300);
+                sendResponse({ ok: true });
+            });
+        });
+        return true;
+    }
     // 1.7.282: open WhatsApp in Chrome's side panel (a click in the CRM / the popup).
     if (message.type === 'WP_WA_PANEL_OPEN') {
         const windowId = sender && sender.tab && Number.isInteger(sender.tab.windowId) ? sender.tab.windowId : Number(message.windowId);
         if (!chrome.sidePanel || !Number.isInteger(windowId)) { sendResponse({ ok: false, error: 'no side panel in this browser' }); return; }
-        chrome.sidePanel.open({ windowId: windowId }).then(() => sendResponse({ ok: true }), (error) => sendResponse({ ok: false, error: String(error && error.message || error) }));
+        chrome.sidePanel.open({ windowId: windowId }).then(() => {
+            sendResponse({ ok: true });
+            // 1.7.386: a chat that was waiting for the panel opens now
+            chrome.storage.local.get('wp_wa_open_pending_v1', (stored) => {
+                const pending = stored.wp_wa_open_pending_v1;
+                if (!pending) return;
+                chrome.storage.local.remove('wp_wa_open_pending_v1');
+                if (Date.now() - Number(pending.at) < 120000) wpWaDeliverToPanel(pending.msg);
+            });
+        }, (error) => sendResponse({ ok: false, error: String(error && error.message || error) }));
         return true;
     }
 
-    // Local AI reader (1.7.202): the model server on this PC only
-    // (localhost / 127.0.0.1) — never any other address.
-    if (message.type === 'WP_AI_MODELS' || message.type === 'WP_AI_ASK') {
-        const base = String(message.url || '').replace(/\/+$/, '');
-        if (!/^http:\/\/(localhost|127\.0\.0\.1)(:\d{2,5})?$/.test(base)) {
-            sendResponse({ ok: false, error: 'only a server on this PC is allowed (http://localhost:port)' });
-            return;
-        }
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), message.type === 'WP_AI_ASK' ? 45000 : 8000);
-        const startedAt = Date.now();
-        const request = message.type === 'WP_AI_MODELS'
-            ? fetch(base + '/v1/models', { signal: controller.signal })
-                .then((response) => response.ok ? response.json() : Promise.reject(new Error(response.status === 403 ? 'the model server refused the browser extension (HTTP 403) — Ollama needs OLLAMA_ORIGINS to allow chrome-extension://*' : 'HTTP ' + response.status)))
-                .then((json) => ({ ok: true, models: (json && json.data || []).map((item) => String(item.id || '')).filter(Boolean) }))
-            : (() => {
-                // reasoning_effort "none": no hidden thinking (a small model
-                // otherwise spends its whole answer on it and returns nothing).
-                const ask = (withEffort) => fetch(base + '/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    signal: controller.signal,
-                    body: JSON.stringify(Object.assign({
-                        model: String(message.model || ''),
-                        messages: Array.isArray(message.messages) ? message.messages.slice(0, 4) : [],
-                        temperature: 0,
-                        max_tokens: 500,
-                        stream: false
-                    }, withEffort ? { reasoning_effort: 'none' } : {}))
-                });
-                // A server that does not know the option (HTTP 400): once more without it.
-                return ask(true).then((response) => response.status === 400 ? ask(false) : response);
-            })()
-                .then((response) => response.ok ? response.json() : response.text().then((text) => Promise.reject(new Error(response.status === 403 ? 'the model server refused the browser extension (HTTP 403) — Ollama needs OLLAMA_ORIGINS to allow chrome-extension://*' : 'HTTP ' + response.status + ' ' + text.slice(0, 120)))))
-                .then((json) => {
-                    const choice = json && json.choices && json.choices[0];
-                    const text = choice && choice.message ? String(choice.message.content || '') : '';
-                    return text ? { ok: true, text: text, ms: Date.now() - startedAt } : { ok: false, error: 'empty answer' };
-                });
-        request
-            .catch((error) => ({ ok: false, error: error && error.name === 'AbortError' ? 'timed out' : String(error && error.message || error) }))
-            .then((result) => { clearTimeout(timer); sendResponse(result); });
-        return true;
-    }
     // Phone app (1.7.212): the relay that carries mod's open
     // question to the phone and the tapped answer back. Only a Cloudflare
     // Worker address (https://….workers.dev) or, since 1.7.268, a relay you host
     // yourself behind Tailscale Funnel (https://….ts.net, with an optional port),
+    // 1.7.344: also Evan's own domain (https://….eserris.com, e.g. wlcm.eserris.com).
     // and only these calls.
     if (message.type === 'WP_REMOTE') {
         const base = String(message.url || '').replace(/\/+$/, '');
         const path = String(message.path || '');
         const key = String(message.key || '');
-        if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net)(:\d{2,5})?$/.test(base) || ['/api/claim', '/api/pair-code', '/api/unpair', '/api/sync', '/api/settings'].indexOf(path) < 0 || !/^[A-Za-z0-9_-]{32,200}$/.test(key)) {
+        // 1.7.452: + /api/mirror (Sync with the box; 1.7.451 forgot it here, so Sync could not reach the box) and /api/mem (one memory)
+        if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/.test(base) || ['/api/claim', '/api/pair-code', '/api/unpair', '/api/sync', '/api/settings', '/api/mirror', '/api/mem', '/api/boxinfo'].indexOf(path) < 0 || !/^[A-Za-z0-9_-]{32,200}$/.test(key)) {
             sendResponse({ ok: false, error: 'the relay address or key is not valid' });
             return;
         }
@@ -565,9 +725,10 @@ async function wpHubSelect(rawIds, rawAction, options, senderTabId) {
     // One of the Hub bar's buttons, or '' for "select only".
     const action = ['ask', 'share', 'tag', 'note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change'].indexOf(String(rawAction || '')) >= 0 ? String(rawAction) : '';
     // auto (phone app): the Hub's dialog is filled in and confirmed there.
-    // Only for the actions with a plain dialog; never Ask / Share.
+    // Only for the actions with a plain dialog; never Share. 1.7.351: and Ask
+    // (only the City Manager chain asks for it: its last step before Enable Auto-C).
     let auto = null;
-    if (options.auto && ['note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change'].indexOf(action) >= 0) {
+    if (options.auto && ['note', 'remove_auto_c', 'enable_auto_c', 'broadcast', 'price_change', 'ask'].indexOf(action) >= 0) {
         const price = options.auto.price && typeof options.auto.price === 'object' ? options.auto.price : null;
         auto = {
             note: String(options.auto.note || '').replace(/\s+/g, ' ').trim().slice(0, 280),
@@ -662,6 +823,10 @@ function wpOverviewAlarm() {
 }
 chrome.runtime.onInstalled.addListener(wpOverviewAlarm);
 chrome.runtime.onStartup.addListener(wpOverviewAlarm);
+// 1.7.522: content.js may read storage.session (cleared by every browser start and every wlcm update): when its
+// 'wp_booted' mark is missing, content.js switches every automation off once (wpBootAllOff). (1.7.521 used
+// onStartup, which the box's cached old background handled before the new one was loaded.)
+try { chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }); } catch (_) {}
 chrome.alarms.onAlarm.addListener((alarm) => {
     if (!alarm || alarm.name !== WP_OV_ALARM) return;
     const url = chrome.runtime.getURL('overview.html');
@@ -670,6 +835,55 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         chrome.tabs.create({ url: url + '?snapshot=1', active: false });
     });
 });
+
+// 1.7.438: Chrome started (e.g. after the phone woke the PC and Chrome was
+// opened) → ready to work: the CRM Em Hailing list, and WhatsApp Web as a
+// pinned tab when neither the WhatsApp side panel nor a WhatsApp tab is there (1.7.457: after 2 min, see below).
+// Only what is missing is opened; nothing is sent or pressed.
+// 1.7.476: Chromium just started: no side panel can be open yet, so a heartbeat left from before (e.g. the box restarted) is cleared — otherwise the CRM tab thinks the panel is up and does not open it
+chrome.runtime.onStartup.addListener(() => { try { chrome.storage.local.set({ [WP_WA_BOX_KEY]: { at: 0, ready: false } }); } catch (_) {} });
+chrome.runtime.onStartup.addListener(() => {
+    setTimeout(() => {
+        chrome.tabs.query({}, (tabs) => {
+            const urls = (tabs || []).map((tab) => String(tab.url || tab.pendingUrl || ''));
+            if (!urls.some((url) => /^https:\/\/crm\.welcomepickups\.com\//.test(url))) {
+                chrome.tabs.create({ url: 'https://crm.welcomepickups.com/admin/transfers/index_v2?em_hailing=true&em_hailing_period=today_tomorrow', active: true }, () => void chrome.runtime.lastError);
+            }
+            // 1.7.457: the same Em Hailing list open twice (start page + restored tabs): one is kept
+            const seenList = {};
+            (tabs || []).forEach((tab) => {
+                const url = String(tab.url || tab.pendingUrl || '');
+                if (!/^https:\/\/crm\.welcomepickups\.com\/admin\/transfers\/index_v2\?/.test(url)) return;
+                if (seenList[url]) chrome.tabs.remove(tab.id, () => void chrome.runtime.lastError);
+                else seenList[url] = true;
+            });
+        });
+    }, 6000);
+    // 1.7.457: WhatsApp goes in the side panel (opened by the first click or key in a CRM tab, or Alt+Shift+W).
+    // Only if the panel is still not up after 2 min, WhatsApp Web opens as a pinned tab, so it keeps working.
+    // 1.7.464: no pinned WhatsApp tab any more — sending is side panel only.
+});
+// 1.7.457: Alt+Shift+W (a key press counts as a click for Chrome) opens the WhatsApp side panel
+try {
+    chrome.commands.onCommand.addListener((command, tab) => {
+        if (command !== 'wp-open-wa' || !chrome.sidePanel) return;
+        const open = (windowId) => { if (Number.isInteger(windowId)) chrome.sidePanel.open({ windowId: windowId }).catch(() => {}); };
+        if (tab && Number.isInteger(tab.windowId)) open(tab.windowId);
+        else chrome.windows.getLastFocused((win) => open(win && win.id));
+    });
+} catch (_) {}
+// 1.7.457: once the side panel runs WhatsApp, a WhatsApp tab is closed (two WhatsApp Webs fight: "Use here"),
+// unless a message is waiting to go out
+function wpWaCloseTabsIfPanel() {
+    chrome.storage.local.get([WP_WA_BOX_KEY, 'wp_wa_jobs_v1'], (stored) => {
+        if (!wpWaBoxReady(stored && stored[WP_WA_BOX_KEY])) return;
+        if (Array.isArray(stored.wp_wa_jobs_v1) && stored.wp_wa_jobs_v1.length) return;
+        chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (open) => {
+            (open || []).forEach((tab) => chrome.tabs.remove(tab.id, () => void chrome.runtime.lastError));
+        });
+    });
+}
+try { chrome.alarms.onAlarm.addListener((alarm) => { if (alarm && alarm.name === 'wp-self-update') wpWaCloseTabsIfPanel(); }); } catch (_) {}
 
 // Installed / updated: WhatsApp tabs that are already open get the scripts now.
 chrome.runtime.onInstalled.addListener(() => {
@@ -688,9 +902,149 @@ async function wpPlaySound(kind) {
             await chrome.offscreen.createDocument({
                 url: 'offscreen.html',
                 reasons: ['AUDIO_PLAYBACK'],
-                justification: 'mod / Autopilot alert sound'
+                justification: 'wlcm / Autopilot alert sound'
             });
         }
     } catch (_) {}
     chrome.runtime.sendMessage({ type: 'WP_OFFSCREEN_SOUND', kind: kind }, () => void chrome.runtime.lastError);
 }
+
+// 1.7.450: self-update. wlcm is loaded (unpacked) from one fixed folder on each machine. When a newer
+// build is copied over that folder, it reloads itself within a minute and refreshes its CRM and WhatsApp
+// tabs — nobody has to press Reload. It waits while WhatsApp jobs are queued.
+const WP_SELF_ALARM = 'wp-self-update';
+chrome.alarms.create(WP_SELF_ALARM, { periodInMinutes: 1 });
+async function wpSelfUpdateCheck() {
+    try {
+        const response = await fetch(chrome.runtime.getURL('manifest.json') + '?t=' + Date.now(), { cache: 'no-store' });
+        const onDisk = String((await response.json()).version || '');
+        const running = String(chrome.runtime.getManifest().version || '');
+        if (!onDisk || onDisk === running) return;
+        const stored = await chrome.storage.local.get(['wp_wa_jobs_v1', 'wp_self_update_v1']);
+        const jobs = Array.isArray(stored.wp_wa_jobs_v1) ? stored.wp_wa_jobs_v1 : [];
+        const last = stored.wp_self_update_v1;
+        if (jobs.length && !(last && last.waitFrom && Date.now() - last.waitFrom > 300000)) {
+            if (!last || last.to !== onDisk || !last.waitFrom) await chrome.storage.local.set({ wp_self_update_v1: { from: running, to: onDisk, waitFrom: Date.now() } });
+            return; // a WhatsApp send is under way: next minute (at most 5 min of waiting)
+        }
+        await chrome.storage.local.set({ wp_self_update_v1: { from: running, to: onDisk, at: Date.now() } });
+        chrome.runtime.reload();
+    } catch (_) {}
+}
+chrome.alarms.onAlarm.addListener((alarm) => { if (alarm && alarm.name === WP_SELF_ALARM) wpSelfUpdateCheck(); });
+// 1.7.471: a new version loaded (Load unpacked = "install", reload = "update"): the CRM list tabs are
+// refreshed so they run the new code (the old pages kept the old one: "Extension context invalidated").
+// Single transfer pages are left alone (you may be editing one).
+chrome.runtime.onInstalled.addListener((details) => {
+    if (!details || (details.reason !== 'install' && details.reason !== 'update')) return;
+    chrome.tabs.query({ url: 'https://crm.welcomepickups.com/*' }, (tabs) => {
+        (tabs || []).filter((tab) => !/\/admin\/transfers\/\d+/.test(String(tab.url || '')))
+            .forEach((tab) => chrome.tabs.reload(tab.id, () => void chrome.runtime.lastError));
+    });
+    // 1.7.543: the Slack tab too (its reader lost wlcm after a reload and stopped)
+    chrome.tabs.query({ url: 'https://app.slack.com/*' }, (tabs) => {
+        (tabs || []).forEach((tab) => chrome.tabs.reload(tab.id, () => void chrome.runtime.lastError));
+    });
+});
+chrome.runtime.onInstalled.addListener(async (details) => {
+    if (!details || details.reason !== 'update') return;
+    const stored = await chrome.storage.local.get('wp_self_update_v1');
+    const update = stored.wp_self_update_v1;
+    if (!update || !update.at || Date.now() - update.at > 120000) return;
+    chrome.tabs.query({ url: ['https://crm.welcomepickups.com/*', 'https://web.whatsapp.com/*'] }, (tabs) => {
+        (tabs || []).forEach((tab) => chrome.tabs.reload(tab.id, () => void chrome.runtime.lastError));
+    });
+});
+
+// 1.7.526: the box hands its Ops Hub sign-in (its cookies for the Hub) to the relay, so the relay can call the
+// Hub's own endpoints itself. Box only (Linux), every 5 min; sent when it changed or every 20 min. The cookies
+// go from here to the relay only (relay settings kept by wp-signin.js on a CRM page), never to a page or log.
+const WP_HUB_SESSION_ALARM = 'wp_hub_session_v1';
+// 1.7.527: every try records its outcome (storage.local wp_hub_session_note, shown in the relay status as hubSess);
+// the 5-min alarm is only created when missing (re-creating it on every service-worker start kept postponing it).
+async function wpHubSessionNote(text) { try { await chrome.storage.local.set({ wp_hub_session_note: { at: Date.now(), x: String(text).slice(0, 160) } }); } catch (_) {} }
+async function wpHubSessionHand() {
+    const ua = navigator.userAgent || '';
+    if (!/Linux/.test(ua) || /Android|CrOS/.test(ua)) return;
+    const got = await chrome.storage.local.get(['wp_signin_relay_v1', 'wp_hub_session_sent']);
+    const cfg = got.wp_signin_relay_v1;
+    const base = String(cfg && cfg.url || '').replace(/\/+$/, '');
+    if (!cfg || !cfg.key || !/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/.test(base)) return wpHubSessionNote('no relay settings yet');
+    if (!chrome.cookies || typeof chrome.cookies.getAll !== 'function') return wpHubSessionNote('chrome.cookies is ' + typeof chrome.cookies);
+    // 1.7.528: the box's Hub cookies are marked "set with a cross-site ancestor" and the plain url lookup returned
+    // none; each other lookup Chrome offers is tried in turn and the counts are reported
+    const HUB_HOST = 'ops-intelligence-hub.vercel.app';
+    const tries = [
+        ['url', { url: 'https://' + HUB_HOST + '/' }],
+        ['domain', { domain: HUB_HOST }],
+        ['url+partitions', { url: 'https://' + HUB_HOST + '/', partitionKey: {} }],
+        ['all', {}]
+    ];
+    const counts = [];
+    let cookies = [];
+    for (const [name, details] of tries) {
+        let found = [];
+        try { found = ((await chrome.cookies.getAll(details)) || []).filter((c) => c && String(c.domain || '').replace(/^\./, '') === HUB_HOST); } catch (e) { counts.push(name + ' err'); continue; }
+        counts.push(name + ' ' + found.length);
+        if (found.some((c) => /^sb-/.test(c.name))) { cookies = found; break; }
+    }
+    const header = (cookies || []).filter((c) => c && c.name && !c.name.includes(';')).map((c) => c.name + '=' + c.value).join('; ');
+    if (!header || !/(^|; )sb-/.test(header)) {
+        // 1.7.529: the Hub page hands it over itself (see wpHubSessionFromPage): this note only when that is not working
+        const sent = got.wp_hub_session_sent || {};
+        if (Date.now() - Number(sent.at || 0) < 25 * 60000) return;
+        return wpHubSessionNote('no Hub sign-in from a Hub page yet; cookie lookups: ' + counts.join(', '));
+    }
+    return wpHubSessionSend(base, cfg, header, got.wp_hub_session_sent || {}, ua, 'cookie lookup');
+}
+async function wpHubSessionSend(base, cfg, header, last, ua, how) {
+    const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(base + '\n' + header)))).map((b) => b.toString(16).padStart(2, '0')).join('');
+    if (last.digest === digest && Date.now() - Number(last.at || 0) < 20 * 60000) return wpHubSessionNote('same as sent (' + how + ')');
+    const response = await fetch(base + '/api/hubsession', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + String(cfg.key) },
+        body: JSON.stringify({ main: true, cookie: header, ua: ua })
+    });
+    if (response.ok) { await chrome.storage.local.set({ wp_hub_session_sent: { digest: digest, at: Date.now() } }); return wpHubSessionNote('sent (' + how + ')'); }
+    return wpHubSessionNote('relay said HTTP ' + response.status + ' (' + how + ')');
+}
+// 1.7.529: the sign-in a signed-in Hub page read itself (wp-signin.js), on the box
+async function wpHubSessionFromPage(header, count) {
+    const ua = navigator.userAgent || '';
+    if (!/Linux/.test(ua) || /Android|CrOS/.test(ua)) return;
+    header = String(header || '').slice(0, 24000);
+    if (!/(^|; )sb-/.test(header)) return wpHubSessionNote('the Hub page is signed in but cannot read its sign-in (' + Number(count || 0) + ' cookies)');
+    const got = await chrome.storage.local.get(['wp_signin_relay_v1', 'wp_hub_session_sent']);
+    const cfg = got.wp_signin_relay_v1;
+    const base = String(cfg && cfg.url || '').replace(/\/+$/, '');
+    if (!cfg || !cfg.key || !/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/.test(base)) return wpHubSessionNote('no relay settings yet');
+    return wpHubSessionSend(base, cfg, header, got.wp_hub_session_sent || {}, ua, 'from the Hub page');
+}
+// 1.7.529: the box keeps one Live Ops tab open in the background (never brought to the front), so the Hub stays
+// signed in and its page can hand the sign-in over. Opened when missing, after a CRM tab is there.
+async function wpHubTabKeep() {
+    const ua = navigator.userAgent || '';
+    if (!/Linux/.test(ua) || /Android|CrOS/.test(ua)) return;
+    const hub = await chrome.tabs.query({ url: 'https://ops-intelligence-hub.vercel.app/*' });
+    if (hub.length) return;
+    const crm = await chrome.tabs.query({ url: 'https://crm.welcomepickups.com/*' });
+    if (!crm.length) return;
+    await chrome.tabs.create({ url: WP_HUB_LIST_URL, active: false, windowId: crm[0].windowId });
+}
+// 1.7.538: the box keeps one Slack tab open in the background (wp-slack.js reads it for the tablet's Chats tab).
+// Not signed in: Slack shows its sign-in page there; you sign in once through noVNC.
+async function wpSlackTabKeep() {
+    const ua = navigator.userAgent || '';
+    if (!/Linux/.test(ua) || /Android|CrOS/.test(ua)) return;
+    const slack = await chrome.tabs.query({ url: 'https://*.slack.com/*' });
+    // 1.7.542: one Slack tab only (two would both read and reply)
+    const apps = slack.filter((tab) => /^https:\/\/app\.slack\.com\//.test(String(tab.url || '')));
+    if (apps.length > 1) apps.slice(1).forEach((tab) => chrome.tabs.remove(tab.id, () => void chrome.runtime.lastError));
+    if (slack.length) return;
+    const crm = await chrome.tabs.query({ url: 'https://crm.welcomepickups.com/*' });
+    if (!crm.length) return;
+    await chrome.tabs.create({ url: 'https://app.slack.com/client', active: false, windowId: crm[0].windowId });
+}
+try { chrome.alarms.get(WP_HUB_SESSION_ALARM).then((alarm) => { if (!alarm) chrome.alarms.create(WP_HUB_SESSION_ALARM, { delayInMinutes: 0.5, periodInMinutes: 5 }); }); } catch (_) {}
+chrome.alarms.onAlarm.addListener((alarm) => { if (alarm && alarm.name === WP_HUB_SESSION_ALARM) { wpHubTabKeep().catch(() => {}); wpSlackTabKeep().catch(() => {}); wpHubSessionHand().catch((e) => wpHubSessionNote('error: ' + (e && e.message || e))); } });
+setTimeout(() => { wpHubTabKeep().catch(() => {}); wpSlackTabKeep().catch(() => {}); wpHubSessionHand().catch((e) => wpHubSessionNote('error: ' + (e && e.message || e))); }, 15000);
