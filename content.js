@@ -27386,7 +27386,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const who = function(n) { return isHero ? 'hero' + (n === 1 ? '' : 'es') : 'suggested driver' + (n === 1 ? '' : 's'); };
         if (!result || typeof result !== 'object') {
             // the run did not start (another send run going): unmark, next round tries again
-            going.forEach(function(one) { wpAutoSentUnmark(key, one.item.id); });
+            going.forEach(function(one) { wpAutoSentUnmark(key, one.item.id); wpActDone(kind + ':' + one.item.id, false, 'did not start'); }); // 1.7.548
             wpDashLog('wlcm: send to ' + kind + ' · ' + city + ' did not start (another WhatsApp run was going) — nothing sent, tried again next round', 'warn');
             return;
         }
@@ -27395,6 +27395,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const item = one.item;
             const got = one.fit.filter(function(person) { return okPhones[person.phone]; });
             if (!got.length) {
+                wpActDone(kind + ':' + item.id, false, 'WhatsApp did not send to any'); // 1.7.548: free again for the retry
                 // 1.7.464: nobody got it → tried again by itself in 15 min (up to 2 more times)
                 const failKey = kind + ':' + item.id;
                 // 1.7.479: the count and the 15 min wait live in the sent marks (survive the every-minute refresh)
@@ -27408,6 +27409,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 return;
             }
             const note = isHero ? 'sent to heroes' : 'sent to suggested';
+            wpActDone(kind + ':' + item.id, true, 'sent to ' + got.length + ' of ' + one.fit.length); // 1.7.548
             if (isHero) wpAutoHeroesMark(item.id, 'sent'); else wpAutoSuggestedMark(item.id, 'sent');
             wpAutoSendWriteNote(one, note);
             const missed = one.fit.length - got.length;
@@ -27417,6 +27419,7 @@ async function wpTransferAssistantExtensionEnabled() {
     }
     function wpAutoHeroesGo(going, city, by) {
         if (!wpWaReadyOrLog('send to heroes · ' + city)) return; // 1.7.460
+        if (wpActGate('heroes', going, city, by, wpAutoHeroesGo)) return; // 1.7.548: claimed on the relay first
         const hm = wpAutoSendHm;
         const byPhone = {};
         going.forEach(function(one) {
@@ -27791,6 +27794,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // 1.7.433: the sending part of wpAutoSuggestedSweep (after the Yes in Ask me)
     function wpAutoSuggestedGo(going, city, by) {
         if (!wpWaReadyOrLog('send to suggested · ' + city)) return; // 1.7.460
+        if (wpActGate('suggested', going, city, by, wpAutoSuggestedGo)) return; // 1.7.548: claimed on the relay first
         const hm = wpAutoSendHm;
         const byPhone = {};
         going.forEach(function(one) {
@@ -27828,6 +27832,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const list = wpPlanLoad();
         list.push({
             id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), kind: kind, city: city, by: by || 'wlcm', label: label, role: role, at: Date.now(),
+            ep: wpActOn() ? Number((wpLeaseGet() || {}).ep) : null, // 1.7.548
             people: people.map(function(p) { return { name: p.name, phone: p.phone, car: p.car || '', text: p.text }; }),
             idx: 0, tries: 0, ok: {}, notSent: [],
             going: going.map(function(one) {
@@ -27863,6 +27868,13 @@ async function wpTransferAssistantExtensionEnabled() {
             return;
         }
         if (wpPauseAllOn()) return; // waits, nothing sent
+        // 1.7.548: another machine started serving (new lease number) while this plan ran: the rest is not sent from here
+        if (typeof plan.ep === 'number' && plan.ep > 0 && wpActOn() && Number((wpLeaseGet() || {}).ep) !== plan.ep) {
+            wpPlanUpdate(plan.id, function(p) { p.people.slice(p.idx).forEach(function(rest) { p.notSent.push(rest.name + ' (another machine works now)'); }); p.idx = p.people.length; });
+            wpDashLog('WhatsApp · ' + plan.label + ' → stopped: ' + (wpIsMainMachine() ? 'the box' : 'this PC') + ' is not the one working any more (lease ' + plan.ep + ', now ' + Number((wpLeaseGet() || {}).ep) + ')', 'warn');
+            setTimeout(wpPlanTick, 300);
+            return;
+        }
         // 1.7.479: WhatsApp cannot send (not connected / logged out): the plan is closed at once — nothing sent,
         // no note, tried again later by itself — and the next action goes on
         if (!wpWaReady()) {
@@ -29628,14 +29640,16 @@ async function wpTransferAssistantExtensionEnabled() {
             let result = null;
             try { result = JSON.parse(localStorage.getItem('wp_topcancel_result_v1_' + id) || 'null'); } catch (_) {}
             // 1.7.434: the tab did nothing because of Pause all → may be started again after Resume
-            if (result && result.status === 'paused' && Number(result.at) >= Number(sent.at)) { delete state.topCancel[id]; return; }
+            if (result && result.status === 'paused' && Number(result.at) >= Number(sent.at)) { wpActDone('cancel:' + id, false, 'paused'); delete state.topCancel[id]; return; }
             if (result && Number(result.at) >= Number(sent.at)) {
                 sent.result = result.status;
+                wpActDone('cancel:' + id, result.status === 'done', result.status + (result.reason ? ' ' + result.reason : '')); // 1.7.548
                 try { wpSuggestResult(id, result.status === 'done' ? 'done — cancelled (No Available driver)' : result.status === 'skipped' ? 'skipped — ' + (result.reason || '') : 'failed — ' + (result.reason || 'not cancelled')); } catch (_) {}
                 try { if (result.status === 'done') wpRenderTransferHistory(); } catch (_) {}
                 try { wpHistoryAlertPaint(); } catch (_) {}
             } else if (now - Number(sent.at) > 3 * 60000) {
                 sent.result = 'failed';
+                wpActDone('cancel:' + id, false, 'no result in 3 min'); // 1.7.548
                 try { wpSuggestResult(id, 'failed — no result from the transfer tab in 3 min'); } catch (_) {}
                 wpDashLog('wlcm: ' + (sent.label || '#' + id) + ' — the auto-cancel gave no result in 3 min: check that transfer NOW', 'error');
             }
@@ -29716,19 +29730,27 @@ async function wpTransferAssistantExtensionEnabled() {
             }
             if (!wpTopAskReady(item, lim, tbo)) return; // 1.7.482: asked first, 5 min
             state.topCancel[item.id] = { at: now, label: item.label };
-            try {
-                const url = new URL(item.path, window.location.href);
-                url.searchParams.set('wpAutoCancelNoDriver', '1');
-                url.searchParams.set('wpAutoCancelLabel', String(item.label || ''));
-                url.searchParams.set('wpAutoCancelCity', String(item.city || ''));
-                url.searchParams.set('wpAutoCancelAt', String(lim.cancelAt));
-                url.searchParams.set('wpAutoRefresh', 'off');
-                if (typeof wpRememberTransferCity === 'function') wpRememberTransferCity(item.path, item.city);
-                wpExtensionOpenInTab(url.toString(), { active: false, insert: true, setParent: true });
-            } catch (_) {}
-            wpDashLog('wlcm: ' + item.label + ' (' + item.city + ') — ' + lim.kind + ', ' + wpTopHm(tbo) + ' to pickup and still unassigned → auto-cancel "No Available driver" started (the rule above every other rule)', 'warn');
-            try { wpSuggestAdd({ id: item.id, label: item.label, city: item.city, partner: booking ? 'Booking.com' : '', what: 'auto-cancel — No Available driver (' + lim.kind + ' at ' + wpTopHm(tbo) + ' to pickup)', answer: 'Yes', by: 'top rule', final: false, result: '' }); } catch (_) {}
-            try { wpAutoSound('found'); } catch (_) {}
+            // 1.7.548: claimed on the relay first; refused = reported as the transfer tab's result would be
+            // (another machine did / does it: skipped; this machine no longer serves: paused, may start again)
+            const startCancel = function() {
+                try {
+                    const url = new URL(item.path, window.location.href);
+                    url.searchParams.set('wpAutoCancelNoDriver', '1');
+                    url.searchParams.set('wpAutoCancelLabel', String(item.label || ''));
+                    url.searchParams.set('wpAutoCancelCity', String(item.city || ''));
+                    url.searchParams.set('wpAutoCancelAt', String(lim.cancelAt));
+                    url.searchParams.set('wpAutoRefresh', 'off');
+                    if (typeof wpRememberTransferCity === 'function') wpRememberTransferCity(item.path, item.city);
+                    wpExtensionOpenInTab(url.toString(), { active: false, insert: true, setParent: true });
+                } catch (_) {}
+                wpDashLog('wlcm: ' + item.label + ' (' + item.city + ') — ' + lim.kind + ', ' + wpTopHm(tbo) + ' to pickup and still unassigned → auto-cancel "No Available driver" started (the rule above every other rule)', 'warn');
+                try { wpSuggestAdd({ id: item.id, label: item.label, city: item.city, partner: booking ? 'Booking.com' : '', what: 'auto-cancel — No Available driver (' + lim.kind + ' at ' + wpTopHm(tbo) + ' to pickup)', answer: 'Yes', by: 'top rule', final: false, result: '' }); } catch (_) {}
+                try { wpAutoSound('found'); } catch (_) {}
+            };
+            wpActThen('cancel:' + item.id, 'cancel', item.id, startCancel, function(claim) {
+                try { localStorage.setItem('wp_topcancel_result_v1_' + item.id, JSON.stringify({ status: claim.why === 'stale' ? 'paused' : 'skipped', reason: claim.text, at: Date.now() })); } catch (_) {}
+                wpActTell('cancel:' + item.id, 'wlcm: ' + item.label + ' (' + item.city + ') — auto-cancel not started here: ' + claim.text);
+            });
         });
     }
 
@@ -29878,6 +29900,7 @@ async function wpTransferAssistantExtensionEnabled() {
             try { result = JSON.parse(localStorage.getItem('wp_batch_result_v1_' + item.batchId + '_0') || 'null'); } catch (_) {}
             if (result && result.status === 'done') {
                 item.status = 'done';
+                wpActDone(item.actKey, true, 'done'); // 1.7.548
                 try { wpSuggestResult(id, 'done'); } catch (_) {}
                 item.doneAt = now;
                 item.nextAt = now + 5 * 60000;
@@ -29886,12 +29909,14 @@ async function wpTransferAssistantExtensionEnabled() {
             } else if (result && result.status === 'skipped') {
                 item.status = 'skip';
                 item.reason = 'the transfer tab skipped it: ' + (result.reason || '');
+                wpActDone(item.actKey, false, 'skipped'); // 1.7.548
                 try { wpSuggestResult(id, 'skipped — ' + (result.reason || 'by the transfer tab')); } catch (_) {}
                 item.nextAt = now + 10 * 60000;
                 wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — ' + item.reason, 'warn');
             } else if ((result && result.status) || now - Number(item.startedAt) > 3 * 60000) {
                 item.status = 'failed';
                 item.reason = result && result.status ? result.status + ' ' + (result.reason || '') : 'no result from the transfer tab in 3 min';
+                wpActDone(item.actKey, false, item.reason); // 1.7.548
                 try { wpSuggestResult(id, 'failed — ' + item.reason); } catch (_) {}
                 item.nextAt = now + 10 * 60000;
                 state.failures += 1;
@@ -29968,6 +29993,18 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (!plan.final) wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — WhatsApp is ' + wpWaStateText() + ': BC only, no group message · note "sent to BC"', 'warn');
                 else wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — WhatsApp is ' + wpWaStateText() + ': Final BC done in the CRM only, the ' + item.city + ' group message is NOT sent', 'error');
             }
+            // 1.7.548: claimed on the relay first — never twice (same transfer, same price, same step), never from a
+            // machine that no longer serves. Key: final / step + transfer + hash(step, DC price, WhatsApp or not).
+            const actKey = (plan.final ? 'final:' : 'step:') + item.id + ':' + wpActHash(wpAutoPlanKey(startPlan) + '|' + String(data.prices.dc) + '|' + (startPlan.noWa ? 'nowa' : 'wa'));
+            const actClaim = await wpActClaim(actKey, plan.final ? 'final' : 'step', item.id, true);
+            if (!actClaim.go) {
+                item.status = 'skip';
+                item.reason = actClaim.text;
+                item.nextAt = Date.now() + 10 * 60000;
+                wpActTell(actKey, '🤖 wlcm: ' + item.label + ' (' + item.city + ') — not started: ' + actClaim.text);
+                continue;
+            }
+            item.actKey = actKey;
             item.batchId = wpDirectorStart(item.path, item.city, item.label, startPlan, row);
             item.status = 'inflight';
             wpPauseEmSet(item.path, false); // 1.7.502: its next step has gone
@@ -31537,6 +31574,143 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpRemoteCall(path, body) {
         const cfg = wpRemoteConfig();
         return wpExtSend({ type: 'WP_REMOTE', url: cfg.url, key: cfg.key, path: path, body: body || {} });
+    }
+    // ---- 1.7.548: ONE action list on the relay + the leader lease ----
+    // Before wlcm's automations start a step (raise / BC / Final BC), send to heroes or suggested, auto-cancel or run a
+    // City Manager chain, the step is claimed on the relay under a key (kind:transfer[:variant]). The relay refuses a key
+    // that is running or was done (window per kind), and every claim from a machine that no longer serves (its lease
+    // number is old). Taps of yours are recorded there, never refused. Relay not reachable or older: done as before.
+    const WP_LEASE_KEY = 'wp_lease_v1';
+    const WP_ACT_OPEN_KEY = 'wp_act_open_v1';
+    // after done: how long the same key stays refused (ttl); while running: how long a claim holds without a result (hold)
+    const WP_ACT_TTL = { step: 30 * 60000, final: 6 * 3600000, heroes: 24 * 3600000, suggested: 24 * 3600000, cancel: 24 * 3600000, chain: 30 * 60000 };
+    const WP_ACT_HOLD = { heroes: 3 * 3600000, suggested: 3 * 3600000, chain: 30 * 60000 };
+    var wpActUnreachTold = 0;
+    var wpActDownUntil = 0; // the relay did not answer: claims are skipped for 1 min (no 6 s wait on every step)
+    var wpActToldAt = {};
+    // the lease as the relay gave it on the last sync (shared by this browser's CRM tabs); no lease field = an older relay
+    function wpLeaseSet(result) {
+        if (!result || !result.ok) return;
+        const value = result.lease && typeof result.lease === 'object' ? { ep: Math.round(Number(result.lease.ep) || 0), at: Date.now() } : { ep: null, at: Date.now() };
+        try { localStorage.setItem(WP_LEASE_KEY, JSON.stringify(value)); } catch (_) {}
+    }
+    function wpLeaseGet() {
+        try { const value = JSON.parse(localStorage.getItem(WP_LEASE_KEY) || 'null'); return value && typeof value === 'object' ? value : null; } catch (_) { return null; }
+    }
+    function wpActOn() {
+        const lease = wpLeaseGet();
+        return Boolean(lease && typeof lease.ep === 'number' && wpSyncReady());
+    }
+    function wpActHash(text) {
+        let hash = 0x811c9dc5;
+        const value = String(text || '');
+        for (let i = 0; i < value.length; i++) { hash ^= value.charCodeAt(i); hash = Math.imul(hash, 0x01000193) >>> 0; }
+        return hash.toString(36);
+    }
+    function wpActKey(key) { return String(key || '').replace(/[^A-Za-z0-9:._-]/g, '').slice(0, 110); }
+    // claims of this browser still waiting for their result: key -> the claim's time (the relay matches it)
+    function wpActOpen(change) {
+        let map = {};
+        try { map = JSON.parse(localStorage.getItem(WP_ACT_OPEN_KEY) || '{}') || {}; } catch (_) { map = {}; }
+        if (change) {
+            change(map);
+            const now = Date.now();
+            Object.keys(map).forEach(function(key) { if (now - Number(map[key]) > 48 * 3600000) delete map[key]; });
+            try { localStorage.setItem(WP_ACT_OPEN_KEY, JSON.stringify(map)); } catch (_) {}
+        }
+        return map;
+    }
+    function wpActClock(at) { const d = new Date(Number(at) || Date.now()); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+    // -> { go: true } or { go: false, why: 'dup' | 'stale', text }. auto false = a tap of yours (recorded, never refused).
+    async function wpActClaim(key, kind, item, auto) {
+        key = wpActKey(key);
+        if (!wpActOn() || !key) return { go: true, why: 'off' };
+        if (Date.now() < wpActDownUntil) return { go: true, why: 'unreachable' };
+        const lease = wpLeaseGet() || {};
+        const main = wpIsMainMachine();
+        let answer = null;
+        try {
+            answer = await Promise.race([
+                wpRemoteCall('/api/act', { op: 'claim', k: key, kind: kind, item: String(item || ''), ttl: WP_ACT_TTL[kind] || 30 * 60000, hold: WP_ACT_HOLD[kind] || 10 * 60000, auto: auto !== false, force: auto === false, ep: Number(lease.ep) || 0, pc: wpSyncPcId(), m: main ? 'box' : 'pc', by: auto === false ? 'hand' : 'wlcm' }),
+                new Promise(function(resolve) { setTimeout(function() { resolve(null); }, 6000); })
+            ]);
+        } catch (_) { answer = null; }
+        if (answer && answer.ok) {
+            const at = Number(answer.at) || 0;
+            if (at) wpActOpen(function(map) { map[key] = at; });
+            return { go: true, at: at };
+        }
+        if (answer && answer.why === 'dup') {
+            const where = (answer.m === 'box' ? 'the box' : 'the PC') + (answer.by === 'hand' ? ' (by hand)' : '');
+            return { go: false, why: 'dup', text: (answer.st === 'done' ? 'already done by ' + where + ' at ' + wpActClock(answer.up) : 'already being done by ' + where + ' since ' + wpActClock(answer.at)) + ' (action list)' };
+        }
+        if (answer && answer.why === 'stale') {
+            return { go: false, why: 'stale', text: (main ? 'the box' : 'this PC') + ' is not the one working now' + (answer.holder ? ' (the ' + (answer.holder === 'box' ? 'box' : 'PC') + ' is)' : '') + ', nothing done here (lease ' + (Number(lease.ep) || 0) + ', now ' + (Number(answer.ep) || 0) + ')' };
+        }
+        // not reachable, an older background or relay: as before (nothing waits on the list)
+        wpActDownUntil = Date.now() + 60000;
+        if (Date.now() - wpActUnreachTold > 10 * 60000) {
+            wpActUnreachTold = Date.now();
+            wpDashLog('wlcm: the action list on the relay did not answer (' + String(answer && answer.error || 'no answer in 6 s') + ') — going on without it', 'warn');
+        }
+        return { go: true, why: 'unreachable' };
+    }
+    // The step's result: done (its window starts) or failed (free again, for a retry).
+    function wpActDone(key, ok, info) {
+        key = wpActKey(key);
+        const at = key ? Number(wpActOpen()[key]) || 0 : 0;
+        if (!at) return;
+        wpActOpen(function(map) { delete map[key]; });
+        const body = { op: 'done', k: key, at: at, st: ok ? 'done' : 'failed', x: String(info || '').slice(0, 160) };
+        const send = function(tries) {
+            Promise.resolve(wpRemoteCall('/api/act', body)).then(function(answer) {
+                if (!(answer && answer.ok) && tries < 2) setTimeout(function() { send(tries + 1); }, 20000);
+            }).catch(function() {});
+        };
+        send(1);
+    }
+    // a refusal is said once per key per 10 min (the rounds come every 30 s)
+    function wpActTell(key, text) {
+        const now = Date.now();
+        if (now - Number(wpActToldAt[key] || 0) < 10 * 60000) return;
+        wpActToldAt[key] = now;
+        wpDashLog(text, 'warn');
+    }
+    // claim, then go() — or refused(claim). Without the list: go() at once, as before.
+    function wpActThen(key, kind, item, go, refused) {
+        if (!wpActOn()) { go(); return; }
+        wpActClaim(key, kind, item, true).catch(function() { return { go: true, why: 'error' }; }).then(function(claim) {
+            if (claim && claim.go === false) refused(claim); else go();
+        });
+    }
+    // heroes / suggested: each transfer is claimed first; the ones refused are left out of the messages. Returns true when
+    // it took over (again() is called later with the transfers that may go).
+    function wpActGate(kind, going, city, by, again) {
+        if (going.wpActClaimed || !wpActOn()) return false;
+        const sentKey = kind === 'heroes' ? WP_AUTO_HEROES_SENT_KEY : WP_AUTO_SUGGESTED_SENT_KEY;
+        const mark = function(id, what) { if (kind === 'heroes') wpAutoHeroesMark(id, what); else wpAutoSuggestedMark(id, what); };
+        const auto = by === 'wlcm'; // 'you' / 'phone' = your tap: recorded, never refused
+        going.forEach(function(one) { mark(one.item.id, 'sending'); }); // the next rounds leave them alone meanwhile
+        Promise.all(going.map(function(one) {
+            return wpActClaim(kind + ':' + one.item.id, kind, one.item.id, auto).catch(function() { return { go: true }; }).then(function(claim) { return { one: one, claim: claim }; });
+        })).then(function(list) {
+            const left = [];
+            list.forEach(function(entry) {
+                const item = entry.one.item;
+                if (entry.claim.go) { left.push(entry.one); return; }
+                if (entry.claim.why === 'dup') mark(item.id, 'action list: done elsewhere'); else wpAutoSentUnmark(sentKey, item.id);
+                wpActTell(kind + ':' + item.id, 'wlcm: ' + item.label + ' (' + city + ') — send to ' + kind + ' not done here: ' + entry.claim.text);
+            });
+            if (!left.length) return;
+            if (!wpWaReady()) { // WhatsApp went away meanwhile: nothing sent, tried again later
+                left.forEach(function(one) { wpAutoSentUnmark(sentKey, one.item.id); wpActDone(kind + ':' + one.item.id, false, 'WhatsApp not ready'); });
+                wpWaReadyOrLog('send to ' + kind + ' · ' + city);
+                return;
+            }
+            left.wpActClaimed = true;
+            again(left, city, by);
+        }).catch(function(error) { wpDashLog('wlcm: send to ' + kind + ' · ' + city + ' — ' + String(error && error.message || error), 'error'); });
+        return true;
     }
     // 1.7.515: the CRM sign-in handover (1.7.508-514) is gone: the CRM's Cloudflare check refuses non-browser
     // clients, so the relay cannot use it. Kept: which background code runs (status.bgPing, see 1.7.511 / 512).
@@ -33191,6 +33365,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 sendWaChat ? { waChat: wpWaChatPhone } : {},
                 touchedOut ? { touched: touchedOut } : {}, // 1.7.538
                 sendWaList ? { waList: { ok: wpWaUnreadOk, list: wpWaUnreadPhone || [] } } : {})); // 1.7.538
+            try { wpLeaseSet(result); } catch (_) {} // 1.7.548: the leader lease (standby = 0)
             if (result && result.ok && readerOut && wpReaderOut === readerOut) wpReaderOut = null; // 1.7.517
             if (result && result.ok && reader24Out && wpReader24Out === reader24Out) wpReader24Out = null; // 1.7.544
             if (result && result.ok && sendWaList) { wpWaUnreadPhoneSig = waListSig; wpWaUnreadPhonePut = now; } // 1.7.538
@@ -40455,10 +40630,32 @@ async function wpTransferAssistantExtensionEnabled() {
             try { updateSelectionUI(); } catch (_) {}
             const count = selected.size;
             if (!count) return { count: 0, text: '', handsOff: handsOff.length }; // 1.7.538
+            // 1.7.548: each transfer claimed on the relay first; the ones it refuses (chained in the last 30 min, or
+            // this machine no longer serves) are left out
+            const chainKeys = [];
+            if (wpActOn()) {
+                const claims = await Promise.all(Array.from(selected).map(function(index) {
+                    const tid = wpOutcomeId(items[index] && items[index].url);
+                    return (tid ? wpActClaim('chain:' + tid, 'chain', tid, true) : Promise.resolve({ go: true })).catch(function() { return { go: true }; }).then(function(claim) { return { index: index, tid: tid, claim: claim }; });
+                }));
+                const refused = claims.filter(function(entry) { return !entry.claim.go; });
+                claims.forEach(function(entry) { if (entry.claim.go && entry.tid) chainKeys.push('chain:' + entry.tid); });
+                if (refused.length) {
+                    refused.forEach(function(entry) { selected.delete(entry.index); });
+                    Array.from(panel.querySelectorAll('.wp-city-transfer-select')).forEach(function(input) { input.checked = selected.has(Number(input.dataset.wpIndex)); });
+                    try { updateSelectionUI(); } catch (_) {}
+                    wpActTell('chain:' + refused.map(function(entry) { return entry.tid; }).join('-'), 'City Manager' + (popupTitle ? ' ' + popupTitle : '') + ' → chain: ' + refused.length + ' left out — ' + refused[0].claim.text);
+                }
+                if (!selected.size) return { count: 0, text: '', handsOff: handsOff.length };
+            }
             hubChainArmed = true;
             chainHubDown = String(hubDown || '');
+            const chainBefore = String(hubStatus.textContent || '');
             try { await hubChainRun(); } finally { chainHubDown = ''; }
-            return { count: count, text: String(hubStatus.textContent || ''), taken: taken };
+            const chainAfter = String(hubStatus.textContent || '');
+            const chainRan = chainAfter !== chainBefore && /^(?:✓ )?Chain (?:done|stopped)/.test(chainAfter);
+            chainKeys.forEach(function(key) { wpActDone(key, chainRan, chainRan ? 'chain ran' : 'chain did not run'); });
+            return { count: selected.size, text: chainAfter, taken: taken };
         };
         // 1.7.352: the phone's Chain: the transfers ticked there, with its price and note (the PC's boxes are left as they are)
         panel._wpRemoteChain = async function(labels, price, note, ids) {

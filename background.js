@@ -1,5 +1,5 @@
 // 1.7.512: the build of THIS background.js; bump it with the manifest version on every build (wa-panel.js reloads wlcm when it differs)
-const WP_BG_BUILD = '1.7.547';
+const WP_BG_BUILD = '1.7.548';
 
 // ---- WhatsApp Web in the side panel (1.7.282) ----
 // WhatsApp refuses to load inside a frame. For the extension's own side
@@ -554,8 +554,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const base = String(message.url || '').replace(/\/+$/, '');
         const path = String(message.path || '');
         const key = String(message.key || '');
+        // 1.7.548: + /api/act (the action list: claim / done)
         // 1.7.452: + /api/mirror (Sync with the box; 1.7.451 forgot it here, so Sync could not reach the box) and /api/mem (one memory)
-        if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/.test(base) || ['/api/claim', '/api/pair-code', '/api/unpair', '/api/sync', '/api/settings', '/api/mirror', '/api/mem', '/api/boxinfo'].indexOf(path) < 0 || !/^[A-Za-z0-9_-]{32,200}$/.test(key)) {
+        if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(workers\.dev|ts\.net|eserris\.com)(:\d{2,5})?$/.test(base) || ['/api/claim', '/api/pair-code', '/api/unpair', '/api/sync', '/api/settings', '/api/mirror', '/api/mem', '/api/boxinfo', '/api/act'].indexOf(path) < 0 || !/^[A-Za-z0-9_-]{32,200}$/.test(key)) {
             sendResponse({ ok: false, error: 'the relay address or key is not valid' });
             return;
         }
