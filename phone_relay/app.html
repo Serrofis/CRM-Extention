@@ -1951,7 +1951,7 @@ body.dpopen.dpact #dpActs>:not(.dphead){display:none!important}
             swap.addEventListener('click', function() { if (window.matchMedia && window.matchMedia('(min-width:900px)').matches) { closeDetail(); actSig = ''; renderAct(); return; } var on = document.body.classList.toggle('dpact'); swap.textContent = on ? 'Show actions' : 'wlcm activity'; }); /* 1.7.536 */
         }
         // quickbar first, then send + the city's WhatsApp group in one row (wide); phones as before
-        if (cardData.quick) quickPanel(cardData, actsHost);
+        if (cardData.quick) quickPanel(cardData, actsHost, row);
         var sendHost = wide ? el('div', 'dprow', null, actsHost) : actsHost;
         sendPanel({ item: id }, (row.l || '') + ' · ' + (row.c || ''), sendHost); // 1.7.439
         if (Array.isArray(cardData.wa) && cardData.wa.length) { // 1.7.444: the city's WhatsApp group(s)
@@ -2038,7 +2038,7 @@ body.dpopen.dpact #dpActs>:not(.dphead){display:none!important}
         return select;
     }
     // ---- a transfer's quickbar: raise / note + BC, Final BC, Apply, A/C Off ----
-    function quickPanel(card, host) {
+    function quickPanel(card, host, row) {
         var box = el('div', 'card mini', null, host);
         box.style.marginTop = '10px';
         el('div', 'qhead', 'Actions — the quickbar', box).style.margin = '0 0 8px';
@@ -2062,16 +2062,17 @@ body.dpopen.dpact #dpActs>:not(.dphead){display:none!important}
         message.style.minHeight = '18px';
         var grid = el('div', 'grid2', null, box);
         var buttons = [];
-        var press = function(action, label, cls) {
+        var press = function(action, label, cls, want) {
             var button = el('button', cls, label, grid);
             button.type = 'button';
             buttons.push(button);
             button.addEventListener('click', function() {
                 var noteText = note.value === '__custom__' ? String(custom.value || '').trim() : note.value;
                 if (note.value === '__custom__' && !noteText) { message.textContent = 'Type the custom note first.'; message.style.color = '#ff8275'; return; }
-                if (action !== 'acoff' && raise.value === '__amount__' && !raiseValue()) { message.textContent = 'Type the new driver cost first.'; message.style.color = '#ff8275'; return; }
+                if (action !== 'acoff' && action !== 'acset' && raise.value === '__amount__' && !raiseValue()) { message.textContent = 'Type the new driver cost first.'; message.style.color = '#ff8275'; return; }
                 var parts = [label + ' — ' + card.title + ' ' + card.sub];
-                if (action !== 'acoff') {
+                if (action === 'acset') parts.push(want === 'on' ? 'Turns AutoCancel ON in the CRM (and takes it off the A/C Off list).' : 'Turns AutoCancel OFF in the CRM. Not put on the A/C Off list.');
+                else if (action !== 'acoff') {
                     if (raise.value) parts.push('Raise: ' + (raise.value === '__amount__' ? 'driver cost to ' + raiseValue().slice(4) + '€' : raise.options[raise.selectedIndex].textContent));
                     if (noteText) parts.push('Note: ' + noteText);
                     if (action === 'apply' && !raise.value && !noteText) parts.push('(no raise and no note: only the EM tag, if it has no tag)');
@@ -2080,7 +2081,7 @@ body.dpopen.dpact #dpActs>:not(.dphead){display:none!important}
                     if (!ok) return;
                     buttons.forEach(function(other) { other.disabled = true; });
                     message.textContent = '';
-                    call('/api/command', 'POST', { type: 'quick', item: card.id, action: action, raise: raiseValue(), note: note.value, custom: custom.value }).then(function(result) {
+                    call('/api/command', 'POST', { type: 'quick', item: card.id, action: action, want: want || '', raise: raiseValue(), note: note.value, custom: custom.value }).then(function(result) {
                         if (result.ok) track(card.sub, label + ' · ' + card.title);
                         else toast('Not sent — ' + label, 'bad', result.error || 'no connection', 9000);
                         setTimeout(function() { buttons.forEach(function(other) { other.disabled = false; }); }, result.ok ? 6000 : 500);
@@ -2092,6 +2093,8 @@ body.dpopen.dpact #dpActs>:not(.dphead){display:none!important}
         press('final', 'Final BC', 'final');
         press('apply', 'Apply', '');
         press('acoff', 'A/C Off', 'green');
+        var acIsOff = Boolean(row && row.ao === 1); /* 1.7.552: A/C On / Off switch, never the A/C Off list */
+        press('acset', acIsOff ? 'A/C On' : 'A/C Off · no list', acIsOff ? 'green' : '', acIsOff ? 'on' : 'off');
     }
 
     // ---- City Manager ----

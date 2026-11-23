@@ -11055,12 +11055,56 @@ async function wpTransferAssistantExtensionEnabled() {
             try { (wpGetAcOffWatch() || []).forEach(function(watch) { const wid = wpOutcomeId(watch && watch.url); if (wid) wpAcOffIdSet.add(String(wid)); }); } catch (_) {}
             wpAcOffIdSetAt = Date.now();
         }
-        if (id && wpAcOffIdSet.has(String(id))) return true;
+        // 1.7.552: the quickbar's A/C On/Off (not on the A/C Off list): what you set wins until a newer read
+        let manual = null;
+        try { manual = id ? (JSON.parse(localStorage.getItem(WP_AC_SET_KEY) || '{}') || {})[String(id)] : null; } catch (_) {}
+        if (id && wpAcOffIdSet.has(String(id)) && !(manual && manual.on)) return true;
         let at = 0, off = false;
         try { const entry = wpRowCrmLoad()[path]; if (entry && entry.ao !== undefined) { at = Number(entry.at) || 0; off = entry.ao === 1; } } catch (_) {}
-        try { const cached = WP_CRM_DETAILS_CACHE.get(path); if (cached && cached.data && typeof cached.data.acOn === 'boolean' && Number(cached.at) > at) off = cached.data.acOn === false; } catch (_) {}
+        try { const cached = WP_CRM_DETAILS_CACHE.get(path); if (cached && cached.data && typeof cached.data.acOn === 'boolean' && Number(cached.at) > at) { off = cached.data.acOn === false; at = Number(cached.at) || at; } } catch (_) {}
+        if (manual && Number(manual.at) > at) off = !manual.on;
         return off;
     }
+    // 1.7.552: A/C On/Off from the quickbar (PC and tablet): turns AutoCancel on or off in the CRM
+    // (background transfer tab, ?wpQuickAcSet=on|off). Never puts the transfer on the A/C Off list;
+    // turning it ON also takes it off that list.
+    var WP_AC_SET_KEY = 'wp_ac_set_v1';
+    function wpQuickAcSet(path, on, city, who) {
+        const id = wpOutcomeId(path);
+        if (!id) return false;
+        try {
+            const all = JSON.parse(localStorage.getItem(WP_AC_SET_KEY) || '{}') || {};
+            Object.keys(all).forEach(function(key) { if (Date.now() - Number(all[key] && all[key].at || 0) > 86400000) delete all[key]; });
+            all[String(id)] = { on: Boolean(on), at: Date.now() };
+            localStorage.setItem(WP_AC_SET_KEY, JSON.stringify(all));
+        } catch (_) {}
+        if (on) {
+            try {
+                const items = wpGetAcOffWatch() || [];
+                const left = items.filter(function(watch) { return String(wpOutcomeId(watch && watch.url)) !== String(id); });
+                if (left.length !== items.length) { wpSaveAcOffWatch(left); try { wpRenderAcOffWatch(); } catch (_) {} }
+            } catch (_) {}
+        }
+        wpAcOffIdSet = null;
+        try {
+            const url = new URL(path, window.location.href);
+            url.searchParams.set('wpQuickAcSet', on ? 'on' : 'off');
+            url.searchParams.set('wpAutoRefresh', 'off');
+            try { if (city) wpRememberTransferCity(path, city); } catch (_) {}
+            wpExtensionOpenInTab(url.toString(), { active: false, insert: true, setParent: true });
+        } catch (error) {
+            wpDashLog((who || '') + '#' + id + ' — A/C ' + (on ? 'On' : 'Off') + ' NOT done: ' + String(error && error.message || error), 'error');
+            return false;
+        }
+        wpDashLog((who || '') + '#' + id + (city ? ' (' + city + ')' : '') + ' — AutoCancel ' + (on ? 'ON' : 'OFF') + ': CRM tab opened' + (on ? '' : ' (not put on the A/C Off list)'));
+        try { wpWorkedMark(id, true, 'A/C ' + (on ? 'On' : 'Off')); } catch (_) {}
+        try { document.querySelectorAll('table.transfers tr').forEach(function(tr) { if (String(wpOutcomeId(wpRowCrmPath(tr))) === String(id)) setAutoCancelState(tr); }); } catch (_) {}
+        return true;
+    }
+    function wpAcSetOnByYou(id) {
+        try { const entry = (JSON.parse(localStorage.getItem(WP_AC_SET_KEY) || '{}') || {})[String(id)]; return Boolean(entry && entry.on && Date.now() - Number(entry.at) < 12 * 3600000); } catch (_) { return false; }
+    }
+    var wpAcSetBulk = null; // the direction of your own click, used for the other ticked rows
     function setAutoCancelState(row) {
 
         const autoCancelCell =
@@ -12156,6 +12200,21 @@ async function wpTransferAssistantExtensionEnabled() {
         Object.assign(finalBroadcast.style,{background:'#4a0b10',color:'#ffc2c2',borderColor:'#4a0b10'});
         acOff.classList.add('wp-quick-acoff');
         Object.assign(acOff.style,{color:'#6fd16f',borderColor:'rgba(111,209,111,.5)'});
+        // 1.7.552: A/C On/Off: a plain switch — AutoCancel OFF here is NOT put on the A/C Off list; ON takes it off the list.
+        // Off now → it turns it ON; on now → OFF. Ticked rows follow your click's direction.
+        const acSetWant=function(){ if(wpAcSetBulk&&Date.now()-wpAcSetBulk.at<120000) return wpAcSetBulk.on; let off=false; try{off=wpRowAcOff(row);}catch(_){} return off; };
+        const acSet=button('A/C On/Off','Turn AutoCancel ON or OFF in the CRM (background tab). OFF is not put on the A/C Off list.',function(){
+            if(!transferUrl)return;
+            const on=acSetWant();
+            wpQuickAcSet(transferUrl, on, cityText(), 'wlcm · you: ');
+            try{ if(typeof row.__wpAfterOpen==='function') row.__wpAfterOpen('', false); }catch(_){}
+            acSetPaint();
+            closeBar();
+        });
+        acSet.classList.add('wp-quick-acset');
+        acSet.addEventListener('click',function(e){ if(e.isTrusted){ let off=false; try{off=wpRowAcOff(row);}catch(_){} wpAcSetBulk={on:off,at:Date.now()}; } },true);
+        function acSetPaint(){ let off=false; try{off=wpRowAcOff(row);}catch(_){} acSet.title=off?'AutoCancel is OFF here: press to turn it ON (also leaves the A/C Off list)':'AutoCancel is ON here: press to turn it OFF (not put on the A/C Off list)'; Object.assign(acSet.style,off?{color:'#2fbf71',borderColor:'rgba(47,191,113,.6)'}:{color:'#ffd27a',borderColor:'rgba(255,210,122,.45)'}); }
+        acSetPaint();
         const acOffGap=document.createElement('span');
         Object.assign(acOffGap.style,{display:'inline-block',width:'14px',flex:'0 0 14px'});
 
@@ -12252,10 +12311,12 @@ async function wpTransferAssistantExtensionEnabled() {
         bar.appendChild(apply);
         bar.appendChild(acOffGap);
         bar.appendChild(acOff);
+        bar.appendChild(acSet); // 1.7.552
         document.documentElement.appendChild(bar);
 
         function positionBar(){
             if(bar.style.display==='none')return;
+            try{acSetPaint();}catch(_){} // 1.7.552
             // Opened from the Dispatch view: anchor to that row's order number.
             const viewAnchor=orderCell.__wpViewAnchor&&document.body.contains(orderCell.__wpViewAnchor)&&document.body.classList.contains('wp-dv-page')?orderCell.__wpViewAnchor:null;
             const r=(viewAnchor||orderCell).getBoundingClientRect(), b=bar.getBoundingClientRect(), gap=7;
@@ -29870,7 +29931,8 @@ async function wpTransferAssistantExtensionEnabled() {
         const later = function(ms) { return now + (untilFinal !== null ? Math.max(60000, Math.min(ms, untilFinal)) : ms); };
         if (plan.skip) {
             if (item.reason !== plan.skip) {
-                wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — ' + (extra.finalMode ? '⏰ Final BC time, but nothing to do: ' : 'nothing to do: ') + plan.skip, extra.finalMode ? 'warn' : undefined);
+                const nextLook = extra.finalSent ? now + 12 * 3600000 : later(10 * 60000);
+                wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + ') — ' + (extra.finalMode ? '⏰ Final BC time, but nothing to do: ' : item.cameIn ? 'new, seen, nothing to do now: ' : 'nothing to do: ') + plan.skip + (extra.finalSent ? '' : ' — looks again at ' + wpActClock(nextLook)), extra.finalMode ? 'warn' : undefined); // 1.7.552: when it looks again
             }
             item.status = 'skip';
             item.reason = plan.skip;
@@ -30154,6 +30216,7 @@ async function wpTransferAssistantExtensionEnabled() {
             // 1.7.291: a "final BC" note → its AutoCancel is left on (it auto-cancels)
             if (wpAutoHasFinalNote(entry.row, item)) return;
             if (watched.has(item.id) || state.acOffSent[item.id]) return;
+            if (wpAcSetOnByYou(item.id)) return; // 1.7.552: you turned AutoCancel ON with the quickbar → wlcm leaves it on (12 h)
             if (wpRuleExceptionFor('acoff', item.city)) return;
             if (wpAutoTboHot(entry.row)) return;
             let minutes = null;
@@ -30297,6 +30360,26 @@ async function wpTransferAssistantExtensionEnabled() {
         else if (status.mode !== 'off' && !wpWaReady()) out.push({ id: 'wn' + (wl ? wl.at : new Date().toISOString().slice(0, 10)), t: 'WhatsApp is NOT connected on the ' + (wpIsMainMachine() ? 'box' : 'PC'), x: 'WhatsApp is ' + wpWaStateText() + '. wlcm sends nothing (heroes, suggested, BC and group) until it is connected.' });
         return out.slice(-5);
     }
+    // 1.7.552 (Evan, 23 Nov): an activity line for a transfer wlcm has seen but not worked on yet, and why.
+    // Read transfers already get their own line (suggests / nothing to do now / you are working on it / 3 min pause).
+    // Here: the ones still unread (waiting their turn, or wlcm paused). One line per transfer and reason;
+    // the first look at a whole list is one summary line.
+    function wpAutoSeenTell(state, entries, paused) {
+        const waiting = entries.filter(function(entry) { return entry.item.status === 'new' && !(entry.item.newPause && /pause/.test(String(entry.item.reason || ''))); });
+        if (!waiting.length) return;
+        const why = paused ? 'wlcm is paused (' + String(wpAutoPaused() || 'Pause') + ') — nothing is done until it goes on again' : 'waiting its turn to be read: ' + waiting.length + ' in line, Final BC / no tag / nearest pickup first (up to 12 every 30 s)';
+        const kind = paused ? 'paused' : 'line';
+        const fresh = waiting.filter(function(entry) { return entry.item.seenTold !== kind; });
+        if (!fresh.length) return;
+        fresh.forEach(function(entry) { entry.item.seenTold = kind; });
+        if (fresh.length > 5 || fresh.some(function(entry) { return !entry.item.cameIn; })) { wpDashLog('🤖 wlcm: ' + fresh.length + ' transfers seen, not worked on yet — ' + why); return; }
+        fresh.forEach(function(entry) {
+            const item = entry.item;
+            const tbo = entry.timing && Number.isFinite(entry.timing.tbo) ? ', ' + wpAutoSendHm(entry.timing.tbo) + ' to pickup' : '';
+            wpDashLog('🤖 wlcm: ' + item.label + ' (' + item.city + tbo + ') — seen, not worked on yet: ' + why);
+        });
+    }
+
     async function wpAutoTick(reason) {
         if (wpAutoTicking || wpIsTransferDetailPage()) return;
         const mode = wpAutoMode();
@@ -30435,6 +30518,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     item = state.items[id] = {
                         // 1.7.484: newPause — it appeared while wlcm was already watching the list (not the first look)
                         newPause: Boolean(state.listSeenAt && now - Number(state.listSeenAt) < 10 * 60000),
+                        cameIn: Boolean(state.listSeenAt && now - Number(state.listSeenAt) < 10 * 60000), // 1.7.552: came in while wlcm watched
                         id: id, path: path, city: city, status: 'new', nextAt: 0, firstSeen: now, fresh: true,
                         label: (link ? String(link.textContent || '').trim() : '') || ('#' + id)
                     };
@@ -30531,6 +30615,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 }
                 if (state.misses >= 3) { wpAutoPause('the CRM is not answering (logged out?)'); state.misses = 0; }
             }
+            try { wpAutoSeenTell(state, entries, paused); } catch (_) {} // 1.7.552
 
             // 5. Start what you approved; 6. A/C re-enables.
             if (mode === 'ask' && !wpAutoPaused()) await wpAutoRunApproved(state);
@@ -32174,6 +32259,7 @@ async function wpTransferAssistantExtensionEnabled() {
     }
     // Every 10 s on the machine that works: new transfers first (A/C Off), then the notes of the rest, from the
     // top of each list down (3 reads a round; each transfer read again after 10 min)
+    var wpDayToldTouch = {}, wpDayToldRead = {}; // 1.7.552: said once per transfer
     async function wpDayTick() {
         if (wpDayBusy || wpRemoteStandby || !wpPreloadOn()) return;
         try { if (wpPauseAllOn()) return; } catch (_) {}
@@ -32191,6 +32277,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     const id = String(row.id);
                     // new = not in any list before (a move from 2-4 days to Tomorrow is not new); the first read only learns the list
                     if (!seen[id] && !first && wpDayOn(day)) fresh.push({ row: row, day: day });
+                    else if (!seen[id] && !first) wpDashLog('🤖 wlcm · ' + (day === 'later' ? '2-4 days' : 'Tomorrow') + ': ' + String(row.l || '#' + id) + ' ' + String(row.c || '') + ' — new, seen; ' + (day === 'later' ? '2-4 days' : 'Tomorrow') + ' is Off, so nothing is done until you turn it on'); // 1.7.552
                     if (!seen[id] || now - Number(seen[id]) > 3600000) seen[id] = now;
                     if (!wpDayOn(day)) return;
                     const e = map[id];
@@ -32206,17 +32293,22 @@ async function wpTransferAssistantExtensionEnabled() {
                 const id = String(w.row.id);
                 if (w.fresh) {
                     const touched = wpUserTouchedAt(id);
-                    if (touched && Date.now() - touched < WP_TOUCH_LEAVE_MS) { delete seen[id]; wpDaySave(WP_DAY_SEEN_KEY, seen); continue; } // by hand: looked at again next round
+                    if (touched && Date.now() - touched < WP_TOUCH_LEAVE_MS) {
+                        if (!wpDayToldTouch[id]) { wpDayToldTouch[id] = 1; wpDashLog('🤖 wlcm · ' + (w.day === 'later' ? '2-4 days' : 'Tomorrow') + ': ' + String(w.row.l || '#' + id) + ' ' + String(w.row.c || '') + ' — new, seen; you are working on it, so wlcm waits until ' + wpActClock(touched + WP_TOUCH_LEAVE_MS)); } // 1.7.552
+                        delete seen[id]; wpDaySave(WP_DAY_SEEN_KEY, seen); continue;
+                    } // by hand: looked at again next round
                 }
                 let data = null;
                 try { data = await wpFetchTransferCrmDetails('/admin/transfers/' + id, true); } catch (_) {}
+                if (!data && w.fresh && !wpDayToldRead[id]) { wpDayToldRead[id] = 1; wpDashLog('🤖 wlcm · ' + (w.day === 'later' ? '2-4 days' : 'Tomorrow') + ': ' + String(w.row.l || '#' + id) + ' ' + String(w.row.c || '') + ' — new, seen; its CRM page could not be read yet, tried again in 10 s', 'warn'); } // 1.7.552
                 if (!data) { if (w.fresh) { const s2 = wpDayLoad(WP_DAY_SEEN_KEY); delete s2[id]; wpDaySave(WP_DAY_SEEN_KEY, s2); } continue; } // not readable: tried again
                 if (w.fresh) { try { const r = await wpDayAcOff(w.row, w.day, data); if (r === 'hub' || r === 'crm' || r === 'off') map[id] = Object.assign(map[id] || {}, { ac: Date.now() }); } catch (_) {} }
                 const st = wpDayStepFromData(data);
                 const before = map[id] && map[id].st;
                 map[id] = Object.assign(map[id] || {}, { st: st === null ? '?' : st, at: Date.now(), d: w.day });
                 if (before !== map[id].st) wpDayDirty[w.day] = true;
-                if (w.fresh && st) wpDashLog('🤖 wlcm · ' + (w.day === 'later' ? '2-4 days' : 'Tomorrow') + ': ' + String(w.row.l || '#' + id) + ' ' + String(w.row.c || '') + ' — new, needs ' + (st === 'chain' ? 'the whole chain (no notes yet)' : 'BC & Group') + (wpDayModes && wpDayModes[w.day] === 'full' ? ': Full auto runs it' : ': asked on the tablet'));
+                if (w.fresh && st === '') wpDashLog('🤖 wlcm · ' + (w.day === 'later' ? '2-4 days' : 'Tomorrow') + ': ' + String(w.row.l || '#' + id) + ' ' + String(w.row.c || '') + ' — new, seen; ' + (data.cancelled ? 'cancelled' : data.assigned ? 'assigned' : 'every step is already in its notes') + ', nothing to do'); // 1.7.552
+                if (w.fresh && st) wpDashLog('🤖 wlcm · ' + (w.day === 'later' ? '2-4 days' : 'Tomorrow') + ': ' + String(w.row.l || '#' + id) + ' ' + String(w.row.c || '') + ' — new, needs ' + (st === 'chain' ? 'the whole chain (no notes yet)' : 'BC & Group') + (wpDayModes && wpDayModes[w.day] === 'full' ? ': Full auto runs it in the relay\'s next round (city by city, top of the list first)' : ': waits for your answer on the tablet (Ask me card)'));
             }
             wpDaySave(WP_DAY_ST_KEY, map);
             // a changed step reaches the relay at once (the list itself is read every 1 / 5 min)
@@ -32635,6 +32727,15 @@ async function wpTransferAssistantExtensionEnabled() {
     }
     function wpRemoteQuick(command) {
         const found = wpRemoteRowFor(command.item);
+        if (command.action === 'acset') { // 1.7.552: tablet A/C On / Off (never the A/C Off list)
+            let path = '', city = '';
+            try { path = found ? (found.row.dataset && found.row.dataset.wpCrmPath || wpRowCrmPath(found.row)) : ''; } catch (_) {}
+            if (!path && /^\d+$/.test(String(command.item || ''))) path = '/admin/transfers/' + command.item;
+            try { const cell = found ? getCityCell(found.row) : null; city = cell ? wpNormalizeDetailText(cell.textContent) : ''; } catch (_) {}
+            if (!path) { wpDashLog('📱 Phone: A/C On/Off — that transfer is not found — nothing done', 'warn'); return; }
+            wpQuickAcSet(path, command.want === 'on', city, command.by === 'relay' ? '🔁 Relay: ' : '📱 Phone: ');
+            return;
+        }
         if (found && typeof found.row.__wpQuickBar !== 'function') { try { wpSetupOrderQuickActions(found.row); } catch (_) {} } // 1.7.549: a background 2-4 days row gets its quickbar first
         const api = found && typeof found.row.__wpQuickBar === 'function' ? found.row.__wpQuickBar() : null;
         const bar = api && api.bar;
@@ -35733,7 +35834,8 @@ async function wpTransferAssistantExtensionEnabled() {
                 'wpAutoEnableAc',
                 'wpAcWatchId',
                 'wpAutoSaveAfterAcEnable',
-                'wpQuickAcOff'
+                'wpQuickAcOff',
+                'wpQuickAcSet'
             ].forEach(function(key) {
                 cleanUrl.searchParams.delete(key);
             });
@@ -47619,10 +47721,14 @@ async function wpTransferAssistantExtensionEnabled() {
     // here so it works in a background tab: no helper tab and no alert()
     // (an alert in a background tab blocks until the operator visits it).
     // Progress and failures go to the debug panel instead.
-    if (params.get('wpQuickAcOff') === '1') {
+    // 1.7.552: ?wpQuickAcSet=on|off = the quickbar's A/C On/Off: the same steps, but never the A/C Off list
+    // (on: tick AutoCancel and take it off that list).
+    const wpAcSetMode = /^(on|off)$/.test(String(params.get('wpQuickAcSet') || '')) ? params.get('wpQuickAcSet') : '';
+    if (params.get('wpQuickAcOff') === '1' || wpAcSetMode) {
         try {
             const cleanParams = new URLSearchParams(location.search);
             cleanParams.delete('wpQuickAcOff');
+            cleanParams.delete('wpQuickAcSet');
             history.replaceState(
                 history.state,
                 document.title,
@@ -47630,8 +47736,9 @@ async function wpTransferAssistantExtensionEnabled() {
             );
         } catch (_) {}
 
+        const wantOn = wpAcSetMode === 'on';
         const runQuickAcOff = async function() {
-            wpStep('Quick A/C Off started');
+            wpStep(wpAcSetMode ? 'Quick A/C ' + (wantOn ? 'On' : 'Off') + ' started (not the A/C Off list)' : 'Quick A/C Off started');
 
             const checkbox = await waitFor(function() {
                 return typeof window.wpFindAutoCancelCheckbox === 'function'
@@ -47650,7 +47757,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 return;
             }
 
-            if (typeof window.wpTransferHasAutoCancelThresholdWarning === 'function' &&
+            if (!wantOn && typeof window.wpTransferHasAutoCancelThresholdWarning === 'function' &&
                 window.wpTransferHasAutoCancelThresholdWarning()) {
                 wpStep('Auto-cancellation Threshold warning on this ride → A/C left ON, nothing changed', true);
                 await wpCloseThisTabWhenDone();
@@ -47677,9 +47784,21 @@ async function wpTransferAssistantExtensionEnabled() {
             let minutes = parseMinutes();
 
             // Intentional disable: no "AutoCancel is OFF" leave warning.
-            try { sessionStorage.setItem('wp_ac_off_intent_v1:' + location.pathname, '1'); } catch (_) {}
+            if (!wantOn) { try { sessionStorage.setItem('wp_ac_off_intent_v1:' + location.pathname, '1'); } catch (_) {} }
 
-            if (checkbox.checked) {
+            if (wantOn) {
+                if (!checkbox.checked) {
+                    checkbox.click();
+                    const onNow = await waitFor(function() {
+                        const current = window.wpFindAutoCancelCheckbox();
+                        return current && current.checked ? true : null;
+                    }, 5000, 150);
+                    if (!onNow) { wpDiag('A/C On: AutoCancel did not tick'); return; }
+                    wpStep('AutoCancel ticked');
+                } else {
+                    wpStep('AutoCancel was already ON');
+                }
+            } else if (checkbox.checked) {
                 checkbox.click();
                 const off = await waitFor(function() {
                     const current = window.wpFindAutoCancelCheckbox();
@@ -47723,9 +47842,29 @@ async function wpTransferAssistantExtensionEnabled() {
                 try {
                     const freshResponse = await fetch(location.pathname, { credentials: 'same-origin', cache: 'no-store' });
                     const freshBox = freshResponse.ok ? new DOMParser().parseFromString(await freshResponse.text(), 'text/html').getElementById('transfer_autocancel_enabled') : null;
-                    acKept = freshBox ? !freshBox.hasAttribute('checked') : null;
+                    acKept = freshBox ? (wantOn ? freshBox.hasAttribute('checked') : !freshBox.hasAttribute('checked')) : null;
                 } catch (_) { acKept = null; }
                 if (acKept) break;
+            }
+            if (acKept === false && wpAcSetMode) {
+                wpDiag('A/C ' + (wantOn ? 'On' : 'Off') + ': Save was pressed but the CRM still has AutoCancel ' + (wantOn ? 'OFF' : 'ON'), 'set it by hand');
+                try { wpTellDashboard('✗ wlcm: A/C ' + (wantOn ? 'On' : 'Off') + ' NOT kept by the CRM on ' + location.pathname.replace(/\D+/g, ' ').trim() + ' — set it by hand'); } catch (_) {}
+                return;
+            }
+            if (wpAcSetMode) {
+                // 1.7.552: plain switch: never the A/C Off list; ON takes it off that list
+                if (acKept) wpStep('✓ CRM shows AutoCancel ' + (wantOn ? 'ON' : 'OFF') + (wantOn ? '' : ' (not put on the A/C Off list)'));
+                if (wantOn) {
+                    try {
+                        const here = window.wpTodayCityCanonicalUrl(window.wpCleanTransferWorkflowUrl(window.location.href));
+                        const items = window.wpGetAcOffWatch();
+                        const left = items.filter(function(item) { return window.wpTodayCityCanonicalUrl(item.url) !== here; });
+                        if (left.length !== items.length) { window.wpSaveAcOffWatch(left); wpStep('Taken off the A/C Off list'); }
+                    } catch (_) {}
+                }
+                try { wpTellDashboard('✓ wlcm: AutoCancel ' + (wantOn ? 'ON' : 'OFF') + ' on ' + location.pathname.replace(/\D+/g, ' ').trim() + (acKept ? '' : ' (saved; the CRM did not confirm it yet)')); } catch (_) {}
+                await wpCloseThisTabWhenDone();
+                return;
             }
             if (acKept === false) {
                 wpDiag('A/C Off: Save was pressed but the CRM still has AutoCancel ON', 'turn it off by hand');
