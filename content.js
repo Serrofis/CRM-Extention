@@ -32049,12 +32049,15 @@ async function wpTransferAssistantExtensionEnabled() {
         if (data.cancelled || data.assigned) return '';
         const tasks = Array.isArray(data.tasks) ? data.tasks : [];
         if (!tasks.length) return 'chain';
+        // 1.7.550: untagged = no EM tag (user, 23 Nov: "you have to see [EM] missing to count as untagged"); a note like
+        // "passenger called" alone no longer counts as tagged. EM = a note "em" (as wlcm / the quickbar write it) or a task labelled EM.
+        const hasEm = tasks.some(function(task) { return /^\s*em\b/i.test(String(task && task.note || '')) || /^\s*em\s*$/i.test(String(task && task.label || '')); });
         const done = tasks.some(function(task) {
             const text = String(task && task.note || '').replace(/\s+/g, ' ');
             if (/\bBC\b[^\n]*?\b(?:group|grp)\b/i.test(text) || /\bBC\s*(?:&|and|,|\/|\+)\s*G\b/i.test(text)) return true; // Today's BC & Group test (wpDetectTransferTag)
             try { const tag = wpDetectTransferTag(text); return Boolean(tag && ['final', 'hero', 'suggested'].indexOf(tag.type) >= 0); } catch (_) { return false; }
         });
-        return done ? '' : 'bcg';
+        return done ? '' : hasEm ? 'bcg' : 'chain'; // 1.7.550: BC & Group already there = nothing, even without EM
     }
     function wpDayStamp(out, day) {
         if (!out || !Array.isArray(out.rows)) return out;

@@ -229,3 +229,6 @@ The user has a tight budget. Keep replies short, read only the code you need (gr
 - Relay rautoTick: groups by day + city + step from the top of the list down (Tomorrow first); '' never asked; a done step asked again after 30 min if the notes still lack it (was: once per transfer for 3 days). Older box (no st): untagged = chain, as before. Answer cm / chain carries step; Ask me card says which step.
 - wpRemoteCmChain (relay, with step): notes read fresh again, only the ones that still need that step go; each booked on the action list (chain:<id> / bcg:<id>), done / failed after the run. bcg = the same Hub chain without Tag (noTag); acKeep (wlcm turned A/C off when it came in) = no Remove / Enable Auto-C, A/C stays off. CRM fallback (quickbar BC & Group, note "sent to BC and Group") now also finds the background 2-4 days rows (wpRemoteRowFor; quickbar set up on demand). Notes always in the CRM. No raises / Final BC / heroes / suggested on these days.
 
+
+## 1.7.550
+- Tomorrow / 2-4 days: untagged = no EM tag (a note "em" or a task labelled EM), not "no notes at all" (user, 23 Nov). A transfer with only other notes ("passenger called") gets the whole chain; EM + other notes = BC & Group; a BC & Group / suggested / hero / final note = nothing (even without EM). Today keeps its own rule (untagged = no notes, user 14 Nov, 1.7.441).
