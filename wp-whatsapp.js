@@ -841,6 +841,28 @@
         return { first: first, last: last, fields: fields };
     }
     // Fills the open contact form and presses Save. '' = pressed.
+    // 1.7.562: what the contact panel / form offers when an expected button is missing (labels and icon names only,
+    // never message text) — the side panel is narrow and WhatsApp may draw these differently there
+    function panelButtonsSeen() {
+        try {
+            const seen = [];
+            Array.from(document.querySelectorAll('button, [role="button"], [data-icon]'))
+                .filter(function(el) { return !el.closest('#side') && !el.closest('#main footer') && !el.closest('#main [data-id]'); })
+                .forEach(function(el) {
+                    const t = String(el.getAttribute('aria-label') || el.getAttribute('data-icon') || el.getAttribute('title') || el.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 28);
+                    if (t && seen.indexOf(t) < 0) seen.push(t);
+                });
+            return seen.slice(0, 18).join(' | ');
+        } catch (_) { return ''; }
+    }
+    // 1.7.562: the person has written to you in this chat before (an incoming message) = not a stranger
+    function chatHasIncoming() {
+        try {
+            return Array.from(document.querySelectorAll('#main [data-id]')).some(function(el) {
+                return /^false_/.test(String(el.getAttribute('data-id') || '')) || Boolean(el.closest('.message-in') || el.querySelector('.message-in'));
+            });
+        } catch (_) { return false; }
+    }
     async function fillContactForm(first, last) {
         const found = await waitFor(function() { const form = nameFields(); return form.fields.length ? form : null; }, 6000);
         if (!found) return 'the contact form did not open';
@@ -854,8 +876,16 @@
         if (lastField && !(await setFieldText(lastField, last))) return 'the city / car type could not be typed into Last name';
         await sleep(500);
         // 1.7.292: WhatsApp Business calls it "Save contact" (shown once a name is typed)
-        const save = await waitFor(function() { return findClickable(document, /^save( contact)?$/i); }, 4000);
-        if (!save) return 'no Save button in the contact form';
+        let save = await waitFor(function() { return findClickable(document, /^save( contact)?$/i); }, 4000);
+        if (!save) {
+            // 1.7.562: the narrow side panel — scroll the form down and look again (icon-only buttons included)
+            try { (lastField || firstField).scrollIntoView({ block: 'end' }); } catch (_) {}
+            try { Array.from(document.querySelectorAll('div')).filter(function(el) { return el.scrollHeight > el.clientHeight + 20 && el.contains(firstField); }).forEach(function(el) { el.scrollTop = el.scrollHeight; }); } catch (_) {}
+            await sleep(400);
+            save = findClickable(document, /^(save( contact)?|done|wds-ic-checkmark.*|ic-checkmark.*|checkmark)$/i);
+            if (!save) { const icon = document.querySelector('[data-icon="checkmark"], [data-icon="wds-ic-checkmark"], [data-icon="check"]'); if (icon && !icon.closest('#main') && !icon.closest('#side')) save = icon.closest('button, [role="button"]') || icon; }
+        }
+        if (!save) return 'no Save button in the contact form (seen: ' + panelButtonsSeen() + ')';
         clickEl(save);
         return '';
     }
@@ -936,7 +966,7 @@
             if (header) clickEl(header.querySelector('[role="button"]') || header);
             add = await waitFor(function() { return findClickable(document, /^(add to contacts|add contact|save contact|add)$/i); }, 6000);
         }
-        if (!add) { closeSidePanel(); return 'no "Add to contacts" option found'; }
+        if (!add) { const seen = panelButtonsSeen(); closeSidePanel(); return 'no "Add to contacts" option found (seen: ' + seen + ')'; } // 1.7.562: what was there
         clickEl(add);
         const problem = await fillContactForm(first, last);
         if (problem) { closeSidePanel(); return problem; }
@@ -1277,8 +1307,14 @@
                     // 1.7.559: never a message to a number that is not a saved contact (WhatsApp blocked the account) —
                     // was "sending anyway" (1.7.281). The usual retry (15 min, 3 tries) tries saving again.
                     if (job.contactOnly) { report(job, false, '+' + job.phone + ': could not save as "' + wantedName + '" (' + addProblem + ')'); return; }
+                    // 1.7.562: someone who has written to you before is not a stranger: the message still goes
+                    if (chatHasIncoming()) {
+                        contactNote = ' (not saved as a contact: ' + addProblem + ' — they have written to you before, so it was sent)';
+                        progress(job, 'could not save +' + job.phone + ' (' + addProblem + ') — they wrote to you before: sending');
+                    } else {
                     report(job, false, 'could not save +' + job.phone + ' as a contact' + (wantedName ? ' "' + wantedName + '"' : '') + ' (' + addProblem + ') — nothing sent (only saved contacts get messages)');
                     return;
+                    }
                 } else {
                     await savedPersonRemember(job.phone); // 1.7.559
                     contactTitle = headerTitle().trim();
