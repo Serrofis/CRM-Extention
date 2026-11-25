@@ -16798,6 +16798,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // One hero at a time through WhatsApp Web. A hero who is not a saved
     // contact is saved first (1.7.281: no pause — when saving does not
     // work the message still goes to that number and the Terminal says so).
+    // 1.7.553: not any more — not saved = nothing sent (WhatsApp blocked the account).
     var wpWhatsAppWaiters = {};
     var wpHeroRunActive = false;
     var wpSendToPeopleBusy = false; // 1.7.470

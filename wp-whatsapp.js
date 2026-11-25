@@ -1128,10 +1128,11 @@
                     addProblem = await addContact(first || wantedName, first ? last : '');
                 }
                 if (addProblem) {
-                    // 1.7.281: not waiting for you — the chat is this number, so the message still goes
+                    // 1.7.553: never a message to a number that is not a saved contact (user, 25 Nov: WhatsApp blocked
+                    // the account; messages to unsaved numbers are the likely cause) — was: "sending anyway" (1.7.281)
                     if (job.contactOnly) { report(job, false, '+' + job.phone + ': could not save as "' + wantedName + '" (' + addProblem + ')'); return; }
-                    contactNote = ' (not saved as a contact: ' + addProblem + ' — save it as "' + wantedName + '" by hand)';
-                    progress(job, 'could not save +' + job.phone + ' as "' + wantedName + '" (' + addProblem + ') — sending anyway');
+                    report(job, false, 'could not save +' + job.phone + ' as a contact' + (wantedName ? ' "' + wantedName + '"' : '') + ' (' + addProblem + ') — nothing sent (only saved contacts get messages)');
+                    return;
                 } else {
                     contactTitle = headerTitle().trim();
                     progress(job, 'added "' + contactTitle + '" to your contacts');
