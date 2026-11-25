@@ -19069,7 +19069,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (pill) pill.style.display = state.collapsed ? 'inline-flex' : 'none';
         if (!state.collapsed && panel) {
             const log = panel.querySelector('.wpdt-log');
-            log.scrollTop = 0; // 1.7.571: newest is at the top now (was the bottom)
+            log.scrollTop = log.scrollHeight; // 1.7.572: newest at the bottom again
             try { wpTermActSoon(); } catch (_) {} // 1.7.571: drawn now if lines came while minimised
         }
         wpDashRefreshStatus();
@@ -19507,35 +19507,41 @@ async function wpTransferAssistantExtensionEnabled() {
                 const fresh = [];
                 for (let i = all.length - 1; i >= 0 && Number(all[i].at) > log.__actNewest; i--) fresh.push(all[i]);
                 if (fresh.length < 40) {
+                    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40; // 1.7.572: follows only if you were at the bottom
                     const frag = document.createDocumentFragment();
-                    fresh.forEach(function(entry) { try { wpTermActRow(frag, entry, entry.r ? [] : rowsOf()); } catch (_) {} });
-                    log.insertBefore(frag, log.firstChild);
+                    fresh.reverse().forEach(function(entry) { try { wpTermActRow(frag, entry, entry.r ? [] : rowsOf()); } catch (_) {} });
+                    log.appendChild(frag); // 1.7.572 (user, 25 Nov: "latest update at the bottom. no autoscrolling up")
+                    if (atBottom) log.scrollTop = log.scrollHeight;
                     log.__actNewest = newest; log.__actCount = all.length;
                     return;
                 }
             }
             log.__actDirty = false; log.__actNewest = newest; log.__actCount = all.length; log.__actDay = today;
             const keepTop = log.scrollTop;
+            const wasBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+            const oldHeight = log.scrollHeight;
             const frag = document.createDocumentFragment();
-            let lastDay = '';
-            all.slice(-shown).reverse().forEach(function(entry) {
-                const when = new Date(Number(entry.at));
-                const day = when.toDateString();
-                if (day !== lastDay && day !== today) { const d = document.createElement('div'); d.className = 'wpdt-line is-act is-day'; d.textContent = when.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }); frag.appendChild(d); }
-                lastDay = day;
-                try { wpTermActRow(frag, entry, entry.r ? [] : rowsOf()); } catch (_) {}
-            });
-            if (all.length > shown) {
+            if (all.length > shown) { // 1.7.572: older lines are above
                 const more = document.createElement('div');
                 more.className = 'wpdt-line wpdt-more';
                 more.textContent = 'Show older (' + (all.length - shown) + ' more)';
-                more.addEventListener('click', function(event) { event.stopPropagation(); log.__actShown = shown + 150; wpTermActRender(true); });
+                more.addEventListener('click', function(event) { event.stopPropagation(); log.__actShown = shown + 150; log.__actOlder = true; wpTermActRender(true); });
                 frag.appendChild(more);
             }
+            let lastDay = '';
+            all.slice(-shown).forEach(function(entry) { // 1.7.572: oldest first, newest at the bottom
+                const when = new Date(Number(entry.at));
+                const day = when.toDateString();
+                if (day !== lastDay) { const d = document.createElement('div'); d.className = 'wpdt-line is-act is-day'; d.textContent = day === today ? 'Today' : when.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }); frag.appendChild(d); }
+                lastDay = day;
+                try { wpTermActRow(frag, entry, entry.r ? [] : rowsOf()); } catch (_) {}
+            });
             if (!all.length) { const empty = document.createElement('div'); empty.className = 'wpdt-line is-act'; empty.textContent = 'No wlcm activity yet.'; frag.appendChild(empty); }
             log.textContent = '';
             log.appendChild(frag);
-            log.scrollTop = log.__actShownOnce ? keepTop : 0; // newest at the top
+            // 1.7.572: first time / you were at the bottom → the bottom (newest); Show older → stays on the same lines; else where you were
+            if (log.__actOlder) { log.scrollTop = keepTop + (log.scrollHeight - oldHeight); log.__actOlder = false; }
+            else log.scrollTop = !log.__actShownOnce || wasBottom ? log.scrollHeight : keepTop;
             log.__actShownOnce = true;
             return;
         }
