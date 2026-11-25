@@ -840,16 +840,327 @@
         const last = fields.find(function(el) { return /last\s*name|surname/.test(fieldLabel(el)); }) || null;
         return { first: first, last: last, fields: fields };
     }
+    // ---- 1.7.566: the contact panel and the contact forms as WhatsApp draws them now ----
+    // (user, 25 Nov: "check why whatsapp is not adding and sending to suggested and heroes"). The activity said
+    // 'no "Add to contacts" option found (seen: WhatsApp | Contact info | Add to list | Video call | Voice call | Search)'
+    // and earlier 'no Save button in the contact form': WhatsApp (Business) draws icon-only buttons as
+    // <svg><title>wds-ic-…</title> with no data-icon and often no label (1.7.424 saw it in the chat list), so the
+    // panel's add-contact / Edit / Close icons and the form's checkmark were never recognised (nor listed in "seen"),
+    // and a plain click on the header's first button does not always open the contact info (1.7.506). Now: icon names
+    // come from the svg titles too; the contact info is opened by its labelled button, the name, the picture, the
+    // first button or the chat menu, with a mouse-like click; when it has no Add / Edit, the number is saved through
+    // New chat → New contact (country and phone box checked before Save); "saved" = WhatsApp's contact list says so
+    // or the chat now shows the name. A click that opens any other form is backed out of (never typed into / saved).
+    function shownEl(el) {
+        try { return Boolean(el) && (el.offsetParent !== null || el.getClientRects().length > 0); } catch (_) { return false; }
+    }
+    function iconNamesOf(el) {
+        const names = [];
+        try {
+            const own = el.getAttribute && el.getAttribute('data-icon');
+            if (own) names.push(own);
+            Array.from(el.querySelectorAll('[data-icon], title')).forEach(function(node) {
+                const v = String(node.tagName || '').toLowerCase() === 'title' ? node.textContent : node.getAttribute('data-icon');
+                if (v && String(v).trim()) names.push(String(v).trim());
+            });
+        } catch (_) {}
+        return names.join(' ');
+    }
+    function textOf(el) {
+        return String((el && (el.innerText || el.textContent)) || '').replace(/\b(?:wds-)?ic-[a-z0-9-]+/g, '').replace(/\s+/g, ' ').trim();
+    }
+    function labelOf(el) {
+        return String((el && el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'))) || '').replace(/\s+/g, ' ').trim();
+    }
+    // the panel around `seed` (a drawer / form beside the chat): its biggest box that holds neither the chat nor the chat list
+    function panelAround(seed) {
+        let box = seed, top = seed;
+        for (let i = 0; i < 16 && box && box !== document.body; i++, box = box.parentElement) {
+            if (box.id === 'main' || box.id === 'side' || box.querySelector('#main') || box.querySelector('#side')) break;
+            top = box;
+        }
+        return top;
+    }
+    // a mouse-like click (pointer + mouse events at the element's middle, primary button)
+    function clickReal(el) {
+        if (!el) return;
+        try { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
+        let x = 0, y = 0;
+        try { const r = el.getBoundingClientRect(); x = Math.round(r.left + r.width / 2); y = Math.round(r.top + r.height / 2); } catch (_) {}
+        const P = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+        const fire = function(type, Ctor, extra) {
+            const init = Object.assign({ bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, screenX: x, screenY: y, button: 0 }, extra || {});
+            if (Ctor === P && P !== MouseEvent) Object.assign(init, { pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1 });
+            try { el.dispatchEvent(new Ctor(type, init)); } catch (_) {}
+        };
+        fire('pointerover', P, { buttons: 0 });
+        fire('mouseover', MouseEvent, { buttons: 0 });
+        fire('pointerdown', P, { buttons: 1 });
+        fire('mousedown', MouseEvent, { buttons: 1, detail: 1 });
+        try { if (typeof el.focus === 'function') el.focus({ preventScroll: true }); } catch (_) {}
+        fire('pointerup', P, { buttons: 0 });
+        fire('mouseup', MouseEvent, { buttons: 0, detail: 1 });
+        fire('click', MouseEvent, { buttons: 0, detail: 1 });
+    }
+    function pressEscape() {
+        [document.activeElement, document].forEach(function(target) {
+            try { if (target) target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true })); } catch (_) {}
+        });
+    }
+    const INFO_TITLE = /^(contact info|business info|contact details|business details)$/i;
+    // the open contact info panel (titled "Contact info" / "Business info"), or null
+    function infoPanel() {
+        try {
+            const title = Array.from(document.querySelectorAll('h1, h2, h3, span, div')).find(function(el) {
+                return el.childElementCount === 0 && !el.closest('#side') && !el.closest('#main header') && !el.closest('#main footer') &&
+                    INFO_TITLE.test(String(el.textContent || '').replace(/\s+/g, ' ').trim()) && shownEl(el);
+            });
+            return title ? panelAround(title) : null;
+        } catch (_) { return null; }
+    }
+    const ADD_WORDS = /^(add to contacts|add contact|add new contact|new contact|save contact|save to contacts|create contact|add)$/i;
+    const ADD_WORDS_STRICT = /^(add to contacts|add contact|add new contact|save contact|save to contacts|create contact)$/i;
+    const ADD_ICON = /(person|contact|user|people)[-_]?(add|plus)|(add|plus)[-_]?(person|contact|user)/i;
+    const EDIT_WORDS = /^edit( contact)?$/i;
+    const EDIT_ICON = /(^|[-_\s])(edit|pencil)([-_\s]|$)/i;
+    const NEVER_PRESS = /delete|block|report|clear|exit|leave|remove|mute|archive|unfollow|disappearing|favou?rite|list|label|share|export|call|search|media|starred|encrypt|wallpaper|notification|discard/i;
+    // the first shown button in `root` named by `words` (its label or its own text) or drawn with an icon named by `icons`
+    function actionIn(root, words, icons) {
+        if (!root) return null;
+        const skip = function(el) { return Boolean(el.closest('#side') || el.closest('#main header') || el.closest('#main footer') || el.closest('#main [data-id]') || el.closest('[role="switch"], [role="checkbox"], input[type="checkbox"]')); };
+        const pressable = function(el) { return el.closest('button, [role="button"], [role="menuitem"], [role="option"], li, [tabindex="0"]') || el; };
+        const safe = function(el) { const p = pressable(el); return NEVER_PRESS.test(labelOf(p) + ' ' + textOf(p).slice(0, 60)) ? null : p; };
+        try {
+            const nodes = Array.from(root.querySelectorAll('button, [role="button"], [role="menuitem"], [aria-label], [title], span, div, li'));
+            for (let i = 0; i < nodes.length; i++) {
+                const el = nodes[i];
+                if (skip(el) || !shownEl(el)) continue;
+                const label = labelOf(el);
+                const own = (el.childElementCount === 0 || /^(button|li)$/i.test(el.tagName) || el.getAttribute('role') === 'button') ? textOf(el) : '';
+                if ((label && words.test(label)) || (own && words.test(own))) { const p = safe(el); if (p) return p; }
+            }
+            if (icons) {
+                const marks = Array.from(root.querySelectorAll('[data-icon], svg'));
+                for (let i = 0; i < marks.length; i++) {
+                    const el = marks[i];
+                    if (skip(el) || !shownEl(el)) continue;
+                    const name = String(el.tagName || '').toLowerCase() === 'svg' ? iconNamesOf(el) : String(el.getAttribute('data-icon') || '');
+                    if (name && icons.test(name)) { const p = safe(el); if (p) return p; }
+                }
+            }
+        } catch (_) {}
+        return null;
+    }
+    // the ways to open the contact info, in order: its labelled button, the name, the picture, the header's first button
+    function infoOpeners() {
+        const header = document.querySelector('#main header');
+        if (!header) return [];
+        const out = [];
+        const add = function(el) { if (el && out.indexOf(el) < 0) out.push(el); };
+        Array.from(header.querySelectorAll('[aria-label], [title]')).forEach(function(el) {
+            if (/^(contact info|business info|profile details|contact details|business details|details)$/i.test(labelOf(el)) && shownEl(el)) add(el.closest('button, [role="button"]') || el);
+        });
+        const name = Array.from(header.querySelectorAll('span[dir="auto"], span[title]')).find(function(el) {
+            const t = String(el.textContent || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+            return t && !isHeaderNoise(t) && shownEl(el);
+        });
+        if (name) { add(name); add(name.closest('button, [role="button"]')); }
+        const img = header.querySelector('img');
+        if (img) add(img.closest('button, [role="button"]') || img);
+        add(header.querySelector('[role="button"]'));
+        return out.filter(Boolean);
+    }
+    // the chat menu (three dots) → "Contact info" / "Business info"
+    async function openInfoByMenu() {
+        const header = document.querySelector('#main header');
+        if (!header) return false;
+        const menu = Array.from(header.querySelectorAll('[aria-label], [title], [data-icon], svg')).find(function(el) {
+            const name = String(el.tagName || '').toLowerCase() === 'svg' ? iconNamesOf(el) : String(el.getAttribute('data-icon') || '');
+            return shownEl(el) && (/^(menu|more options)$/i.test(labelOf(el)) || /(^|[-_\s])(menu|more|more-vert|kebab|dots)([-_\s]|$)/i.test(name));
+        });
+        if (!menu) return false;
+        clickReal(menu.closest('button, [role="button"]') || menu);
+        const item = await waitFor(function() {
+            return Array.from(document.querySelectorAll('[role="menuitem"], [role="button"], li, span, div')).find(function(el) {
+                return el.childElementCount <= 3 && !el.closest('#main header') && !el.closest('#side') && shownEl(el) && /^(contact info|business info|view contact)$/i.test(textOf(el));
+            }) || null;
+        }, 2500);
+        if (!item) { pressEscape(); return false; }
+        clickReal(item.closest('[role="menuitem"], [role="button"], li') || item);
+        return true;
+    }
+    // the open form is a contact form (First / Last name, a phone box, a +NN country) — not a list name, a search, …
+    function looksLikeContactForm(form) {
+        try {
+            if (form.fields.some(function(el) { return /first\s*name|last\s*name|surname/.test(fieldLabel(el)); })) return true;
+            const root = panelAround(form.fields[0]);
+            if (root.querySelector('input[type="tel"]')) return true;
+            if (Array.from(root.querySelectorAll('span, div, button')).some(function(el) { return el.childElementCount === 0 && shownEl(el) && /^(?:[A-Z]{2}\s*)?\+\d{1,4}$/.test(String(el.textContent || '').replace(/\s+/g, ' ').trim()); })) return true;
+            return /phone( number)?|already in your contacts/i.test(String(root.innerText || '').slice(0, 3000));
+        } catch (_) { return false; }
+    }
+    // the country calling code of an international number (E.164 codes never start one another: 1 / 7, the
+    // two-digit ones below, all others three digits)
+    const TWO_DIGIT_CODES = ' 20 27 30 31 32 33 34 36 39 40 41 43 44 45 46 47 48 49 51 52 53 54 55 56 57 58 60 61 62 63 64 65 66 81 82 84 86 90 91 92 93 94 95 98 ';
+    function callingCode(digits) {
+        const d = String(digits || '').replace(/\D/g, '');
+        if (d.length < 8) return '';
+        if (/^[17]/.test(d)) return d[0];
+        if (TWO_DIGIT_CODES.indexOf(' ' + d.slice(0, 2) + ' ') >= 0) return d.slice(0, 2);
+        return d.slice(0, 3);
+    }
+    function formCountryCode(root) {
+        try {
+            const el = Array.from(root.querySelectorAll('span, div, button')).find(function(node) {
+                return node.childElementCount === 0 && shownEl(node) && /^(?:[A-Z]{2}\s*)?\+\d{1,4}$/.test(String(node.textContent || '').replace(/\s+/g, ' ').trim());
+            });
+            const m = el ? String(el.textContent).match(/\+(\d{1,4})/) : null;
+            return m ? { code: m[1], el: el } : null;
+        } catch (_) { return null; }
+    }
+    function phoneFieldIn(root) {
+        const all = Array.from(root.querySelectorAll('input, div[contenteditable="true"]')).filter(shownEl);
+        return all.find(function(el) { return String(el.type || '').toLowerCase() === 'tel'; }) ||
+            all.find(function(el) { const label = fieldLabel(el); return /phone|number|mobile/.test(label) && !/search|first|last|name/.test(label); }) || null;
+    }
+    async function setPhoneText(field, text) {
+        if (field.tagName === 'INPUT') {
+            field.focus();
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(field, '');
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            setter.call(field, text);
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            field.dispatchEvent(new Event('change', { bubbles: true }));
+            await sleep(300);
+            return String(field.value || '').replace(/\D/g, '');
+        }
+        await setFieldText(field, text);
+        await sleep(300);
+        return String(field.textContent || '').replace(/\D/g, '');
+    }
+    // the form's country set to +code (its list, searched by the code); true = the form shows +code
+    async function chooseCountry(root, code) {
+        const now = formCountryCode(root);
+        if (!now) return false;
+        if (now.code === code) return true;
+        const picker = now.el.closest('button, [role="button"], [role="combobox"], [tabindex]') || now.el;
+        clickReal(picker);
+        await sleep(500);
+        const search = await waitFor(function() {
+            return Array.from(document.querySelectorAll('input, div[contenteditable="true"]')).find(function(el) {
+                return shownEl(el) && !el.closest('#side') && !el.closest('#main') && /search|country/i.test(fieldLabel(el) + ' ' + String(el.getAttribute('placeholder') || ''));
+            }) || null;
+        }, 1500);
+        const codeMark = new RegExp('\\+' + code + '(?!\\d)');
+        const findItem = function() {
+            return Array.from(document.querySelectorAll('[role="option"], [role="listitem"], [role="button"], li, div[tabindex], button')).find(function(el) {
+                if (!shownEl(el) || el.closest('#side') || el.closest('#main') || el === picker || el.contains(picker) || picker.contains(el)) return false;
+                const t = textOf(el);
+                return t.length < 60 && codeMark.test(t);
+            }) || null;
+        };
+        let item = findItem();
+        if (!item && search) {
+            for (const text of ['+' + code, code]) {
+                if (search.tagName === 'INPUT') {
+                    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    search.focus(); setter.call(search, text); search.dispatchEvent(new Event('input', { bubbles: true }));
+                } else { await setFieldText(search, text); }
+                item = await waitFor(findItem, 1500);
+                if (item) break;
+            }
+        }
+        if (!item) { pressEscape(); await sleep(300); return false; }
+        clickReal(item);
+        await sleep(500);
+        const after = formCountryCode(root);
+        return Boolean(after && after.code === code);
+    }
+    // back out of the left panel (New chat / New contact) to the chat list; "Discard" if it asks
+    async function leaveLeftDrawer() {
+        for (let i = 0; i < 3; i++) {
+            const discard = findClickable(document, /^discard( changes)?$/i);
+            if (discard && !discard.closest('#main')) { clickReal(discard); await sleep(400); continue; }
+            const back = Array.from(document.querySelectorAll('[aria-label], [data-icon], svg')).find(function(el) {
+                if (el.closest('#main') || el.closest('#side') || !shownEl(el)) return false;
+                const name = String(el.tagName || '').toLowerCase() === 'svg' ? iconNamesOf(el) : String(el.getAttribute('data-icon') || '');
+                return /^back$/i.test(labelOf(el)) || /(^|[-_\s])(back|arrow-back|back-light|back-refreshed)([-_\s]|$)/i.test(name);
+            });
+            if (!back) return;
+            clickReal(back.closest('button, [role="button"]') || back);
+            await sleep(500);
+        }
+    }
+    // New chat → New contact: the number typed in (country checked), then the names and Save (fillContactForm).
+    // '' = Save pressed, ALREADY_SAVED = WhatsApp says it is a contact, else what went wrong (nothing saved).
+    async function addViaNewContact(first, last, phone) {
+        const digits = String(phone || '').replace(/\D/g, '');
+        const code = callingCode(digits);
+        if (!code) return 'New contact: the number is too short';
+        const newChat = Array.from(document.querySelectorAll('[aria-label], [title], [data-icon], svg')).find(function(el) {
+            if (el.closest('#main') || !shownEl(el)) return false;
+            const name = String(el.tagName || '').toLowerCase() === 'svg' ? iconNamesOf(el) : String(el.getAttribute('data-icon') || '');
+            return /^new chat$/i.test(labelOf(el)) || /(^|[-_\s])new[-_]?chat|chat[-_]?new|chat[-_]?(add|plus)/i.test(name);
+        });
+        if (!newChat) return 'New contact: no "New chat" button';
+        clickReal(newChat.closest('button, [role="button"]') || newChat);
+        const item = await waitFor(function() {
+            return Array.from(document.querySelectorAll('[role="button"], [role="listitem"], [role="option"], button, li, div[tabindex], span, div')).find(function(el) {
+                return el.childElementCount <= 4 && !el.closest('#main') && shownEl(el) && /^new contact$/i.test(textOf(el));
+            }) || null;
+        }, 4000);
+        if (!item) { await leaveLeftDrawer(); return 'New contact: no "New contact" in New chat'; }
+        clickReal(item.closest('[role="button"], [role="listitem"], [role="option"], button, li, div[tabindex]') || item);
+        const form = await waitFor(function() { const f = nameFields(); return f.fields.length ? f : null; }, 5000);
+        if (!form) { await leaveLeftDrawer(); return 'New contact: the form did not open'; }
+        await sleep(300);
+        const root = panelAround(form.fields[0]);
+        const phoneBox = phoneFieldIn(root);
+        if (!phoneBox) { const seen = panelButtonsSeen(root); await leaveLeftDrawer(); return 'New contact: no phone box (seen: ' + seen + ')'; }
+        if (!(await chooseCountry(root, code))) {
+            const c = formCountryCode(root);
+            await leaveLeftDrawer();
+            return 'New contact: the form\'s country is +' + (c ? c.code : '?') + ' and could not be set to +' + code;
+        }
+        const typed = await setPhoneText(phoneBox, digits.slice(code.length));
+        const cc = formCountryCode(root);
+        if (typed.slice(-9) !== digits.slice(-9) || !cc || cc.code !== code) {
+            await leaveLeftDrawer();
+            return 'New contact: the form shows +' + (cc ? cc.code : '?') + ' …' + typed.slice(-3) + ', not +' + code + ' …' + digits.slice(-3) + ' (not saved)';
+        }
+        const problem = await fillContactForm(first, last);
+        await sleep(800);
+        await leaveLeftDrawer();
+        return problem ? (problem === ALREADY_SAVED ? ALREADY_SAVED : 'New contact: ' + problem) : '';
+    }
+    // after Save: WhatsApp's contact list says saved, or the chat shows the new name (not a number, not a "~" profile name)
+    async function savedNow(phone, first, last) {
+        const startedAt = Date.now();
+        const want = norm((String(first || '') + ' ' + String(last || '')).trim());
+        const wantFirst = norm(first);
+        while (Date.now() - startedAt < 12000) {
+            const store = await storeSavedState(phone);
+            if (store.saved === true) return 'list';
+            const title = headerTitle().trim();
+            if (title && !/^~/.test(title) && !isPhoneTitle(title) && !composerPhoneDigits() && (norm(title) === want || (wantFirst && norm(title).indexOf(wantFirst) === 0))) return 'name';
+            await sleep(700);
+        }
+        return '';
+    }
     // Fills the open contact form and presses Save. '' = pressed.
     // 1.7.562: what the contact panel / form offers when an expected button is missing (labels and icon names only,
     // never message text) — the side panel is narrow and WhatsApp may draw these differently there
-    function panelButtonsSeen() {
+    function panelButtonsSeen(root) {
         try {
             const seen = [];
-            Array.from(document.querySelectorAll('button, [role="button"], [data-icon]'))
+            Array.from((root || document).querySelectorAll('button, [role="button"], [data-icon]'))
                 .filter(function(el) { return !el.closest('#side') && !el.closest('#main footer') && !el.closest('#main [data-id]'); })
                 .forEach(function(el) {
-                    let t = String(el.getAttribute('aria-label') || el.getAttribute('data-icon') || el.getAttribute('title') || el.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 28);
+                    let t = String(el.getAttribute('aria-label') || el.getAttribute('title') || String(el.innerText || '').replace(/\b(?:wds-)?ic-[a-z0-9-]+/g, '') || '').replace(/\s+/g, ' ').trim();
+                    // 1.7.566: an icon-only button by its icon's name (data-icon or <svg><title>), e.g. "icon person-add"
+                    if (!t) { const icon = iconNamesOf(el).split(' ')[0] || ''; if (icon) t = 'icon ' + icon.replace(/^(?:wds-)?ic-/, ''); }
+                    t = t.slice(0, 28);
                     // 1.7.564: WhatsApp's left menu filled the whole list (the activity line is cut at its end)
                     if (/^(chats|calls|status|channels|communities|tools|advertise|media|settings|profile|meta ai|archived|starred( messages)?|new chat|menu|lists)$/i.test(t)) return;
                     if (t && (el.disabled || el.getAttribute('aria-disabled') === 'true')) t += ' (off)';
@@ -871,6 +1182,8 @@
         if (!found) return 'the contact form did not open';
         await sleep(300);
         const form = nameFields();
+        // 1.7.566: only a contact form is typed into and saved (a click may have opened another one: a list name, a search)
+        if (!form.fields.length || !looksLikeContactForm(form)) { const seen = form.fields.length ? panelButtonsSeen(panelAround(form.fields[0])) : ''; pressEscape(); return 'the contact form did not open (another form' + (seen ? ': ' + seen : '') + ')'; }
         const firstField = form.first || form.fields.find(function(el) { return !/phone|number|search/.test(fieldLabel(el)); }) || null;
         if (!firstField) return 'no name field in the contact form';
         const lastField = form.last && form.last !== firstField ? form.last : null;
@@ -932,7 +1245,8 @@
             const byWord = shown.find(function(el) {
                 return word.test(clean(el.getAttribute('aria-label') || el.getAttribute('title'))) || (!el.children.length && word.test(clean(el.textContent)));
             });
-            const byIcon = byWord ? null : shown.find(function(el) { return /(^|-)(checkmark|check|done)(-|$)/i.test(String(el.getAttribute('data-icon') || '')); });
+            // 1.7.566: + icons drawn as <svg><title>wds-ic-checkmark</title> (no data-icon)
+            const byIcon = byWord ? null : shown.find(function(el) { return /(^|-)(checkmark|check|done)(-|$)/i.test(String(el.getAttribute('data-icon') || '') || (String(el.tagName || '').toLowerCase() === 'svg' ? iconNamesOf(el) : '')); });
             const form = field.closest('form');
             const submit = form ? form.querySelector('button[type="submit"]') : null;
             const hit = byWord || byIcon || submit;
@@ -956,8 +1270,10 @@
     }
     function closeSidePanel() {
         try {
-            const close = Array.from(document.querySelectorAll('[aria-label="Close"], [data-icon="x"], [data-icon="close"], [data-icon="x-alt"]'))
+            let close = Array.from(document.querySelectorAll('[aria-label="Close"], [data-icon="x"], [data-icon="close"], [data-icon="x-alt"]'))
                 .find(function(el) { return !el.closest('#main footer') && !el.closest('#side'); });
+            // 1.7.566: the contact info's own close icon drawn as <svg><title>…x / close…</title>
+            if (!close) { const panel = infoPanel(); if (panel) close = Array.from(panel.querySelectorAll('svg')).find(function(svg) { return shownEl(svg) && /(^|[-_\s])(x|close|x-alt|x-refreshed|close-refreshed)([-_\s]|$)/i.test(iconNamesOf(svg)); }) || null; }
             if (close) clickEl(close.closest('button, [role="button"]') || close);
             else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         } catch (_) {}
@@ -1022,26 +1338,57 @@
         await closeSidePanelAndWait();
         return state;
     }
-    async function addContact(first, last) {
-        const addPattern = /^(add|add to contacts|add contact|save contact)$/i;
-        let add = findClickable(document.querySelector('#main'), addPattern);
-        if (!add) {
-            // Contact info panel (click the chat header).
-            const header = document.querySelector('#main header');
-            if (header) clickEl(header.querySelector('[role="button"]') || header);
-            add = await waitFor(function() { return findClickable(document, /^(add to contacts|add contact|save contact|add)$/i); }, 6000);
+    // 1.7.566: three ways, in order: the chat's own "Add" (a number that wrote to you), the contact info's Add /
+    // add-contact icon (else its Edit), New chat → New contact with the number. '' = saved (proven), else why not.
+    async function addContact(first, last, phone) {
+        const problems = [];
+        const proven = async function(how) {
+            const proof = await savedNow(phone, first, last);
+            await closeSidePanelAndWait();
+            return proof ? '' : how + ': Save was pressed but WhatsApp does not show it as a saved contact yet';
+        };
+        const chatAdd = findClickable(document.querySelector('#main'), /^(add|add to contacts|add contact|save contact)$/i);
+        if (chatAdd && !chatAdd.closest('#main footer')) {
+            clickEl(chatAdd);
+            const r = await fillContactForm(first, last);
+            if (r === ALREADY_SAVED) { await closeSidePanelAndWait(); return ''; }
+            if (!r) return proven('chat Add');
+            problems.push('chat Add: ' + r);
+            closeSidePanel();
+            await leaveLeftDrawer();
+            await sleep(400);
         }
-        if (!add) { const seen = panelButtonsSeen(); closeSidePanel(); return 'no "Add to contacts" option found (seen: ' + seen + ')'; } // 1.7.562: what was there
-        clickEl(add);
-        const problem = await fillContactForm(first, last);
-        if (problem === ALREADY_SAVED) { await closeSidePanelAndWait(); return ''; } // 1.7.563: it was saved already
-        if (problem) { closeSidePanel(); return problem; }
-        const saved = await waitFor(function() {
-            const title = headerTitle().trim();
-            return title && !isPhoneTitle(title) && !composerPhoneDigits(); // 1.7.506: Business names too
-        }, 12000);
-        try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); } catch (_) {}
-        return saved ? '' : 'the chat still shows the number after saving';
+        let panel = infoPanel();
+        if (!panel) {
+            const openers = infoOpeners();
+            for (let i = 0; i < openers.length && !panel; i++) { clickReal(openers[i]); panel = await waitFor(infoPanel, 2500); }
+            if (!panel && (await openInfoByMenu())) panel = await waitFor(infoPanel, 3000);
+        }
+        let btn = null;
+        if (panel) {
+            await sleep(500); // its icons are drawn
+            btn = actionIn(panel, ADD_WORDS, ADD_ICON) || actionIn(panel, EDIT_WORDS, EDIT_ICON);
+        } else {
+            btn = actionIn(document.body, ADD_WORDS_STRICT, ADD_ICON); // the panel's title not found: Add-contact anywhere beside the chat
+        }
+        if (btn) {
+            const what = labelOf(btn) || textOf(btn).slice(0, 24) || (iconNamesOf(btn).split(' ')[0] || 'icon').replace(/^(?:wds-)?ic-/, 'icon ');
+            clickReal(btn);
+            const r = await fillContactForm(first, last);
+            if (r === ALREADY_SAVED) { await closeSidePanelAndWait(); return ''; }
+            if (!r) return proven('contact info "' + what + '"');
+            problems.push('contact info "' + what + '": ' + r);
+            closeSidePanel();
+            await leaveLeftDrawer();
+        } else {
+            problems.push(panel ? 'the contact info has no Add / Edit (seen: ' + panelButtonsSeen(panel) + ')' : 'the contact info did not open (seen: ' + panelButtonsSeen() + ')');
+        }
+        await closeSidePanelAndWait();
+        const r3 = await addViaNewContact(first, last, phone);
+        if (r3 === ALREADY_SAVED) { await closeSidePanelAndWait(); return ''; }
+        if (!r3) return proven('New contact');
+        problems.push(r3);
+        return problems.join('; ');
     }
     // 1.7.281: a saved contact with another name → its contact info, Edit,
     // the same First / Last name, Save. '' = renamed.
@@ -1372,7 +1719,7 @@
                 let addProblem = job.contactTried ? 'tried already' : 'no name to save';
                 if (wantedName && !job.contactTried) {
                     try { await setStore(RESUME_KEY, { job: Object.assign({}, job, { contactTried: true }), at: Date.now() }); } catch (_) {}
-                    addProblem = await addContact(first || wantedName, first ? last : '');
+                    addProblem = await addContact(first || wantedName, first ? last : '', job.phone); // 1.7.566: + the number (New contact)
                 }
                 if (addProblem) {
                     // 1.7.559: never a message to a number that is not a saved contact (WhatsApp blocked the account) —
