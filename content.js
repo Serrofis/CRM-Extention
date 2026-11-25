@@ -16788,6 +16788,17 @@ async function wpTransferAssistantExtensionEnabled() {
     var wpHeroRunActive = false;
     var wpSendToPeopleBusy = false; // 1.7.470
 
+    // 1.7.568: one person message per minute (user, 25 Nov, after WhatsApp blocked the account: "1 message per
+    // minute, do the other stuff first, sugg works in the background"). Shared by every CRM tab (localStorage):
+    // after a message to a person went out, the next person waits 45-75 s. Groups / BC / notes never wait for it.
+    var WP_WA_PACE_KEY = 'wp_wa_pace_v1';
+    function wpWaPaceWait() {
+        try { const pace = JSON.parse(localStorage.getItem(WP_WA_PACE_KEY) || '{}'); const left = Number(pace.next || 0) - Date.now(); return left > 0 ? Math.min(left, 90000) : 0; } catch (_) { return 0; }
+    }
+    function wpWaPaceMark(sent) {
+        if (!sent) return; // nothing went out: the next person may go at once
+        try { localStorage.setItem(WP_WA_PACE_KEY, JSON.stringify({ next: Date.now() + 45000 + Math.floor(Math.random() * 30000), at: Date.now() })); } catch (_) {}
+    }
     async function wpWhatsAppSendAndWait(phone, name, text, label, contactName, contact, capMs) {
         wpWhatsAppListen();
         let response;
@@ -16956,6 +16967,9 @@ async function wpTransferAssistantExtensionEnabled() {
                 let heroText = hero.text || text;
                 const again = role === 'Hero' && !options.contactOnly && heroText && wpHeroToldRecently(hero.phone);
                 if (again) heroText = wpHeroAgainText(heroText);
+                // 1.7.568: 1 person a minute (contact-only runs send nothing, they do not wait)
+                if (!options.contactOnly) { let paceLeft; while ((paceLeft = wpWaPaceWait()) > 0 && !wpPauseAllOn() && !(wpWaUnstickAt > runStart)) await new Promise(function(r) { setTimeout(r, Math.min(paceLeft + 200, 2000)); }); }
+                if (wpPauseAllOn()) { wpDashLog('wlcm: ' + label + ': stopped — Pause all is on (' + i + ' of ' + heroes.length + ' sent before)', 'warn'); break; }
                 if (wpWaUnstickAt > runStart) { wpDashLog('wlcm: ' + label + ': stopped — Unstick WhatsApp (' + i + ' of ' + heroes.length + ' done before)', 'warn'); break; } // 1.7.466
                 wpWaRunInfo = { label: label, i: i + 1, n: heroes.length, at: runStart };
                 // 1.7.466: one try max 60 s (heroes 120 s: their contact may be saved first); a failed one is
@@ -16967,6 +16981,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     wpDashLog('WhatsApp · ' + heroLabel + ': not ' + (options.contactOnly ? 'saved' : 'sent') + ' — ' + result.info + ' · trying once more', 'warn'); // 1.7.555: in wlcm activity too
                     result = await wpWhatsAppSendAndWait(hero.phone, hero.name, heroText, heroLabel + ' (2nd try)', contactName, contact, capMs);
                 }
+                if (!options.contactOnly) wpWaPaceMark(result.ok && !/already sent/i.test(String(result.info || ''))); // 1.7.568
                 if (result.ok) {
                     sent++;
                     okPhones[hero.phone] = true;
@@ -19380,6 +19395,7 @@ async function wpTransferAssistantExtensionEnabled() {
             });
         } catch (_) {}
         try { const waiting = wpPlanLoad().length - (wpPlanStepBusy ? 1 : 0); if (waiting > 0) next.push(waiting + ' WhatsApp send' + (waiting === 1 ? '' : 's') + ' waiting'); } catch (_) {}
+        try { const paceLeft = wpWaPaceWait(); if (paceLeft > 0 && (wpPlanLoad().length || wpSendToPeopleBusy)) next.push('next person on WhatsApp ' + (typeof secs === 'function' ? 'in ' + secs(paceLeft) : 'in ' + Math.ceil(paceLeft / 1000) + ' s') + ' (1 a minute)'); } catch (_) {} // 1.7.568
         try { const notes = wpNotePendingLoad().length; if (notes) next.push(notes + ' note' + (notes === 1 ? '' : 's') + ' to check in the CRM'); } catch (_) {}
         const wa = wpWaReady() ? '' : 'WhatsApp not connected — sends wait';
         const refresh = (typeof wpAutoRefreshSecondsLeft === 'number' && wpAutoRefreshSecondsLeft > 0) ? 'refresh in ' + secs(wpAutoRefreshSecondsLeft * 1000) : '';
@@ -22561,7 +22577,7 @@ async function wpTransferAssistantExtensionEnabled() {
                             // 1.7.470: only the person being sent right now (one step, max 4.5 min) — the plan itself
                             // is saved and carries on after the reload, so the list still refreshes every minute
                             const stepAge = Date.now() - wpPlanStepAt;
-                            if ((wpPlanStepBusy && stepAge < 120000) || (wpSendToPeopleBusy && Date.now() - Number(wpWaRunInfo && wpWaRunInfo.at || 0) < 5 * 60000)) {
+                            if ((wpPlanStepBusy && stepAge < 120000) || (wpSendToPeopleBusy && Date.now() - Number(wpWaRunInfo && wpWaRunInfo.at || 0) < 15 * 60000)) { // 1.7.568: 15 min (was 5): by-hand runs go 1 person a minute
                                 countdown.textContent = '↻ Refresh after this WhatsApp message (' + Math.round(stepAge / 1000) + 's)';
                                 wpAutoRefreshInterval = setTimeout(wpWaitForRound, 1000);
                                 return;
@@ -28079,6 +28095,8 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         if (Number(plan.waitUntil || 0) > Date.now()) { setTimeout(wpPlanTick, 2000); return; } // 1.7.557: WhatsApp reloading
         const person = plan.people[plan.idx];
+        const paceLeft = wpWaPaceWait(); // 1.7.568: 1 person a minute; the plan waits without holding anything else
+        if (paceLeft > 0) { setTimeout(wpPlanTick, Math.min(paceLeft + 200, 5000)); return; }
         const stepLabel = plan.label + ' → ' + person.name + ' (' + (plan.idx + 1) + '/' + n + ')' + (plan.tries ? ' (2nd try)' : '');
         wpWaRunInfo = { label: plan.label, i: plan.idx + 1, n: n, at: plan.at };
         wpPlanStepBusy = true;
@@ -28094,6 +28112,7 @@ async function wpTransferAssistantExtensionEnabled() {
             // the page was reloaded while this person's message went out: WhatsApp keeps it from going twice
             if (!result.ok && /already sent/i.test(String(result.info || ''))) result = { ok: true, info: 'already sent' };
             if (result.ok && plan.role === 'Hero') wpHeroToldMark(person.phone);
+            wpWaPaceMark(result.ok && result.info !== 'already sent'); // 1.7.568
         } catch (error) {
             result = { ok: false, info: String(error && error.message || error) };
         } finally {
