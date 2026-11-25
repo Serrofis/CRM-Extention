@@ -19425,51 +19425,80 @@ async function wpTransferAssistantExtensionEnabled() {
     // (wp_activity_pc_v1: 14 days, up to 4000 lines), each line with its transfer (id, city, pickup time) so the
     // city button still opens it after the transfer has left the list. wp_activity_v1 (400, for the tablet) is unchanged.
     var WP_ACT_PC_KEY = 'wp_activity_pc_v1';
-    // 1.7.571 (user, 25 Nov: "it makes the tab lag, once it crashed"): the copy is kept in memory; it is read from
-    // storage once (again only when another tab changed it) and written at most every 3 s, merged with what is there
-    var wpActPcMem = null, wpActPcSaveTimer = null;
-    function wpActPcRead() {
-        let list = [];
-        try { list = JSON.parse(localStorage.getItem(WP_ACT_PC_KEY) || '[]'); } catch (_) {}
-        return Array.isArray(list) ? list.filter(Boolean) : [];
+    // 1.7.573 (user, 25 Nov: "its still makes the tab lag"): the kept history is in IndexedDB (async, nothing blocks
+    // the page) instead of one big localStorage value that every tab rewrote and re-read. Memory holds it for drawing;
+    // other tabs' new lines come in through wp_activity_v1 (400 lines, as before 1.7.570).
+    var wpActPcMem = null, wpActPcSaveTimer = null, wpActPcDb = null, wpActPcIdbAsked = false;
+    function wpActPcKey(e) { return Number(e.at) + '|' + String(e.x || '').slice(0, 80); }
+    function wpActPcIdb() {
+        if (wpActPcDb) return wpActPcDb;
+        wpActPcDb = new Promise(function(resolve) {
+            try {
+                const req = indexedDB.open('wp_mod_activity', 1);
+                req.onupgradeneeded = function() { const db = req.result; if (!db.objectStoreNames.contains('lines')) db.createObjectStore('lines', { keyPath: 'id' }).createIndex('at', 'at'); };
+                req.onsuccess = function() { resolve(req.result); };
+                req.onerror = function() { resolve(null); };
+            } catch (_) { resolve(null); }
+        });
+        return wpActPcDb;
+    }
+    function wpActPcMerge(lines) { // lines into memory (no doubles), in time order, newest 4000
+        const mem = wpActPcMem || (wpActPcMem = []);
+        const have = mem.__keys || (mem.__keys = new Set(mem.map(wpActPcKey)));
+        let added = 0, outOfOrder = false;
+        const last = mem.length ? Number(mem[mem.length - 1].at) : 0;
+        (lines || []).forEach(function(e) {
+            if (!e || !e.at) return;
+            const k = wpActPcKey(e);
+            if (have.has(k)) return;
+            have.add(k); mem.push(e); added++;
+            if (Number(e.at) < last) outOfOrder = true;
+        });
+        if (outOfOrder) mem.sort(function(p, q) { return Number(p.at) - Number(q.at); });
+        if (mem.length > 4300) { mem.splice(0, mem.length - 4000); mem.__keys = new Set(mem.map(wpActPcKey)); }
+        return added;
     }
     function wpActPcLoad() {
-        if (wpActPcMem) return wpActPcMem;
-        let list = wpActPcRead();
-        if (!list.length) { // the first time: start from what wp_activity_v1 has
-            try { const old = JSON.parse(localStorage.getItem('wp_activity_v1') || '[]'); if (Array.isArray(old)) list = old.filter(Boolean).slice(); } catch (_) {}
+        if (!wpActPcMem) {
+            wpActPcMem = [];
+            try { const now = JSON.parse(localStorage.getItem('wp_activity_v1') || '[]'); if (Array.isArray(now)) wpActPcMerge(now); } catch (_) {}
         }
-        wpActPcMem = list;
-        return list;
-    }
-    function wpActPcSave() {
-        wpActPcSaveTimer = null;
-        try {
-            const since = Date.now() - 14 * 86400000;
-            const seen = new Set();
-            let list = wpActPcRead().concat(wpActPcMem || []).filter(function(e) {
-                if (!e || Number(e.at) <= since) return false;
-                const id = e.at + '|' + e.x;
-                if (seen.has(id)) return false;
-                seen.add(id);
-                return true;
-            }).sort(function(p, q) { return Number(p.at) - Number(q.at); });
-            if (list.length > 4000) list = list.slice(-4000);
-            wpActPcMem = list;
-            try { localStorage.setItem(WP_ACT_PC_KEY, JSON.stringify(list)); }
-            catch (_) { wpActPcMem = list.slice(-1500); localStorage.setItem(WP_ACT_PC_KEY, JSON.stringify(wpActPcMem)); } // storage full: keep the newest
-        } catch (_) {}
+        if (!wpActPcIdbAsked) {
+            wpActPcIdbAsked = true;
+            wpActPcIdb().then(function(db) {
+                if (!db) return;
+                // the 1.7.570-572 copy in localStorage moves over once, then that big value is removed
+                let old = [];
+                try { old = JSON.parse(localStorage.getItem(WP_ACT_PC_KEY) || '[]') || []; } catch (_) {}
+                const since = Date.now() - 14 * 86400000;
+                const tx = db.transaction('lines', 'readwrite');
+                const st = tx.objectStore('lines');
+                if (Array.isArray(old) && old.length) old.forEach(function(e) { if (e && Number(e.at) > since) { try { st.put(Object.assign({ id: wpActPcKey(e) }, e)); } catch (_) {} } });
+                try { st.index('at').openCursor(IDBKeyRange.upperBound(since)).onsuccess = function(ev) { const c = ev.target.result; if (c) { c.delete(); c.continue(); } }; } catch (_) {} // older than 14 days
+                tx.oncomplete = function() {
+                    try { localStorage.removeItem(WP_ACT_PC_KEY); } catch (_) {}
+                    const rd = db.transaction('lines', 'readonly').objectStore('lines').getAll();
+                    rd.onsuccess = function() {
+                        const lines = (rd.result || []).map(function(e) { const one = Object.assign({}, e); delete one.id; return one; });
+                        if (wpActPcMerge(lines)) { try { wpTermActRender(true); } catch (_) {} }
+                    };
+                };
+            });
+        }
+        return wpActPcMem;
     }
     function wpActPcAdd(one) {
         try {
             const entry = Object.assign({}, one);
             const label = wpTermLabel(String(entry.x || ''));
-            if (label) {
-                const hit = (wpRemoteList() || []).find(function(row) { return row && row.l === label.l; });
+            // the transfer's id / city / pickup from the list read last (no new read of the page here)
+            if (label && Array.isArray(wpRemoteListCache)) {
+                const hit = wpRemoteListCache.find(function(row) { return row && row.l === label.l; });
                 if (hit && hit.id) entry.r = { i: String(hit.id), c: String(hit.c || label.c || '').slice(0, 30), w: wpTermHhmm(hit.w) };
             }
-            wpActPcLoad().push(entry);
-            if (!wpActPcSaveTimer) wpActPcSaveTimer = setTimeout(wpActPcSave, 3000);
+            wpActPcLoad();
+            wpActPcMerge([entry]);
+            wpActPcIdb().then(function(db) { if (!db) return; try { db.transaction('lines', 'readwrite').objectStore('lines').put(Object.assign({ id: wpActPcKey(entry) }, entry)); } catch (_) {} });
         } catch (_) {}
     }
     // 1.7.571: the transfer a line is about: "#w-…" anywhere, else the line's own "<order> (<city>) —" at the start
@@ -19501,7 +19530,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const today = new Date().toDateString();
             if (!full && !log.__actDirty && log.__actNewest && newest === log.__actNewest && log.__actCount === all.length) return;
             let rows = null;
-            const rowsOf = function() { if (!rows) { try { rows = wpRemoteList() || []; } catch (_) { rows = []; } } return rows; };
+            const rowsOf = function() { if (!rows) rows = Array.isArray(wpRemoteListCache) ? wpRemoteListCache : []; return rows; }; // 1.7.573: the list read last, no new read of the page
             // only newer lines (same day): put them on top
             if (!full && !log.__actDirty && log.__actNewest && newest > log.__actNewest && log.__actDay === today && log.firstChild) {
                 const fresh = [];
@@ -19566,7 +19595,10 @@ async function wpTransferAssistantExtensionEnabled() {
     }
     function wpTermActSoon() { if (wpTermActTimer) return; wpTermActTimer = setTimeout(function() { wpTermActTimer = null; wpTermActRender(false); }, 400); } // 1.7.571: at most every 0.4 s (was each line + 60 ms)
     try { document.addEventListener('visibilitychange', function() { if (!document.hidden) wpTermActSoon(); }); } catch (_) {} // 1.7.571: drawn when the tab shows again
-    try { window.addEventListener('storage', function(event) { if (event.key === 'wp_activity_pc_v1') { if (!wpActPcSaveTimer) wpActPcMem = null; wpTermActSoon(); } else if (event.key === 'wp_box_activity_v1') wpTermActSoon(); }); } catch (_) {} // 1.7.555: + the box's lines // 1.7.571: wp_activity_v1 changes come with the PC copy
+    try { window.addEventListener('storage', function(event) { // 1.7.573: another tab's new lines come through wp_activity_v1
+        if (event.key === 'wp_activity_v1') { if (wpActPcMem) { try { const now = JSON.parse(event.newValue || '[]'); if (Array.isArray(now)) wpActPcMerge(now.slice(-30)); } catch (_) {} } wpTermActSoon(); }
+        else if (event.key === 'wp_box_activity_v1') wpTermActSoon();
+    }); } catch (_) {} // 1.7.555: + the box's lines
     // A Terminal line only for this tab (not in wlcm activity): shown in the Activity view when it is
     // something to do (a click) or a problem
     function wpActivityTakes(text) { return /^(?:[✓✗]\s*)?(?:🤖\s*)?(?:wlcm\b|Full auto\b|Automations ·|📱 Phone|💻 PC|WhatsApp ·)/.test(String(text || '').replace(/\s+/g, ' ').trim()); }
