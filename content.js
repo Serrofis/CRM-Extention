@@ -18728,7 +18728,33 @@ async function wpTransferAssistantExtensionEnabled() {
             '#wp-dash-term .wpdt-card .c-step{color:#9aa6ad;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
             '#wp-dash-term .wpdt-line.is-day{padding:2px 0 4px;font-size:12px}',
             '#wp-dash-term .wpdt-cmd{border-top:1px solid rgba(255,255,255,.07)!important}',
-            '#wp-dash-term .wpdt-cmd-input{border-color:rgba(255,255,255,.12)!important;border-radius:8px!important;background:#171b1e!important}'
+            '#wp-dash-term .wpdt-cmd-input{border-color:rgba(255,255,255,.12)!important;border-radius:8px!important;background:#171b1e!important}',
+            // 1.7.570: the tablet's activity rows (coloured bar per kind, city button, short summary, who)
+            '#wp-dash-term .wpdt-tli{display:flex;align-items:baseline;gap:8px;padding:4px 4px 4px 9px;margin:3px 0;border-left:3px solid #52525b;white-space:normal;line-height:1.3;font-size:13px}',
+            '#wp-dash-term .wpdt-tli .t-time{flex:0 0 auto;color:#8b979e;font-size:12px;font-variant-numeric:tabular-nums;min-width:38px}',
+            '#wp-dash-term .wpdt-tli .t-subj{flex:0 0 auto;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d4d4d8;font-size:12.5px}',
+            '#wp-dash-term .wpdt-tli .t-subj.is-link{color:#e8f4ff;font-weight:600;background:rgba(41,121,255,.18);border:1px solid rgba(41,121,255,.55);border-radius:7px;padding:1px 7px;cursor:pointer}',
+            '#wp-dash-term .wpdt-tli .t-subj.is-link:hover{background:rgba(41,121,255,.4)}',
+            '#wp-dash-term .wpdt-tli .t-sum{flex:1 1 auto;min-width:0;font-weight:600;color:#e8ecee;overflow-wrap:anywhere}',
+            '#wp-dash-term .wpdt-tli .t-who{flex:0 0 auto;color:#8b979e;font-size:11px;border:1px solid rgba(139,151,158,.4);border-radius:999px;padding:0 5px;line-height:15px}',
+            '#wp-dash-term .wpdt-tli .t-who-auto{color:#8fd3ff;border-color:rgba(143,211,255,.45)}',
+            '#wp-dash-term .wpdt-tli .t-who-relay,#wp-dash-term .wpdt-tli .t-who.is-box{color:#ffd27a;border-color:rgba(255,210,122,.45)}',
+            '#wp-dash-term .wpdt-tli .t-who-pc{color:#ffb38a;border-color:rgba(255,179,138,.45)}',
+            '#wp-dash-term .wpdt-tli.k-final{border-left-color:#b66fd4} #wp-dash-term .wpdt-tli.k-final .t-sum{color:#d39af0}',
+            '#wp-dash-term .wpdt-tli.k-hero{border-left-color:#9b59c9} #wp-dash-term .wpdt-tli.k-hero .t-sum{color:#c98ae6}',
+            '#wp-dash-term .wpdt-tli.k-sugg{border-left-color:#4aa8ff} #wp-dash-term .wpdt-tli.k-sugg .t-sum{color:#7cc0ff}',
+            '#wp-dash-term .wpdt-tli.k-raise{border-left-color:#dbb123} #wp-dash-term .wpdt-tli.k-raise .t-sum{color:#f2d45f}',
+            '#wp-dash-term .wpdt-tli.k-bc{border-left-color:#8fffd5} #wp-dash-term .wpdt-tli.k-bc .t-sum{color:#8fffd5}',
+            '#wp-dash-term .wpdt-tli.k-ac{border-left-color:#ff8f87} #wp-dash-term .wpdt-tli.k-ac .t-sum{color:#ffb0a8}',
+            '#wp-dash-term .wpdt-tli.k-wa{border-left-color:#25d366} #wp-dash-term .wpdt-tli.k-wa .t-sum{color:#6ee7a0}',
+            '#wp-dash-term .wpdt-tli.k-em{border-left-color:#9da6ad}',
+            '#wp-dash-term .wpdt-tli.is-warn .t-sum{color:#ffc94d}',
+            '#wp-dash-term .wpdt-tli.is-step{margin-top:-2px;padding-left:22px;font-size:12px;opacity:.72}',
+            '#wp-dash-term .wpdt-tli.is-step .t-sum{font-weight:400}',
+            '#wp-dash-term .wpdt-more{display:block;text-align:center;color:#8fffd5;cursor:pointer;padding:6px 0;font-size:12px}',
+            '#wp-dash-term .wpdt-more:hover{text-decoration:underline}',
+            '#wp-dash-term .wpdt-now .n-x{float:right;cursor:pointer;color:#7d8a90;font-size:15px;line-height:1;padding:0 2px;margin-left:6px}',
+            '#wp-dash-term .wpdt-now .n-x:hover{color:#e8ecee}'
         ].join('\n');
         (document.head || document.documentElement).appendChild(style);
     }
@@ -18810,6 +18836,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 // 1.7.474: a plain gear (no word, no telling tooltip)
                 // 1.7.479: Unstick always here (the pill shows only while a send to drivers runs)
                 // 1.7.504: Comments right in the Terminal header (was only inside Settings → wlcm)
+                '<span class="wpdt-ctl wpdt-now-show" data-act="nowshow" title="Show the Now line again" style="margin-left:10px;font-size:11px;display:none">Now</span>' + // 1.7.570
                 '<span class="wpdt-ctl wpdt-tools-btn" data-act="comments" title="Traveller comments, one card at a time (with the comment vs transfer check)" style="margin-left:auto;font-size:11px">Comments</span>' +
                 '<span class="wpdt-ctl wpdt-tools-btn" data-act="tools" title="wlcm settings: switches, steps, rules, WhatsApp, phone — all in one window" style="margin-left:10px;font-size:11px">Settings</span>' +
                 // 1.7.569 (user, 25 Nov): the gear sits next to Settings (was next to Comments)
@@ -18909,6 +18936,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (act === 'min') { wpDashToolsShow(panel, false); wpDashSetCollapsed(true); }
             // 1.7.378: Settings = the one settings window (switches, steps, rules, WhatsApp, phone)
             if (act === 'unstick') { wpWaUnstick('you'); return; } // 1.7.479
+            if (act === 'nowshow') { try { localStorage.removeItem('wp_now_hidden_v1'); } catch (_) {} try { wpNowPaint(); } catch (_) {} return; } // 1.7.570
             if (act === 'pause') { wpPauseAllSet(!wpPauseAllOn(), 'PC'); wpTermPausePaint(); return; } // 1.7.492
             if (act === 'tools') { wpDashToolsShow(panel, false); wpRulesWindow(false); }
             if (act === 'automations') { wpDashToolsShow(panel, false); wpAutomationsWindow(); }
@@ -19289,109 +19317,169 @@ async function wpTransferAssistantExtensionEnabled() {
     }
     // 1.7.555 (user, 23 Nov: "add it to pc instead of terminal"): every activity line in order, as on the tablet:
     // time · who · the transfer (order + city) · what happened, in full; steps dimmed and indented under it
-    function wpTermActRow(log, entry) {
+    // 1.7.570 (user, 25 Nov: "make it look like the activity log on the tablet with clickable cities for transfers"):
+    // one row per line, newest first, like the tablet's wlcm activity: a coloured bar for the kind of work (Final BC purple,
+    // heroes violet, suggested blue, raise yellow, BC mint, A/C / failed red, WhatsApp green), the time, a blue button with the
+    // transfer's city + pickup time (click = the transfer opens in a new tab), what was done in a few words, and who.
+    function wpTermSummary(text) { // the tablet's wpTimelineSummary
+        const raw = String(text || '').replace(/^note\s+"(.*)"$/i, '$1');
+        if (/nothing to do/i.test(raw)) return { k: 'other', s: 'Checked: nothing to do' };
+        const t = raw.replace(/\b(?:before|at|until|to)\s+final\s*bc\b[^→,·]*/ig, ' ');
+        const low = t.toLowerCase();
+        const out = [];
+        let k = 'other';
+        const pct = (t.match(/(?:raised?|raise)\s*(?:to\s*)?\+?\s*(\d+(?:[.,]\d+)?)\s*%/i) || t.match(/\+(\d+(?:[.,]\d+)?)%/) || [])[1];
+        const eur = (t.match(/\+\s*€\s*(\d+)/) || t.match(/DC set to €\s*(\d+)/i) || [])[1];
+        if (/final\s*bc/i.test(t)) { out.push('Final BC'); k = 'final'; }
+        if (/heroes?\b/i.test(t)) { out.push('Sent to heroes'); if (k === 'other') k = 'hero'; }
+        if (/suggested|\bsugg\b/i.test(t)) { out.push('Sent to suggested'); if (k === 'other') k = 'sugg'; }
+        if (pct || eur || /\braised?\b/i.test(t)) { out.unshift(pct ? 'Raised +' + pct + '%' : eur ? 'Raised +€' + eur : 'Raised'); if (k === 'other') k = 'raise'; }
+        if (/\bbc\b(?!\s*final)|bc&g|bc and group|broadcast/i.test(t) && !/final\s*bc/i.test(t)) { out.push('BC and Group'); if (k === 'other') k = 'bc'; }
+        if (/a\/c\s*off|autocancel off|auto-cancel off/i.test(t)) { out.push('A/C Off'); if (k === 'other') k = 'ac'; }
+        else if (/auto-?cancel/i.test(low)) { const inM = (t.match(/\bin\s+(\d+\s*m(?:in)?)\b/i) || [])[1]; out.push('Auto-cancel' + (inM ? ' in ' + inM.replace(/\s+/g, '') : '')); if (k === 'other') k = 'ac'; } // 1.7.570: + when
+        if (/^\s*em\b|\bEM\b/.test(t) && !out.length) { out.push('EM'); k = 'em'; }
+        let sum = out.length ? out.filter(function(v, i) { return out.indexOf(v) === i; }).join(' · ') : t.replace(/^#?[\w-]+\s*\([^)]*\)\s*[—-]\s*/, '').slice(0, 90);
+        if (/\b(not sent|failed|error|nothing sent|refused)\b/i.test(raw)) sum += ' — failed';
+        else if (/\bnot now|later|skip/i.test(t) && !out.length) sum = 'Not now';
+        else if (/\bno\b → |answer(ed)? no|· no\b/i.test(t)) sum += ' — you said no';
+        return { k: k, s: sum.slice(0, 110) };
+    }
+    function wpTermHhmm(w) { return (String(w || '').match(/(\d{1,2}:\d{2})\s*$/) || [])[1] || ''; }
+    function wpTermActRow(log, entry, rows) {
         const x = String(entry && entry.x || '');
         let raw = x.replace(/^(?:[✓✗]\s*)?(?:🤖\s*)?/, '');
         const who = /^📱/.test(raw) ? 'you' : /^🔁/.test(raw) ? 'relay' : /^(?:Automations|City Manager|Ops Hub)\b/.test(raw) ? 'auto' : /^💻/.test(raw) ? 'PC' : '';
-        raw = raw.replace(/^📱\s*(?:Phone:\s*)?/, '').replace(/^🔁\s*(?:Relay:\s*)?/, '').replace(/^💻\s*(?:PC:\s*)?/, '').replace(/^wlcm:\s*/, '');
-        const bad = entry.k === 'error' || /^✗/.test(x) || /\bNOT (?:done|sent|kept)\b|\bfailed\b|: not sent\b|could NOT/i.test(raw);
-        const warn = !bad && (entry.k === 'warn' || /✗/.test(raw));
-        const ok = !bad && !warn && (entry.k === 'ok' || /^✓/.test(x));
-        // 1.7.569: a small card: time · order + city chip · who · mark on top, what happened under it (2 lines at most,
-        // the full line on hover). A step (s / h) goes into the card above it as one dimmed line.
-        const tone = bad ? 'error' : warn ? 'warn' : ok ? 'ok' : '';
+        raw = raw.replace(/^📱\s*(?:Phone:\s*)?/, '').replace(/^🔁\s*(?:Relay:\s*)?/, '').replace(/^💻\s*(?:PC:\s*)?/, '').replace(/^Automations\s*·\s*(?:CRM:\s*)?/, '').replace(/^wlcm:\s*/, '');
+        let bad = entry.k === 'error' || /^✗/.test(x) || /\bNOT (?:done|sent|kept)\b|\bfailed\b|: not sent\b|could NOT/i.test(raw);
         const isStep = Boolean(entry.s || entry.h);
-        const at = new Date(Number(entry.at) || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-        let subject = '';
-        const order = (raw.match(/#w-\d+-\d+/) || [])[0];
-        if (order) {
-            let city = '';
-            const m = raw.match(new RegExp(order.replace(/[-#]/g, '\\$&') + '\\s*\\(([^)]{2,40})\\)'));
-            if (m) city = m[1];
-            subject = order + (city ? ' · ' + city : '');
-            if (m && raw.indexOf(m[0]) === 0) raw = raw.slice(m[0].length).replace(/^\s*—\s*/, '');
-            else { // a WhatsApp line: the order is in the subject already ("Heroes Mexico City #w-… → …" → "Heroes Mexico City → …")
-                const wc = raw.match(/^WhatsApp · (?:Heroes|Suggested)\s+(.+?)\s+#w-/);
-                if (wc && !city) subject = order + ' · ' + wc[1];
-                raw = raw.replace(' ' + order, '').replace(order + ' ', '').replace(/^—\s*/, '');
-                if (wc) raw = raw.replace(/^WhatsApp · (Heroes|Suggested)\s+.+?\s*→\s*/, '$1 → '); // 1.7.569: the city is in the chip already
-            }
+        // the transfer: kept on the line when it was written (r: id, city, pickup), else today's list, else the line itself
+        const order = (raw.match(/#w-\d+-\d+/) || [])[0] || '';
+        let ref = entry.r && entry.r.i ? entry.r : null;
+        if (!ref && order) { const hit = (rows || []).find(function(one) { return one && one.l === order; }); if (hit) ref = { i: hit.id, c: hit.c, w: wpTermHhmm(hit.w) }; }
+        let subj = '';
+        if (ref) subj = (ref.c || order) + (ref.w ? ' ' + ref.w : '');
+        else if (order) { const m = raw.match(new RegExp(order.replace(/[-#]/g, '\\$&') + '\\s*\\(([^)]{2,40})\\)')); subj = m ? m[1] : order; }
+        let sum;
+        const wa = raw.match(/^WhatsApp\s*·\s*(.*?)\s*→\s*([^:]+):\s*(.*)$/);
+        const chain = raw.match(/^City Manager\s*(.*?)\s*→\s*(?:Ops Hub\s*)?chain:\s*(.*)$/);
+        const cm = !order && !wa ? (raw.match(/^City Manager(?:\s+auto:)?\s+([^:→·(—]+?)\s*(?:[:→·(—]|$)/) || [])[1] || '' : '';
+        if (wa) {
+            const ok = !/not sent|failed/i.test(wa[3]);
+            if (!subj) subj = wa[1].replace(/^(?:Heroes|Suggested)\s+/, '').replace(/\s*#w-.*$/, '');
+            const why = (wa[3].match(/—\s*(.+)$/) || [])[1] || '';
+            sum = { k: ok ? 'wa' : 'ac', s: 'WhatsApp → ' + wa[2].replace(/\s*#w-\d+-\d+/, '').trim() + (ok ? ' ✓' : ' — NOT sent' + (why ? ': ' + why : '')) };
+            if (!ok) bad = true;
+        } else if (chain) {
+            if (!subj) subj = chain[1].replace(/\s*·.*$/, '') || 'City Manager';
+            const step = chain[2].replace(/\s*—\s*Hub:\s*/, ' · ').replace(/\s+/g, ' ');
+            sum = { k: /NOT done|stopped|failed/i.test(step) ? 'ac' : /broadcast/i.test(step) ? 'bc' : 'other', s: step.slice(0, 110) };
+        } else if (cm) {
+            subj = cm;
+            const rest = /^City Manager auto:/.test(raw) ? raw.replace(/^City Manager auto:\s*[^—]*—\s*/, '') : raw.replace(/^City Manager\s+[^:→]*:\s*/, '');
+            const done = /^✓?\s*Chain done/.test(rest);
+            if (done) bad = /^✗|stopped|FAILED/.test(rest);
+            sum = { k: done ? 'bc' : 'other', s: rest.replace(/^✓\s*/, '').replace(/\s+/g, ' ').slice(0, 160) };
+        } else {
+            const rest = raw.replace(/#w-\d+-\d+\s*(?:\([^)]*\))?\s*/g, '').replace(/^\s*[—·-]\s*/, '').replace(/\s+[—·]\s*$/, '');
+            sum = isStep ? { k: 'other', s: rest.slice(0, 140) } : wpTermSummary(rest);
+            const note = (rest.match(/note\s+"([^"]+)"/) || [])[1];
+            if (note && sum.s.indexOf('note') < 0 && !isStep) sum.s += ' · note "' + note + '"';
+            if (!sum.s || sum.s.length > 140) sum.s = rest.slice(0, 140);
         }
-        const short = wpTermActShort(raw);
-        const prev = log.lastElementChild;
-        if (isStep && prev && prev.__card && (!order || prev.__order === order)) {
-            const st = document.createElement('div');
-            st.className = 'c-step';
-            st.textContent = '↳ ' + short;
-            st.title = at + '  ' + x;
-            prev.appendChild(st);
-            if (tone === 'error' || (tone && !/is-error/.test(prev.className))) { prev.className = 'wpdt-line wpdt-card is-' + tone; prev.querySelector('.c-mark').textContent = tone === 'ok' ? '✓' : tone === 'warn' ? '!' : '✗'; }
-            return;
-        }
-        const card = document.createElement('div');
-        card.__card = true;
-        card.__order = order || '';
-        card.className = 'wpdt-line wpdt-card' + (tone ? ' is-' + tone : '');
-        card.title = x;
-        const top = document.createElement('div');
-        top.className = 'c-top';
+        if (bad && !/NOT|failed/.test(sum.s)) sum.s += ' — failed';
+        const warn = !bad && (entry.k === 'warn' || /✗/.test(raw));
+        const line = document.createElement('div');
+        line.className = 'wpdt-line wpdt-tli k-' + (bad ? 'ac' : String(sum.k || 'other').replace(/[^a-z]/g, '')) + (isStep ? ' is-step' : '') + (warn ? ' is-warn' : '') + (bad ? ' is-bad' : '');
+        line.title = new Date(Number(entry.at) || Date.now()).toLocaleString() + '\n' + x;
         const time = document.createElement('span');
-        time.className = 'c-time';
-        time.textContent = at;
-        top.appendChild(time);
-        if (subject) { const chip = document.createElement('span'); chip.className = 'c-chip'; chip.textContent = subject; top.appendChild(chip); }
-        if (entry.m === 'box') { const tag = document.createElement('span'); tag.className = 'wpdt-who is-box'; tag.textContent = 'box'; top.appendChild(tag); }
-        if (who) { const tag = document.createElement('span'); tag.className = 'wpdt-who'; tag.textContent = who; top.appendChild(tag); }
-        const mark = document.createElement('span');
-        mark.className = 'c-mark';
-        mark.textContent = tone === 'ok' ? '✓' : tone === 'warn' ? '!' : tone === 'error' ? '✗' : '';
-        top.appendChild(mark);
-        card.appendChild(top);
-        const text = document.createElement('div');
-        text.className = isStep ? 'c-step' : 'c-text';
-        text.textContent = (isStep ? '↳ ' : '') + short;
-        card.appendChild(text);
-        log.appendChild(card);
+        time.className = 't-time';
+        time.textContent = new Date(Number(entry.at) || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+        line.appendChild(time);
+        if (subj && !isStep) {
+            const chip = document.createElement('span');
+            chip.className = 't-subj' + (ref && ref.i ? ' is-link' : '');
+            chip.textContent = subj;
+            if (ref && ref.i) {
+                chip.title = 'Open ' + (order || 'the transfer') + ' in a new tab';
+                chip.addEventListener('click', function(event) { event.preventDefault(); event.stopPropagation(); try { window.open(location.origin + '/admin/transfers/' + encodeURIComponent(ref.i), '_blank'); } catch (_) {} });
+            }
+            line.appendChild(chip);
+        }
+        const text = document.createElement('span');
+        text.className = 't-sum';
+        text.textContent = (isStep ? '↳ ' : '') + sum.s;
+        line.appendChild(text);
+        if (entry.m === 'box') { const tag = document.createElement('span'); tag.className = 't-who is-box'; tag.textContent = 'box'; line.appendChild(tag); }
+        if (who && !isStep) { const tag = document.createElement('span'); tag.className = 't-who t-who-' + who.toLowerCase(); tag.textContent = who; line.appendChild(tag); }
+        log.appendChild(line);
     }
-    // 1.7.569: the same line in fewer words (the full line stays on hover)
-    function wpTermActShort(raw) {
-        return String(raw || '')
-            .replace(/^[✓✗]\s*/, '')
-            .replace(/\s*\(note only once WhatsApp confirms\)/i, '')
-            .replace(/^WhatsApp · /, 'WA · ')
-            .replace(/\bsuggested drivers?\b/gi, 'suggested')
-            .replace(/\bthe transfer\b/gi, 'transfer')
-            .replace(/\s+—\s+/g, ' · ')
-            .replace(/\s{2,}/g, ' ')
-            .trim();
+    // 1.7.570 (user, 25 Nov: "I'd like if they do not expire for pc"): the PC keeps its own copy of wlcm activity
+    // (wp_activity_pc_v1: 14 days, up to 4000 lines), each line with its transfer (id, city, pickup time) so the
+    // city button still opens it after the transfer has left the list. wp_activity_v1 (400, for the tablet) is unchanged.
+    var WP_ACT_PC_KEY = 'wp_activity_pc_v1';
+    function wpActPcLoad() {
+        let list = [];
+        try { list = JSON.parse(localStorage.getItem(WP_ACT_PC_KEY) || '[]'); } catch (_) {}
+        if (!Array.isArray(list)) list = [];
+        if (!list.length) { // the first time: start from what wp_activity_v1 has
+            try { const old = JSON.parse(localStorage.getItem('wp_activity_v1') || '[]'); if (Array.isArray(old)) list = old.filter(Boolean).slice(); } catch (_) {}
+        }
+        return list;
+    }
+    function wpActPcAdd(one) {
+        try {
+            const entry = Object.assign({}, one);
+            const order = (String(entry.x || '').match(/#w-\d+-\d+/) || [])[0];
+            if (order) {
+                const hit = (wpRemoteList() || []).find(function(row) { return row && row.l === order; });
+                if (hit && hit.id) entry.r = { i: String(hit.id), c: String(hit.c || '').slice(0, 30), w: wpTermHhmm(hit.w) };
+            }
+            const since = Date.now() - 14 * 86400000;
+            let list = wpActPcLoad().filter(function(e) { return e && Number(e.at) > since; });
+            list.push(entry);
+            if (list.length > 4000) list = list.slice(-4000);
+            try { localStorage.setItem(WP_ACT_PC_KEY, JSON.stringify(list)); }
+            catch (_) { localStorage.setItem(WP_ACT_PC_KEY, JSON.stringify(list.slice(-1500))); } // storage full: keep the newest
+        } catch (_) {}
     }
     function wpTermActRender(full) {
         const panel = document.getElementById('wp-dash-term');
         const log = panel && panel.querySelector('.wpdt-log');
         if (!log || wpTermAll()) return;
-        if (true) { // 1.7.555: drawn again in full (up to 400 lines), in order; the old merged view below is not used
-            let all = [];
-            try { all = JSON.parse(localStorage.getItem('wp_activity_v1') || '[]'); } catch (_) {}
-            if (!Array.isArray(all)) all = [];
+        if (true) { // 1.7.570: newest first, from the PC's own copy (wpActPcLoad), like the tablet
+            let all = wpActPcLoad();
             // the box's lines (mirrored while this PC is on standby), in time order with this machine's
             try { const box = JSON.parse(localStorage.getItem('wp_box_activity_v1') || '[]'); if (Array.isArray(box) && box.length && wpIsMainMachine && !wpIsMainMachine()) { all = all.concat(box).sort(function(p, q) { return Number(p.at) - Number(q.at); }); } } catch (_) {}
             let clearedAt = 0;
             try { clearedAt = Number(sessionStorage.getItem('wp_term_cleared_v1')) || 0; } catch (_) {}
             all = all.filter(function(entry) { return entry && Number(entry.at) > clearedAt; });
-            const sig = all.length + '|' + (all.length ? all[all.length - 1].at + all[all.length - 1].x : '');
+            const shown = log.__actShown || 300;
+            const sig = all.length + '|' + shown + '|' + (all.length ? all[all.length - 1].at + all[all.length - 1].x : '');
             if (!full && log.__actSig === sig) return;
             log.__actSig = sig;
-            const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+            const keepTop = log.scrollTop;
             log.textContent = '';
+            let rows = [];
+            try { rows = wpRemoteList() || []; } catch (_) {}
+            const today = new Date().toDateString();
             let lastDay = '';
-            all.forEach(function(entry) {
-                const day = new Date(Number(entry.at)).toDateString();
-                if (day !== lastDay && lastDay) { const d = document.createElement('div'); d.className = 'wpdt-line is-act is-day'; d.textContent = '— ' + new Date(Number(entry.at)).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) + ' —'; log.appendChild(d); }
+            all.slice(-shown).reverse().forEach(function(entry) {
+                const when = new Date(Number(entry.at));
+                const day = when.toDateString();
+                if (day !== lastDay && day !== today) { const d = document.createElement('div'); d.className = 'wpdt-line is-act is-day'; d.textContent = when.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }); log.appendChild(d); }
                 lastDay = day;
-                try { wpTermActRow(log, entry); } catch (_) {}
+                try { wpTermActRow(log, entry, rows); } catch (_) {}
             });
+            if (all.length > shown) {
+                const more = document.createElement('div');
+                more.className = 'wpdt-line wpdt-more';
+                more.textContent = 'Show older (' + (all.length - shown) + ' more)';
+                more.addEventListener('click', function(event) { event.stopPropagation(); log.__actShown = shown + 300; wpTermActRender(true); });
+                log.appendChild(more);
+            }
             if (!all.length) { const empty = document.createElement('div'); empty.className = 'wpdt-line is-act'; empty.textContent = 'No wlcm activity yet.'; log.appendChild(empty); }
-            if (full || atBottom) log.scrollTop = log.scrollHeight;
+            log.scrollTop = full && !log.__actShownOnce ? 0 : keepTop; // newest at the top
+            log.__actShownOnce = true;
             return;
         }
         let list = [];
@@ -19414,7 +19502,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (full || nearBottom) log.scrollTop = log.scrollHeight;
     }
     function wpTermActSoon() { clearTimeout(wpTermActTimer); wpTermActTimer = setTimeout(function() { wpTermActRender(false); }, 60); }
-    try { window.addEventListener('storage', function(event) { if (event.key === 'wp_activity_v1' || event.key === 'wp_box_activity_v1') wpTermActSoon(); }); } catch (_) {} // 1.7.555: + the box's lines
+    try { window.addEventListener('storage', function(event) { if (event.key === 'wp_activity_v1' || event.key === 'wp_box_activity_v1' || event.key === 'wp_activity_pc_v1') wpTermActSoon(); }); } catch (_) {} // 1.7.555: + the box's lines
     // A Terminal line only for this tab (not in wlcm activity): shown in the Activity view when it is
     // something to do (a click) or a problem
     function wpActivityTakes(text) { return /^(?:[✓✗]\s*)?(?:🤖\s*)?(?:wlcm\b|Full auto\b|Automations ·|📱 Phone|💻 PC|WhatsApp ·)/.test(String(text || '').replace(/\s+/g, ' ').trim()); }
@@ -19483,10 +19571,17 @@ async function wpTransferAssistantExtensionEnabled() {
         if (!box || panel.style.display === 'none') return;
         let parts;
         try { parts = wpNowParts(); } catch (_) { return; }
-        const sig = parts.tone + '|' + parts.main + '|' + parts.sub;
+        let hid0 = ''; try { hid0 = localStorage.getItem('wp_now_hidden_v1') || ''; } catch (_) {}
+        const sig = parts.tone + '|' + parts.main + '|' + parts.sub + '|' + hid0; // 1.7.570: + hidden
         if (box.__sig === sig) return;
         box.__sig = sig;
         box.className = 'wpdt-now' + (parts.tone ? ' is-' + parts.tone : '');
+        // 1.7.570 (user, 25 Nov: "dont show automations are off when they are off, I want to be able to hide them"):
+        // no Now line while automations are simply off, and × hides it (wp_now_hidden_v1); "Now" in the header shows it again
+        let hidden = false;
+        try { hidden = localStorage.getItem('wp_now_hidden_v1') === '1'; } catch (_) {}
+        box.style.display = hidden || (parts.tone === 'off' && /^Automations are off$/.test(parts.main)) ? 'none' : '';
+        try { const show = panel.querySelector('.wpdt-now-show'); if (show) show.style.display = hidden ? '' : 'none'; } catch (_) {}
         box.title = parts.main + (parts.sub ? '\n' + parts.sub : ''); // 1.7.569: the second line is cut to one line; all of it on hover
         box.textContent = '';
         const ic = document.createElement('span');
@@ -19495,6 +19590,12 @@ async function wpTransferAssistantExtensionEnabled() {
         box.appendChild(ic);
         box.appendChild(document.createTextNode(parts.main));
         if (parts.sub) { const sub = document.createElement('div'); sub.className = 'n-sub'; sub.textContent = parts.sub; box.appendChild(sub); }
+        const x = document.createElement('span'); // 1.7.570
+        x.className = 'n-x';
+        x.textContent = '×';
+        x.title = 'Hide this line (Now in the header shows it again)';
+        x.addEventListener('click', function(event) { event.stopPropagation(); try { localStorage.setItem('wp_now_hidden_v1', '1'); } catch (_) {} box.__sig = ''; wpNowPaint(); });
+        box.insertBefore(x, box.firstChild);
     }
     try { if (window.top === window) setInterval(wpNowPaint, 1000); } catch (_) {}
 
@@ -19524,6 +19625,7 @@ async function wpTransferAssistantExtensionEnabled() {
             if (step) one.s = 1; // 1.7.555 (was h: hidden)
             list.push(one);
             localStorage.setItem('wp_activity_v1', JSON.stringify(list.slice(-400)));
+            wpActPcAdd(one); // 1.7.570: the PC's copy that does not expire
             wpTermActSoon(); // 1.7.474
         } catch (_) {}
     }
