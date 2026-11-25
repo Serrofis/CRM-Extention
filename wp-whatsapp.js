@@ -881,6 +881,52 @@
         } catch (_) {}
         return Boolean(await waitFor(function() { return document.querySelector('#main header'); }, 2500));
     }
+    // 1.7.559 (user, 25 Nov: WhatsApp blocked the account; "make it always add them first"): since 1.7.557 an
+    // unsaved number can show the person's own profile name, so header / message box no longer prove a saved
+    // contact. The contact info is looked at: an Add / Save contact option = not saved, an Edit option = saved.
+    // Numbers seen saved (or saved by wlcm) are remembered (last 9 digits), so this runs once per person.
+    const SAVED_PEOPLE_KEY = 'wp_wa_saved_people_v1';
+    async function savedPersonKnown(phone) {
+        const tail = String(phone || '').replace(/\D/g, '').slice(-9);
+        if (tail.length < 7) return false;
+        try { const all = (await getStore(SAVED_PEOPLE_KEY)) || {}; return Boolean(all[tail]); } catch (_) { return false; }
+    }
+    async function savedPersonRemember(phone) {
+        const tail = String(phone || '').replace(/\D/g, '').slice(-9);
+        if (tail.length < 7) return;
+        try {
+            const all = (await getStore(SAVED_PEOPLE_KEY)) || {};
+            all[tail] = Date.now();
+            const keys = Object.keys(all);
+            if (keys.length > 2000) keys.sort(function(a, b) { return all[a] - all[b]; }).slice(0, keys.length - 2000).forEach(function(k) { delete all[k]; });
+            await setStore(SAVED_PEOPLE_KEY, all);
+        } catch (_) {}
+    }
+    function findEditOption() {
+        const icon = Array.from(document.querySelectorAll('[data-icon], [aria-label], [title]'))
+            .filter(function(el) { return !el.closest('#main') && !el.closest('#side') && (el.offsetParent !== null || el.getClientRects().length); })
+            .find(function(el) {
+                return /^(pencil|edit|ic-edit|wds-ic-edit|edit-contact)/i.test(el.getAttribute('data-icon') || '') ||
+                    /^edit( contact)?$/i.test(String(el.getAttribute('aria-label') || el.getAttribute('title') || '').trim());
+            });
+        return icon ? (icon.closest('button, [role="button"]') || icon) : findClickable(document, /^edit( contact)?$/i);
+    }
+    // 'unsaved' | 'saved' | 'unknown' (unknown is treated as not saved: saved first or nothing sent)
+    async function contactSavedState() {
+        if (findClickable(document.querySelector('#main'), /^(add|add to contacts|add contact|save contact)$/i)) return 'unsaved';
+        const header = document.querySelector('#main header');
+        if (!header) return 'unknown';
+        clickEl(header.querySelector('[role="button"]') || header);
+        let state = 'unknown';
+        await waitFor(function() {
+            const add = findClickable(document, /^(add to contacts|add contact|save contact)$/i);
+            if (add && !add.closest('#side')) { state = 'unsaved'; return true; }
+            if (findEditOption()) { state = 'saved'; return true; }
+            return false;
+        }, 6000);
+        await closeSidePanelAndWait();
+        return state;
+    }
     async function addContact(first, last) {
         const addPattern = /^(add|add to contacts|add contact|save contact)$/i;
         let add = findClickable(document.querySelector('#main'), addPattern);
@@ -971,6 +1017,58 @@
         const title = headerTitle().trim();
         return Boolean(title && composer() && chatIsGroup() && titleMatchesCity(title, job));
     }
+    // 1.7.557 (23 Nov: 3 of 5 Budapest heroes, Hurghada, Cartagena not sent, "header zs / Peter / exp"): WhatsApp now
+    // shows a number you have not saved under that person's own profile name, and its message ids no longer carry
+    // the number. Opened fresh from this number's link, the chat SWITCHED away from the one open before the link
+    // (kept in BEFORE_KEY), it is not a group and no message id names another number → it is this number's chat.
+    // A number not on WhatsApp keeps the chat that was open (same header) → still refused.
+    var BEFORE_KEY = 'wp_wa_before_link_v1';
+    // 1.7.558 (user, 23 Nov: "make it faster"): every person a message reached is remembered by the name their chat
+    // shows (number's last 9 digits → title). Next time their chat is opened by that name from the search, like a
+    // known group — no WhatsApp reload (the reload was most of the ~40 s per person). Checked: same name, not a group,
+    // the message box / message ids name no other number, and no other person has the same chat name. Anything off →
+    // the number's link, as before.
+    var PERSON_TITLES_KEY = 'wp_wa_person_titles_v1';
+    function personTail(job) { return String(job && job.phone || '').replace(/\D/g, '').slice(-9); }
+    function personChatOk(tail) {
+        if (!tail || tail.length < 7 || chatIsGroup() || !composer()) return false;
+        const box = composerPhoneDigits();
+        if (box && !box.endsWith(tail)) return false;
+        try {
+            if (Array.from(document.querySelectorAll('#main [data-id]')).slice(-30).some(function(el) {
+                const m = String(el.getAttribute('data-id') || '').match(/(\d{7,15})@c\.us/);
+                return Boolean(m && !m[1].endsWith(tail));
+            })) return false;
+        } catch (_) {}
+        return true;
+    }
+    async function personTitleRemember(job) {
+        try {
+            const tail = personTail(job);
+            const title = headerTitle().trim();
+            if (!tail || tail.length < 7 || !title || chatIsGroup()) return;
+            const all = (await getStore(PERSON_TITLES_KEY)) || {};
+            all[tail] = { t: title.slice(0, 80), at: Date.now() };
+            const keys = Object.keys(all);
+            if (keys.length > 600) keys.sort(function(a, b) { return all[a].at - all[b].at; }).slice(0, keys.length - 600).forEach(function(k) { delete all[k]; });
+            await setStore(PERSON_TITLES_KEY, all);
+        } catch (_) {}
+    }
+    function chatSwitchedFromBefore(tail) {
+        const title = headerTitle().trim();
+        if (!title || chatIsGroup()) return false;
+        let before = '';
+        try { before = String(sessionStorage.getItem(BEFORE_KEY) || ''); } catch (_) {}
+        if (!before || plainTitle(before) === plainTitle(title)) return false; // nothing known open before: not enough (WhatsApp may restore a chat by itself)
+        try {
+            const other = Array.from(document.querySelectorAll('#main [data-id]')).slice(-30).some(function(el) {
+                const m = String(el.getAttribute('data-id') || '').match(/(\d{7,15})@c\.us/);
+                return Boolean(m && !m[1].endsWith(tail));
+            });
+            if (other) return false;
+        } catch (_) {}
+        return true;
+    }
     // 1.7.499: true when the open chat is clearly this person — the header is the number, a message id
     // carries the number, or the header has the hero's name. Nothing is clicked (no contact panel).
     function chatLooksLikePhone(job) {
@@ -987,7 +1085,8 @@
             })) return true;
         } catch (_) {}
         const words = norm(String(job.contactFirst || job.contactName || '')).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function(w) { return w.length >= 3 && !/^(hero|driver|suggested|paris|the)$/.test(w); });
-        return Boolean(words.length && plainTitle(title).replace(/[^a-z0-9\s]/g, ' ').indexOf(words[0]) >= 0);
+        if (words.length && plainTitle(title).replace(/[^a-z0-9\s]/g, ' ').indexOf(words[0]) >= 0) return true;
+        return chatSwitchedFromBefore(tail); // 1.7.557: their profile name (the wait below ends at once instead of after 12 s)
     }
     // A person by phone: the header shows the number, or (saved contact)
     // the contact info panel does. The last 9 digits must match.
@@ -1027,6 +1126,16 @@
             const words = norm(String(job.contactFirst || job.contactName || job.city || '')).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function(w) { return w.length >= 3 && !/^(hero|driver|suggested|paris|the)$/.test(w); });
             const head = plainTitle(title).replace(/[^a-z0-9\s]/g, ' ');
             if (words.length && head.indexOf(words[0]) >= 0) { phoneDiag += ', opened fresh from its own link, named "' + title.slice(0, 30) + '"'; return true; }
+            // 1.7.557: their WhatsApp profile name — accepted when the chat switched from the one open before the link
+            // and still shows the same name 1.5 s later (not a chat that is still changing)
+            if (chatSwitchedFromBefore(tail)) {
+                await sleep(1500);
+                if (headerTitle().trim() === title && chatSwitchedFromBefore(tail)) {
+                    let before = ''; try { before = String(sessionStorage.getItem(BEFORE_KEY) || ''); } catch (_) {}
+                    phoneDiag += ', opened fresh from its own link: the chat switched from "' + before.slice(0, 20) + '" to "' + title.slice(0, 30) + '" (their WhatsApp profile name)';
+                    return true;
+                }
+            }
             phoneDiag += ', the open chat "' + title.slice(0, 30) + '" is not named ' + (words[0] || '?');
         }
         const header = document.querySelector('#main header');
@@ -1075,6 +1184,24 @@
             }
             if (ok) await sleep(800);
             const msgs = ok ? readChat(40) : [];
+            // 1.7.558: each message that carries a transfer wlcm sent (wp_wa_crm_links_v1, as the PC's "open in CRM"
+            // buttons) gets tr: [[transfer id, label]] — the tablet shows a button that opens that transfer
+            try {
+                const links = (await getStore('wp_wa_crm_links_v1')) || [];
+                const flat = function(text) { return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+                if (Array.isArray(links) && links.length) msgs.forEach(function(m) {
+                    const text = flat(m.x);
+                    if (text.length < 20) return;
+                    const seen = {}, tr = [];
+                    links.forEach(function(link) {
+                        if (!link || !link.k || !link.p || seen[link.p] || text.indexOf(link.k) < 0) return;
+                        seen[link.p] = true;
+                        const tid = (String(link.p).match(/transfers\/(\d+)/) || [])[1];
+                        if (tid) tr.push([tid, String(link.l || '').slice(0, 30)]);
+                    });
+                    if (tr.length) m.tr = tr.slice(0, 6);
+                });
+            } catch (_) {}
             await setStore('wp_wa_chat_v1', { title: readTitle, ok: ok, msgs: msgs, at: Date.now() });
             try { setSearch(''); } catch (_) {}
             report(job, ok, ok ? 'read ' + msgs.length + ' messages for the phone' : 'could not open the chat "' + (job.code ? 'from its group link' : job.city) + '"');
@@ -1088,7 +1215,7 @@
         // web.whatsapp.com/send?phone=… Only sent to saved contacts — a chat
         // whose header shows the bare number is not in your contacts.
         if (job.phone) {
-            const chatTitle = viaLink ? await openedFromLink() : '';
+            const chatTitle = viaLink ? await openedFromLink() : (job.byName ? headerTitle().trim() : ''); // 1.7.558: + opened by name
             if (!chatTitle) {
                 report(job, false, 'could not open the chat with +' + job.phone + ' — is the number on WhatsApp?');
                 return;
@@ -1103,7 +1230,19 @@
             }
             // Only the chat with this exact number (not a chat that happened
             // to be open) — checked twice while the page settles.
-            let isRight = await chatIsPhone(job.phone, Boolean(viaLink), job); // 1.7.465: viaLink = fresh load of this number's link; 1.7.488: + its name
+            // 1.7.558: opened by its remembered name: that name, not a group, no other number → right; else the number's link
+            if (job.byName) {
+                if (!(norm(headerTitle()) === norm(job.byName) && personChatOk(personTail(job)))) {
+                    const again = Object.assign({}, job, { byName: '', byNameTried: true, createdAt: Date.now() });
+                    await setStore(JOBS_KEY, [again].concat(((await getStore(JOBS_KEY)) || []).filter(function(j) { return j.id !== job.id; })));
+                    try { sessionStorage.setItem(OPENING_KEY, again.id); sessionStorage.setItem(BEFORE_KEY, headerTitle().trim()); } catch (_) {}
+                    progress(job, 'the chat "' + job.byName + '" did not check out — opening it from the number instead');
+                    navigating = true;
+                    wpWaGo('https://web.whatsapp.com/send?phone=' + encodeURIComponent(job.phone));
+                    return;
+                }
+            }
+            let isRight = job.byName ? true : await chatIsPhone(job.phone, Boolean(viaLink), job); // 1.7.465: viaLink = fresh load of this number's link; 1.7.488: + its name
             const firstDiag = phoneDiag; // 1.7.505: the 1st try's view too (the 2nd often sees a closed chat)
             if (!isRight) { await sleep(2500); isRight = await chatIsPhone(job.phone, Boolean(viaLink), job); }
             if (!isRight) {
@@ -1120,7 +1259,14 @@
             let contactNote = '';
             // 1.7.506: a Business account shows its business name, not the number, even when not saved —
             // the message box label "Type a message to +52 …" says it is not a saved contact
-            if (isPhoneTitle(contactTitle) || composerPhoneDigits()) {
+            let notSaved = isPhoneTitle(contactTitle) || composerPhoneDigits();
+            if (!notSaved && !(await savedPersonKnown(job.phone))) { // 1.7.559: a name in the header is no proof any more
+                const state = await contactSavedState();
+                progress(job, 'contact info of +' + job.phone + ': ' + (state === 'saved' ? 'a saved contact' : state === 'unsaved' ? 'not a saved contact — saving first' : 'could not tell — saving first'));
+                if (state === 'saved') await savedPersonRemember(job.phone); else notSaved = true;
+                contactTitle = headerTitle().trim() || contactTitle;
+            }
+            if (notSaved) {
                 // Not a saved contact: add them first, then send.
                 let addProblem = job.contactTried ? 'tried already' : 'no name to save';
                 if (wantedName && !job.contactTried) {
@@ -1128,12 +1274,13 @@
                     addProblem = await addContact(first || wantedName, first ? last : '');
                 }
                 if (addProblem) {
-                    // 1.7.553: never a message to a number that is not a saved contact (user, 25 Nov: WhatsApp blocked
-                    // the account; messages to unsaved numbers are the likely cause) — was: "sending anyway" (1.7.281)
+                    // 1.7.559: never a message to a number that is not a saved contact (WhatsApp blocked the account) —
+                    // was "sending anyway" (1.7.281). The usual retry (15 min, 3 tries) tries saving again.
                     if (job.contactOnly) { report(job, false, '+' + job.phone + ': could not save as "' + wantedName + '" (' + addProblem + ')'); return; }
                     report(job, false, 'could not save +' + job.phone + ' as a contact' + (wantedName ? ' "' + wantedName + '"' : '') + ' (' + addProblem + ') — nothing sent (only saved contacts get messages)');
                     return;
                 } else {
+                    await savedPersonRemember(job.phone); // 1.7.559
                     contactTitle = headerTitle().trim();
                     progress(job, 'added "' + contactTitle + '" to your contacts');
                 }
@@ -1164,6 +1311,7 @@
                     try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {}
                     try { sessionStorage.setItem(OPENING_KEY, again.id); } catch (_) {}
                     progress(job, 'no message box in "' + contactTitle + '" — opening the chat again');
+                    try { sessionStorage.setItem(BEFORE_KEY, headerTitle().trim()); } catch (_) {} // 1.7.557
                     navigating = true;
                     wpWaGo('https://web.whatsapp.com/send?phone=' + encodeURIComponent(job.phone));
                     return;
@@ -1187,7 +1335,8 @@
             }
             sent[dupKey] = Date.now();
             await setStore(SENT_KEY, sent);
-            report(job, true, 'sent to "' + contactTitle + '"' + contactNote);
+            await personTitleRemember(job); // 1.7.558
+            report(job, true, 'sent to "' + contactTitle + '"' + contactNote + (job.byName ? ' (opened by name, no reload)' : ''));
             return;
         }
         const groups = (await getStore(GROUPS_KEY)) || {};
@@ -1434,10 +1583,34 @@
                         progress(job, 'could not open "' + known + '" by name — using the group link');
                     }
                 }
+                // 1.7.558: a person whose chat name is known: opened by that name, without reloading
+                if (job.phone && !job.byNameTried && !job.image && opening !== job.id && !(await isDuplicate(job))) {
+                    const tail = personTail(job);
+                    const titles = (await getStore(PERSON_TITLES_KEY)) || {};
+                    const known = titles[tail] && titles[tail].t;
+                    const shared = known && Object.keys(titles).some(function(k) { return k !== tail && titles[k] && norm(titles[k].t) === norm(known); });
+                    if (known && !shared) {
+                        progress(job, 'opening the chat "' + known + '" (no reload)');
+                        let opened = false;
+                        try { opened = await openChat(known); } catch (_) {}
+                        opened = opened && norm(headerTitle()) === norm(known) && personChatOk(tail);
+                        try { setSearch(''); } catch (_) {}
+                        if (opened) {
+                            jobs.shift();
+                            await dropJobs(function(j) { return j.id === job.id || expired(j); });
+                            job.byName = known;
+                            await handleOrRetry(job, false);
+                            await sleep(5000); // 1.7.479: 5 s between messages
+                            continue;
+                        }
+                        progress(job, 'could not open "' + known + '" by name — using the number link');
+                    }
+                }
                 if ((job.code || job.phone) && opening !== job.id && !(await isDuplicate(job))) {
                     await dropJobs(expired);
                     try { sessionStorage.setItem(OPENING_KEY, job.id); } catch (_) {}
                     progress(job, job.phone ? 'opening the chat with ' + job.city : 'opening the ' + job.city + ' group from its link');
+                    try { sessionStorage.setItem(BEFORE_KEY, job.phone ? headerTitle().trim() : ''); } catch (_) {} // 1.7.557
                     navigating = true;
                     wpWaGo(job.phone
                         ? 'https://web.whatsapp.com/send?phone=' + encodeURIComponent(job.phone)
@@ -1631,7 +1804,9 @@
             if (!pane) return;
             const fresh = [];
             const unreadNow = []; // 1.7.538: every chat still unread that is a DM or mentions you (the tablet's Chats tab)
-            chatRows().forEach(function(entry) {
+            // 1.7.556: in the order the chat list shows them (WhatsApp places its rows by position, not page order)
+            const topOf = function(entry) { try { return entry.row.getBoundingClientRect().top; } catch (_) { return 0; } };
+            chatRows().filter(function(entry) { return pane.contains(entry.row); }).sort(function(a, b) { return topOf(a) - topOf(b); }).forEach(function(entry) {
                 if (!pane.contains(entry.row)) return;
                 const unread = rowUnread(entry.row);
                 const before = alertSeen.has(entry.title) ? alertSeen.get(entry.title) : 0;
@@ -1641,8 +1816,13 @@
                     const tm = rowTime(entry.row);
                     if (unread || tm) {
                         const m = unread ? rowMention(entry.row) : false;
-                        const g = !m && rowGroup(entry.row, entry.title);
-                        if (m || !g || tm) unreadNow.push({ title: entry.title.slice(0, 80), kind: m ? 'mention' : g ? 'group' : 'direct', count: unread, preview: rowPreview(entry), tm: tm });
+                        // 1.7.556: a city team's chat is a group even when its last line has no sender ("Gran Canaria Welcomers")
+                        const g = !m && (rowGroup(entry.row, entry.title) || /\b(welcomers|dispatchers|drivers|group|team|ops)\b/i.test(entry.title));
+                        // 1.7.556: the last message's time as a time stamp (HH:MM = today; later than now = yesterday)
+                        let ts = 0;
+                        const hm = String(tm || '').match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])?$/);
+                        if (hm) { const d = new Date(); let h = Number(hm[1]) % (hm[3] ? 12 : 24); if (hm[3] && /p/i.test(hm[3])) h += 12; d.setHours(h, Number(hm[2]), 0, 0); if (d.getTime() > Date.now() + 120000) d.setDate(d.getDate() - 1); ts = d.getTime(); }
+                        if (m || !g || tm) unreadNow.push({ title: entry.title.slice(0, 80), kind: m ? 'mention' : g ? 'group' : 'direct', count: unread, preview: rowPreview(entry), tm: tm, ts: ts });
                     }
                 } catch (_) {}
                 if (!unread || unread <= before || alertBase < 2) return;

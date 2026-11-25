@@ -62,7 +62,7 @@
         } catch (_) { pageFailed = true; }
         if (pageFailed) {
             // a reply may have reached Slack although the page could not read the answer: never sent twice
-            if (method === 'chat.postMessage' && params && params.channel && await landed(params.channel, params.text)) return { ok: true, checked: true };
+            if (method === 'chat.postMessage' && params && params.channel && await landed(params.channel, params.text, params.thread_ts)) return { ok: true, checked: true };
             j = await new Promise(function(resolve) {
                 const limit = setTimeout(function() { resolve(null); }, 10000);
                 try { chrome.runtime.sendMessage({ type: 'WP_SLACK_API', url: url, form: fields }, function(a) { void chrome.runtime.lastError; clearTimeout(limit); resolve(a || null); }); }
@@ -73,9 +73,9 @@
         throw new Error((j && j.error) || 'no answer');
     };
     // 1.7.543: is this text already the newest message from me in that chat (sent in the last 2 min)?
-    const landed = async function(channel, text) {
+    const landed = async function(channel, text, th) {
         try {
-            const h = await api('conversations.history', { channel: channel, limit: '5' });
+            const h = th ? await api('conversations.replies', { channel: channel, ts: th, limit: '200' }) : await api('conversations.history', { channel: channel, limit: '5' }); // 1.7.554: a thread reply is only in its thread
             const want = String(text || '').trim();
             return (h.messages || []).some(function(m) { return m.user === team.user && String(m.text || '').trim() === want && Date.now() - Number(String(m.ts).split('.')[0]) * 1000 < 120000; });
         } catch (_) { return false; }
@@ -146,18 +146,19 @@
         }
         return out.sort(function(a, b) { return a.name.localeCompare(b.name); }).slice(0, 600);
     };
-    const readChat = async function(id) {
-        const h = await api('conversations.history', { channel: id, limit: '30' });
+    // 1.7.554: th = a thread (its parent message's ts): that thread's messages instead of the channel's
+    const readChat = async function(id, th) {
+        const h = th ? await api('conversations.replies', { channel: id, ts: th, limit: '60' }) : await api('conversations.history', { channel: id, limit: '30' });
         const skip = ['channel_join', 'channel_leave', 'channel_topic', 'channel_purpose', 'channel_name', 'group_join', 'group_leave'];
         const msgs = [];
-        for (const m of (h.messages || []).slice().reverse()) {
+        for (const m of (th ? (h.messages || []) : (h.messages || []).slice().reverse())) { // replies come oldest first
             if (m.subtype && skip.indexOf(m.subtype) >= 0) continue;
             let x = await clean(m.text || '');
             if (!x && Array.isArray(m.files) && m.files.length) x = '[file: ' + m.files.map(function(f) { return f.name || f.title || 'file'; }).join(', ').slice(0, 120) + ']';
             if (!x) continue;
-            msgs.push({ t: hhmm(m.ts), w: await fromOf(m), x: x.slice(0, 1000), me: Boolean(team.user && m.user === team.user) });
+            msgs.push({ t: hhmm(m.ts), w: await fromOf(m), x: x.slice(0, 1000), me: Boolean(team.user && m.user === team.user), ts: String(m.ts || ''), rc: th ? 0 : Number(m.reply_count) || 0 }); // 1.7.554: ts + reply count (threads)
         }
-        return { id: id, name: await chatName(id), ok: true, msgs: msgs, at: Date.now() };
+        return { id: id, th: th || '', name: await chatName(id), ok: true, msgs: msgs, at: Date.now() };
     };
     // A command from the tablet: read a chat, or send a reply (typed there, Send tapped there) and read it again
     const ranKeys = {}; // 1.7.542: a command is run once, whatever hands it over again
@@ -167,15 +168,17 @@
         const id = String(cmd && cmd.item || '');
         if (!/^[CDG][A-Z0-9]{6,15}$/.test(id)) return null;
         if (!team) team = readTeam();
-        if (!team) return { id: id, ok: false, err: OUT, at: Date.now() };
+        const th = /^\d{9,11}\.\d{1,8}$/.test(String(cmd.th || '')) ? String(cmd.th) : ''; // 1.7.554: a thread
+        if (cmd.th && !th) return { id: id, ok: false, err: 'That thread could not be found — nothing sent', at: Date.now() }; // never posted in the channel instead
+        if (!team) return { id: id, th: th, ok: false, err: OUT, at: Date.now() };
         if (cmd.op === 'reply') {
             const text = String(cmd.text || '').trim().slice(0, 2000);
             if (!text) return null;
-            try { await api('chat.postMessage', { channel: id, text: text }); }
-            catch (e) { return { id: id, ok: false, err: 'Your reply was NOT sent: ' + String(e && e.message || e).slice(0, 120), at: Date.now() }; }
+            try { await api('chat.postMessage', th ? { channel: id, text: text, thread_ts: th } : { channel: id, text: text }); }
+            catch (e) { return { id: id, th: th, ok: false, err: 'Your reply was NOT sent: ' + String(e && e.message || e).slice(0, 120), at: Date.now() }; }
         } else if (cmd.op !== 'open') return null;
-        try { return await readChat(id); }
-        catch (e) { return { id: id, ok: false, err: (cmd.op === 'reply' ? 'Sent, but the chat could not be read again: ' : 'Could not read it: ') + String(e && e.message || e).slice(0, 120), at: Date.now() }; }
+        try { return await readChat(id, th); }
+        catch (e) { return { id: id, th: th, ok: false, err: (cmd.op === 'reply' ? 'Sent, but the chat could not be read again: ' : 'Could not read it: ') + String(e && e.message || e).slice(0, 120), at: Date.now() }; }
     };
     // The relay's answer: the picked channels, whether the tablet is open (then commands are asked for every 5 s), commands
     const take = async function(answer) {
