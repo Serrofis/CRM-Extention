@@ -1713,7 +1713,9 @@
             // 1.7.564: the list could not tell → the rule from before 1.7.559: a number in the header or the message box,
             // or a "~" profile name = not saved; a name = saved. The 1.7.559 look into the contact info is gone (the
             // narrow side panel hides its Edit / Add, so saved drivers counted as strangers and got nothing).
-            if (store.saved === null && !notSaved && /^\s*~/.test(contactTitle)) notSaved = true;
+            // 1.7.567: "@name" (a WhatsApp username, shown for a number that is not in your contacts) = not saved too
+            // (25 Nov: a suggested driver got the message in a chat titled "@infiniturcolombia")
+            if (store.saved === null && !notSaved && /^\s*[~@]/.test(contactTitle)) notSaved = true;
             if (notSaved) {
                 // Not a saved contact: add them first, then send.
                 let addProblem = job.contactTried ? 'tried already' : 'no name to save';
