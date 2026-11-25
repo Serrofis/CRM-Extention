@@ -18745,7 +18745,8 @@ async function wpTransferAssistantExtensionEnabled() {
             '#wp-dash-term .wpdt-tli.k-sugg{border-left-color:#4aa8ff} #wp-dash-term .wpdt-tli.k-sugg .t-sum{color:#7cc0ff}',
             '#wp-dash-term .wpdt-tli.k-raise{border-left-color:#dbb123} #wp-dash-term .wpdt-tli.k-raise .t-sum{color:#f2d45f}',
             '#wp-dash-term .wpdt-tli.k-bc{border-left-color:#8fffd5} #wp-dash-term .wpdt-tli.k-bc .t-sum{color:#8fffd5}',
-            '#wp-dash-term .wpdt-tli.k-ac{border-left-color:#ff8f87} #wp-dash-term .wpdt-tli.k-ac .t-sum{color:#ffb0a8}',
+            '#wp-dash-term .wpdt-tli.k-ac{border-left-color:#ff9f43} #wp-dash-term .wpdt-tli.k-ac .t-sum{color:#ffc28a}', // 1.7.571: A/C / auto-cancel orange (red = failed only)
+            '#wp-dash-term .wpdt-tli.k-bad{border-left-color:#ff5a4f} #wp-dash-term .wpdt-tli.k-bad .t-sum{color:#ff8a80}',
             '#wp-dash-term .wpdt-tli.k-wa{border-left-color:#25d366} #wp-dash-term .wpdt-tli.k-wa .t-sum{color:#6ee7a0}',
             '#wp-dash-term .wpdt-tli.k-em{border-left-color:#9da6ad}',
             '#wp-dash-term .wpdt-tli.is-warn .t-sum{color:#ffc94d}',
@@ -19068,7 +19069,8 @@ async function wpTransferAssistantExtensionEnabled() {
         if (pill) pill.style.display = state.collapsed ? 'inline-flex' : 'none';
         if (!state.collapsed && panel) {
             const log = panel.querySelector('.wpdt-log');
-            log.scrollTop = log.scrollHeight;
+            log.scrollTop = 0; // 1.7.571: newest is at the top now (was the bottom)
+            try { wpTermActSoon(); } catch (_) {} // 1.7.571: drawn now if lines came while minimised
         }
         wpDashRefreshStatus();
     }
@@ -19336,7 +19338,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (pct || eur || /\braised?\b/i.test(t)) { out.unshift(pct ? 'Raised +' + pct + '%' : eur ? 'Raised +€' + eur : 'Raised'); if (k === 'other') k = 'raise'; }
         if (/\bbc\b(?!\s*final)|bc&g|bc and group|broadcast/i.test(t) && !/final\s*bc/i.test(t)) { out.push('BC and Group'); if (k === 'other') k = 'bc'; }
         if (/a\/c\s*off|autocancel off|auto-cancel off/i.test(t)) { out.push('A/C Off'); if (k === 'other') k = 'ac'; }
-        else if (/auto-?cancel/i.test(low)) { const inM = (t.match(/\bin\s+(\d+\s*m(?:in)?)\b/i) || [])[1]; out.push('Auto-cancel' + (inM ? ' in ' + inM.replace(/\s+/g, '') : '')); if (k === 'other') k = 'ac'; } // 1.7.570: + when
+        else if (/auto-?cancel/i.test(low)) { const inM = (t.match(/\bin\s+(\d+\s*m(?:in)?)\b/i) || [])[1]; out.push('Auto-cancel' + (inM ? ' in ' + inM.replace(/\s+/g, '') : /auto-?cancel[^→]*started/i.test(t) ? ' started' : '')); if (k === 'other') k = 'ac'; } // 1.7.570: + when
         if (/^\s*em\b|\bEM\b/.test(t) && !out.length) { out.push('EM'); k = 'em'; }
         let sum = out.length ? out.filter(function(v, i) { return out.indexOf(v) === i; }).join(' · ') : t.replace(/^#?[\w-]+\s*\([^)]*\)\s*[—-]\s*/, '').slice(0, 90);
         if (/\b(not sent|failed|error|nothing sent|refused)\b/i.test(raw)) sum += ' — failed';
@@ -19353,12 +19355,13 @@ async function wpTransferAssistantExtensionEnabled() {
         let bad = entry.k === 'error' || /^✗/.test(x) || /\bNOT (?:done|sent|kept)\b|\bfailed\b|: not sent\b|could NOT/i.test(raw);
         const isStep = Boolean(entry.s || entry.h);
         // the transfer: kept on the line when it was written (r: id, city, pickup), else today's list, else the line itself
-        const order = (raw.match(/#w-\d+-\d+/) || [])[0] || '';
+        const lab = wpTermLabel(x); // 1.7.571: any order label, not only #w-…
+        const order = lab ? lab.l : '';
         let ref = entry.r && entry.r.i ? entry.r : null;
         if (!ref && order) { const hit = (rows || []).find(function(one) { return one && one.l === order; }); if (hit) ref = { i: hit.id, c: hit.c, w: wpTermHhmm(hit.w) }; }
         let subj = '';
-        if (ref) subj = (ref.c || order) + (ref.w ? ' ' + ref.w : '');
-        else if (order) { const m = raw.match(new RegExp(order.replace(/[-#]/g, '\\$&') + '\\s*\\(([^)]{2,40})\\)')); subj = m ? m[1] : order; }
+        if (ref) subj = (ref.c || lab && lab.c || order) + (ref.w ? ' ' + ref.w : '');
+        else if (order) subj = lab.c || order;
         let sum;
         const wa = raw.match(/^WhatsApp\s*·\s*(.*?)\s*→\s*([^:]+):\s*(.*)$/);
         const chain = raw.match(/^City Manager\s*(.*?)\s*→\s*(?:Ops Hub\s*)?chain:\s*(.*)$/);
@@ -19380,16 +19383,20 @@ async function wpTransferAssistantExtensionEnabled() {
             if (done) bad = /^✗|stopped|FAILED/.test(rest);
             sum = { k: done ? 'bc' : 'other', s: rest.replace(/^✓\s*/, '').replace(/\s+/g, ' ').slice(0, 160) };
         } else {
-            const rest = raw.replace(/#w-\d+-\d+\s*(?:\([^)]*\))?\s*/g, '').replace(/^\s*[—·-]\s*/, '').replace(/\s+[—·]\s*$/, '');
-            sum = isStep ? { k: 'other', s: rest.slice(0, 140) } : wpTermSummary(rest);
+            let rest = raw.replace(/#w-\d+-\d+\s*(?:\([^)]*\))?\s*/g, '');
+            if (order && rest.indexOf(order) === 0) rest = rest.slice(order.length).replace(/^\s*\([^)]*\)/, ''); // 1.7.571
+            rest = rest.replace(/^\s*[—·:-]\s*/, '').replace(/\s+[—·]\s*$/, '');
+            // 1.7.571: a warning / problem / explanation keeps its own words (the short summary turned "will be
+            // auto-cancelled in 12 min" into "Auto-cancel" and an explanation that mentions a raise into "Raised")
+            const own = isStep || bad || entry.k === 'warn' || !/^(?:done:|started|suggests|.*\b(?:note "|sent to|raised|auto-cancel "No Available driver" started))/i.test(rest);
+            sum = own ? { k: /auto-?cancel|A\/C Off/i.test(rest) ? 'ac' : 'other', s: rest.replace(/\s+/g, ' ').slice(0, 150) } : wpTermSummary(rest);
             const note = (rest.match(/note\s+"([^"]+)"/) || [])[1];
             if (note && sum.s.indexOf('note') < 0 && !isStep) sum.s += ' · note "' + note + '"';
             if (!sum.s || sum.s.length > 140) sum.s = rest.slice(0, 140);
         }
-        if (bad && !/NOT|failed/.test(sum.s)) sum.s += ' — failed';
         const warn = !bad && (entry.k === 'warn' || /✗/.test(raw));
         const line = document.createElement('div');
-        line.className = 'wpdt-line wpdt-tli k-' + (bad ? 'ac' : String(sum.k || 'other').replace(/[^a-z]/g, '')) + (isStep ? ' is-step' : '') + (warn ? ' is-warn' : '') + (bad ? ' is-bad' : '');
+        line.className = 'wpdt-line wpdt-tli k-' + (bad ? 'bad' : String(sum.k || 'other').replace(/[^a-z]/g, '')) + (isStep ? ' is-step' : '') + (warn ? ' is-warn' : '') + (bad ? ' is-bad' : '');
         line.title = new Date(Number(entry.at) || Date.now()).toLocaleString() + '\n' + x;
         const time = document.createElement('span');
         time.className = 't-time';
@@ -19407,7 +19414,8 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         const text = document.createElement('span');
         text.className = 't-sum';
-        text.textContent = (isStep ? '↳ ' : '') + sum.s;
+        const okDone = !bad && !warn && (entry.k === 'ok' || /^✓/.test(x)); // 1.7.571: ✓ = it worked, ✗ = it did not
+        text.textContent = (isStep ? '↳ ' : '') + (bad ? '✗ ' : okDone && !/✓/.test(sum.s) ? '✓ ' : '') + sum.s;
         line.appendChild(text);
         if (entry.m === 'box') { const tag = document.createElement('span'); tag.className = 't-who is-box'; tag.textContent = 'box'; line.appendChild(tag); }
         if (who && !isStep) { const tag = document.createElement('span'); tag.className = 't-who t-who-' + who.toLowerCase(); tag.textContent = who; line.appendChild(tag); }
@@ -19417,68 +19425,117 @@ async function wpTransferAssistantExtensionEnabled() {
     // (wp_activity_pc_v1: 14 days, up to 4000 lines), each line with its transfer (id, city, pickup time) so the
     // city button still opens it after the transfer has left the list. wp_activity_v1 (400, for the tablet) is unchanged.
     var WP_ACT_PC_KEY = 'wp_activity_pc_v1';
-    function wpActPcLoad() {
+    // 1.7.571 (user, 25 Nov: "it makes the tab lag, once it crashed"): the copy is kept in memory; it is read from
+    // storage once (again only when another tab changed it) and written at most every 3 s, merged with what is there
+    var wpActPcMem = null, wpActPcSaveTimer = null;
+    function wpActPcRead() {
         let list = [];
         try { list = JSON.parse(localStorage.getItem(WP_ACT_PC_KEY) || '[]'); } catch (_) {}
-        if (!Array.isArray(list)) list = [];
+        return Array.isArray(list) ? list.filter(Boolean) : [];
+    }
+    function wpActPcLoad() {
+        if (wpActPcMem) return wpActPcMem;
+        let list = wpActPcRead();
         if (!list.length) { // the first time: start from what wp_activity_v1 has
             try { const old = JSON.parse(localStorage.getItem('wp_activity_v1') || '[]'); if (Array.isArray(old)) list = old.filter(Boolean).slice(); } catch (_) {}
         }
+        wpActPcMem = list;
         return list;
+    }
+    function wpActPcSave() {
+        wpActPcSaveTimer = null;
+        try {
+            const since = Date.now() - 14 * 86400000;
+            const seen = new Set();
+            let list = wpActPcRead().concat(wpActPcMem || []).filter(function(e) {
+                if (!e || Number(e.at) <= since) return false;
+                const id = e.at + '|' + e.x;
+                if (seen.has(id)) return false;
+                seen.add(id);
+                return true;
+            }).sort(function(p, q) { return Number(p.at) - Number(q.at); });
+            if (list.length > 4000) list = list.slice(-4000);
+            wpActPcMem = list;
+            try { localStorage.setItem(WP_ACT_PC_KEY, JSON.stringify(list)); }
+            catch (_) { wpActPcMem = list.slice(-1500); localStorage.setItem(WP_ACT_PC_KEY, JSON.stringify(wpActPcMem)); } // storage full: keep the newest
+        } catch (_) {}
     }
     function wpActPcAdd(one) {
         try {
             const entry = Object.assign({}, one);
-            const order = (String(entry.x || '').match(/#w-\d+-\d+/) || [])[0];
-            if (order) {
-                const hit = (wpRemoteList() || []).find(function(row) { return row && row.l === order; });
-                if (hit && hit.id) entry.r = { i: String(hit.id), c: String(hit.c || '').slice(0, 30), w: wpTermHhmm(hit.w) };
+            const label = wpTermLabel(String(entry.x || ''));
+            if (label) {
+                const hit = (wpRemoteList() || []).find(function(row) { return row && row.l === label.l; });
+                if (hit && hit.id) entry.r = { i: String(hit.id), c: String(hit.c || label.c || '').slice(0, 30), w: wpTermHhmm(hit.w) };
             }
-            const since = Date.now() - 14 * 86400000;
-            let list = wpActPcLoad().filter(function(e) { return e && Number(e.at) > since; });
-            list.push(entry);
-            if (list.length > 4000) list = list.slice(-4000);
-            try { localStorage.setItem(WP_ACT_PC_KEY, JSON.stringify(list)); }
-            catch (_) { localStorage.setItem(WP_ACT_PC_KEY, JSON.stringify(list.slice(-1500))); } // storage full: keep the newest
+            wpActPcLoad().push(entry);
+            if (!wpActPcSaveTimer) wpActPcSaveTimer = setTimeout(wpActPcSave, 3000);
         } catch (_) {}
+    }
+    // 1.7.571: the transfer a line is about: "#w-…" anywhere, else the line's own "<order> (<city>) —" at the start
+    function wpTermLabel(text) {
+        const raw = String(text || '').replace(/^(?:[✓✗]\s*)?(?:🤖\s*)?(?:📱\s*(?:Phone:\s*)?|🔁\s*(?:Relay:\s*)?|💻\s*(?:PC:\s*)?)?(?:wlcm\s*[:·]\s*)?/, '');
+        const w = raw.match(/(#w-\d+-\d+)(?:\s*\(([^)]{2,40})\))?/);
+        if (w) return { l: w[1], c: w[2] || '' };
+        const m = raw.match(/^(#?[A-Za-z0-9][\w-]{3,24})\s*\(([^)]{2,40})\)\s*(?:—|:|$)/);
+        if (m && /\d/.test(m[1])) return { l: m[1], c: m[2] };
+        const any = raw.match(/(#?[A-Z]{1,4}\d{4,}[\w-]*)\s*\(([^)]{2,40})\)/);
+        if (any) return { l: any[1], c: any[2] };
+        return null;
     }
     function wpTermActRender(full) {
         const panel = document.getElementById('wp-dash-term');
         const log = panel && panel.querySelector('.wpdt-log');
         if (!log || wpTermAll()) return;
         if (true) { // 1.7.570: newest first, from the PC's own copy (wpActPcLoad), like the tablet
+            // 1.7.571: nothing is drawn while the tab is hidden or the box minimised (drawn when it shows again),
+            // and new lines are added at the top instead of drawing everything again
+            if (document.hidden || panel.style.display === 'none') { log.__actDirty = true; return; }
             let all = wpActPcLoad();
-            // the box's lines (mirrored while this PC is on standby), in time order with this machine's
             try { const box = JSON.parse(localStorage.getItem('wp_box_activity_v1') || '[]'); if (Array.isArray(box) && box.length && wpIsMainMachine && !wpIsMainMachine()) { all = all.concat(box).sort(function(p, q) { return Number(p.at) - Number(q.at); }); } } catch (_) {}
             let clearedAt = 0;
             try { clearedAt = Number(sessionStorage.getItem('wp_term_cleared_v1')) || 0; } catch (_) {}
-            all = all.filter(function(entry) { return entry && Number(entry.at) > clearedAt; });
-            const shown = log.__actShown || 300;
-            const sig = all.length + '|' + shown + '|' + (all.length ? all[all.length - 1].at + all[all.length - 1].x : '');
-            if (!full && log.__actSig === sig) return;
-            log.__actSig = sig;
-            const keepTop = log.scrollTop;
-            log.textContent = '';
-            let rows = [];
-            try { rows = wpRemoteList() || []; } catch (_) {}
+            if (clearedAt) all = all.filter(function(entry) { return entry && Number(entry.at) > clearedAt; });
+            const shown = log.__actShown || 150;
+            const newest = all.length ? Number(all[all.length - 1].at) : 0;
             const today = new Date().toDateString();
+            if (!full && !log.__actDirty && log.__actNewest && newest === log.__actNewest && log.__actCount === all.length) return;
+            let rows = null;
+            const rowsOf = function() { if (!rows) { try { rows = wpRemoteList() || []; } catch (_) { rows = []; } } return rows; };
+            // only newer lines (same day): put them on top
+            if (!full && !log.__actDirty && log.__actNewest && newest > log.__actNewest && log.__actDay === today && log.firstChild) {
+                const fresh = [];
+                for (let i = all.length - 1; i >= 0 && Number(all[i].at) > log.__actNewest; i--) fresh.push(all[i]);
+                if (fresh.length < 40) {
+                    const frag = document.createDocumentFragment();
+                    fresh.forEach(function(entry) { try { wpTermActRow(frag, entry, entry.r ? [] : rowsOf()); } catch (_) {} });
+                    log.insertBefore(frag, log.firstChild);
+                    log.__actNewest = newest; log.__actCount = all.length;
+                    return;
+                }
+            }
+            log.__actDirty = false; log.__actNewest = newest; log.__actCount = all.length; log.__actDay = today;
+            const keepTop = log.scrollTop;
+            const frag = document.createDocumentFragment();
             let lastDay = '';
             all.slice(-shown).reverse().forEach(function(entry) {
                 const when = new Date(Number(entry.at));
                 const day = when.toDateString();
-                if (day !== lastDay && day !== today) { const d = document.createElement('div'); d.className = 'wpdt-line is-act is-day'; d.textContent = when.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }); log.appendChild(d); }
+                if (day !== lastDay && day !== today) { const d = document.createElement('div'); d.className = 'wpdt-line is-act is-day'; d.textContent = when.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }); frag.appendChild(d); }
                 lastDay = day;
-                try { wpTermActRow(log, entry, rows); } catch (_) {}
+                try { wpTermActRow(frag, entry, entry.r ? [] : rowsOf()); } catch (_) {}
             });
             if (all.length > shown) {
                 const more = document.createElement('div');
                 more.className = 'wpdt-line wpdt-more';
                 more.textContent = 'Show older (' + (all.length - shown) + ' more)';
-                more.addEventListener('click', function(event) { event.stopPropagation(); log.__actShown = shown + 300; wpTermActRender(true); });
-                log.appendChild(more);
+                more.addEventListener('click', function(event) { event.stopPropagation(); log.__actShown = shown + 150; wpTermActRender(true); });
+                frag.appendChild(more);
             }
-            if (!all.length) { const empty = document.createElement('div'); empty.className = 'wpdt-line is-act'; empty.textContent = 'No wlcm activity yet.'; log.appendChild(empty); }
-            log.scrollTop = full && !log.__actShownOnce ? 0 : keepTop; // newest at the top
+            if (!all.length) { const empty = document.createElement('div'); empty.className = 'wpdt-line is-act'; empty.textContent = 'No wlcm activity yet.'; frag.appendChild(empty); }
+            log.textContent = '';
+            log.appendChild(frag);
+            log.scrollTop = log.__actShownOnce ? keepTop : 0; // newest at the top
             log.__actShownOnce = true;
             return;
         }
@@ -19501,8 +19558,9 @@ async function wpTransferAssistantExtensionEnabled() {
         while (log.children.length > 150) log.removeChild(log.firstChild);
         if (full || nearBottom) log.scrollTop = log.scrollHeight;
     }
-    function wpTermActSoon() { clearTimeout(wpTermActTimer); wpTermActTimer = setTimeout(function() { wpTermActRender(false); }, 60); }
-    try { window.addEventListener('storage', function(event) { if (event.key === 'wp_activity_v1' || event.key === 'wp_box_activity_v1' || event.key === 'wp_activity_pc_v1') wpTermActSoon(); }); } catch (_) {} // 1.7.555: + the box's lines
+    function wpTermActSoon() { if (wpTermActTimer) return; wpTermActTimer = setTimeout(function() { wpTermActTimer = null; wpTermActRender(false); }, 400); } // 1.7.571: at most every 0.4 s (was each line + 60 ms)
+    try { document.addEventListener('visibilitychange', function() { if (!document.hidden) wpTermActSoon(); }); } catch (_) {} // 1.7.571: drawn when the tab shows again
+    try { window.addEventListener('storage', function(event) { if (event.key === 'wp_activity_pc_v1') { if (!wpActPcSaveTimer) wpActPcMem = null; wpTermActSoon(); } else if (event.key === 'wp_box_activity_v1') wpTermActSoon(); }); } catch (_) {} // 1.7.555: + the box's lines // 1.7.571: wp_activity_v1 changes come with the PC copy
     // A Terminal line only for this tab (not in wlcm activity): shown in the Activity view when it is
     // something to do (a click) or a problem
     function wpActivityTakes(text) { return /^(?:[✓✗]\s*)?(?:🤖\s*)?(?:wlcm\b|Full auto\b|Automations ·|📱 Phone|💻 PC|WhatsApp ·)/.test(String(text || '').replace(/\s+/g, ' ').trim()); }
