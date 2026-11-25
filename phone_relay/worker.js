@@ -435,7 +435,7 @@ async function pushAll(env, origin) {
 // through the phone's own endpoints: POST /api/mirror {path, body} with the PC key. MIRROR_TAG never
 // leaves this process, so only this route can use the phone endpoints without a paired phone.
 const MIRROR_TAG = Array.from(crypto.getRandomValues(new Uint8Array(16))).map((b) => b.toString(16).padStart(2, '0')).join('');
-const MIRROR_PATHS = ['/api/state', '/api/answer', '/api/command', '/api/list', '/api/detail', '/api/connect']; // 1.7.560: + connect (Work from: This PC / Box in the PC's Settings)
+const MIRROR_PATHS = ['/api/state', '/api/answer', '/api/command', '/api/list', '/api/detail', '/api/connect']; // 1.7.560: + connect
 async function api(request, env, ctx, url) {
     const path = url.pathname;
     const now = Date.now();
@@ -631,7 +631,7 @@ async function api(request, env, ctx, url) {
                 const fresh = activity.filter((a) => !a.h && a.at >= (hist.last || 0) - 600000);
                 if (fresh.length && activity[activity.length - 1].at > (hist.last || 0)) {
                     const have = new Set(hist.lines.map((a) => a.at + '|' + a.x));
-                    fresh.forEach((a) => { if (!have.has(a.at + '|' + a.x)) hist.lines.push({ at: a.at, k: a.k, x: a.x, m: a.m }); }); // 1.7.537: + machine
+                    fresh.forEach((a) => { if (!have.has(a.at + '|' + a.x)) hist.lines.push(Object.assign({ at: a.at, k: a.k, x: a.x, m: a.m }, a.s ? { s: 1 } : {})); }); // 1.7.537: + machine; 1.7.555: + s (a step)
                     hist.lines.sort((p, q) => p.at - q.at);
                     hist.lines = hist.lines.filter((a) => a.at > now - 26 * 3600000).slice(-3000);
                     hist.last = activity[activity.length - 1].at;
@@ -696,7 +696,7 @@ async function api(request, env, ctx, url) {
         // 1.7.440: one WhatsApp chat read on the PC for the phone
         if (data.waChat && typeof data.waChat === 'object' && /^w[a-z0-9]{4,30}$/.test(String(data.waChat.id || ''))) {
             const c = data.waChat;
-            await put(env, 'wachat', { id: String(c.id), ok: Boolean(c.ok), err: String(c.err || '').slice(0, 200), title: String(c.title || '').slice(0, 80), msgs: (Array.isArray(c.msgs) ? c.msgs : []).slice(-40).filter((m) => m && typeof m === 'object').map((m) => ({ t: String(m.t || '').slice(0, 12), w: String(m.w || '').slice(0, 60), x: String(m.x || '').slice(0, 1000), me: Boolean(m.me) })), at: now });
+            await put(env, 'wachat', { id: String(c.id), ok: Boolean(c.ok), err: String(c.err || '').slice(0, 200), title: String(c.title || '').slice(0, 80), msgs: (Array.isArray(c.msgs) ? c.msgs : []).slice(-40).filter((m) => m && typeof m === 'object').map((m) => Object.assign({ t: String(m.t || '').slice(0, 12), w: String(m.w || '').slice(0, 60), x: String(m.x || '').slice(0, 1000), me: Boolean(m.me) }, Array.isArray(m.tr) && m.tr.length ? { tr: m.tr.slice(0, 6).map((t) => [String((t && t[0]) || '').replace(/\D/g, '').slice(0, 12), String((t && t[1]) || '').slice(0, 30)]).filter((t) => t[0]) } : {})), at: now }); // 1.7.558: + tr (the transfers in a message)
             if (c.ok) { // 1.7.538d: every WhatsApp chat read is kept for the tablet
                 const kept = await get(env, 'wachat');
                 const cache = (await get(env, 'wamsgs')) || {};
@@ -708,8 +708,30 @@ async function api(request, env, ctx, url) {
         }
         // 1.7.538: unread WhatsApp DMs + mentions (the Chats tab), from the machine that works
         if (data.waList && typeof data.waList === 'object' && Array.isArray(data.waList.list)) {
-            const wlist = data.waList.list.filter((a) => a && typeof a === 'object' && /^w[a-z0-9]{4,30}$/.test(String(a.id || ''))).slice(0, 40).map((a) => ({ id: String(a.id), title: String(a.title || '').slice(0, 80), kind: a.kind === 'mention' || a.kind === 'group' ? a.kind : 'direct', p: String(a.p || '').slice(0, 200), count: Number(a.count) || 0, tm: String(a.tm || '').slice(0, 8) })); // 1.7.540: + groups, time
+            const wlist = data.waList.list.filter((a) => a && typeof a === 'object' && /^w[a-z0-9]{4,30}$/.test(String(a.id || ''))).slice(0, 40).map((a) => ({ id: String(a.id), title: String(a.title || '').slice(0, 80), kind: a.kind === 'mention' || a.kind === 'group' ? a.kind : 'direct', p: String(a.p || '').slice(0, 200), count: Number(a.count) || 0, tm: String(a.tm || '').slice(0, 8), ts: Math.max(0, Number(a.ts) || 0) })); // 1.7.556: + ts // 1.7.540: + groups, time
             await put(env, 'walist', { ok: data.waList.ok !== false, list: wlist, host: isMain ? 'box' : 'pc', at: now });
+            // 1.7.556: the shift's WhatsApp chats (from Start shift on the tablet): every chat with a message at or after the
+            // start, newest message time and WhatsApp's own name; chats that drop off WhatsApp's screen are kept
+            try {
+                const wash = await get(env, 'wash');
+                if (wash && wash.start) {
+                    wash.chats = wash.chats || {};
+                    let changed = false;
+                    wlist.forEach((a, i) => {
+                        if (!a.ts || a.ts < wash.start - 60000) return;
+                        const old = wash.chats[a.id];
+                        if (old && old.ts === a.ts && old.count === a.count && old.p === a.p && old.title === a.title && old.kind === a.kind) return;
+                        wash.chats[a.id] = Object.assign({}, old || {}, a, { o: i, at: now });
+                        changed = true;
+                    });
+                    // read in WhatsApp (no longer unread there): its count goes to 0 here too
+                    const shown = new Set(wlist.map((a) => a.id));
+                    Object.keys(wash.chats).forEach((id) => { const c = wash.chats[id]; if (!shown.has(id) && c.count && wlist.length && c.ts >= Math.min(...wlist.map((a) => a.ts || Infinity))) { c.count = 0; c.at = now; changed = true; } });
+                    const ids = Object.keys(wash.chats);
+                    if (ids.length > 400) { ids.sort((x, y) => wash.chats[x].ts - wash.chats[y].ts).slice(0, ids.length - 400).forEach((id) => { delete wash.chats[id]; }); changed = true; }
+                    if (changed) { wash.at = now; await put(env, 'wash', wash); }
+                }
+            } catch (_) {}
             // 1.7.540: every WhatsApp chat of the day is kept (the panel shows only its top chats), reset at midnight (Athens)
             const day = new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/Athens' });
             const wd = (await get(env, 'waday')) || {};
@@ -846,14 +868,16 @@ async function api(request, env, ctx, url) {
         if (Array.isArray(data.chans)) await put(env, 'slackchans', { chans: data.chans.filter((c) => c && /^[CG][A-Z0-9]{6,15}$/.test(String(c.id || ''))).slice(0, 600).map((c) => ({ id: String(c.id), name: String(c.name || '').slice(0, 80) })), at: now });
         if (data.chat && typeof data.chat === 'object' && cid(data.chat.id)) {
             const c = data.chat;
-            await put(env, 'slackchat', { id: String(c.id), name: String(c.name || '').slice(0, 80), ok: Boolean(c.ok), err: String(c.err || '').slice(0, 200), msgs: (Array.isArray(c.msgs) ? c.msgs : []).slice(-40).filter((m) => m && typeof m === 'object').map((m) => ({ t: String(m.t || '').slice(0, 12), w: String(m.w || '').slice(0, 60), x: String(m.x || '').slice(0, 1000), me: Boolean(m.me) })), at: now });
+            const th = /^\d{9,11}\.\d{1,8}$/.test(String(c.th || '')) ? String(c.th) : ''; // 1.7.554: a thread
+            await put(env, 'slackchat', { id: String(c.id), th: th, name: String(c.name || '').slice(0, 80), ok: Boolean(c.ok), err: String(c.err || '').slice(0, 200), msgs: (Array.isArray(c.msgs) ? c.msgs : []).slice(th ? -60 : -40).filter((m) => m && typeof m === 'object').map((m) => ({ t: String(m.t || '').slice(0, 12), w: String(m.w || '').slice(0, 60), x: String(m.x || '').slice(0, 1000), me: Boolean(m.me), ts: /^\d{9,11}\.\d{1,8}$/.test(String(m.ts || '')) ? String(m.ts) : '', rc: Math.max(0, Math.min(9999, Number(m.rc) || 0)) })), at: now });
             // 1.7.538d: every chat read is kept (the tablet loads them at once), with the newest message time it was read for
             if (c.ok) {
                 const kept = await get(env, 'slackchat');
                 const cache = (await get(env, 'slackmsgs')) || {};
                 const asked = (await get(env, 'slackpre')) || {};
                 const known = (((await get(env, 'slack')) || {}).list || []).find((x) => x.id === kept.id);
-                cache[kept.id] = Object.assign({}, kept, { latest: asked[kept.id] ? Number(asked[kept.id].latest) || 0 : known ? Number(known.at) || 0 : 0 });
+                if (kept.th) cache[kept.id + '/' + kept.th] = Object.assign({}, kept, { latest: 0 }); // 1.7.554: a thread is kept beside its channel
+                else cache[kept.id] = Object.assign({}, kept, { latest: asked[kept.id] ? Number(asked[kept.id].latest) || 0 : known ? Number(known.at) || 0 : 0 });
                 const ids = Object.keys(cache);
                 if (ids.length > 50) ids.sort((a, b) => cache[a].at - cache[b].at).slice(0, ids.length - 50).forEach((id) => { delete cache[id]; });
                 await put(env, 'slackmsgs', cache);
@@ -928,10 +952,15 @@ async function api(request, env, ctx, url) {
         const kept = await get(env, 'waqr_' + role);
         return json({ ok: true, qr: kept && kept.qr && now - Number(kept.at) < 90000 ? kept.qr : '', at: kept ? kept.at : 0 });
     }
+    // 1.7.556: the shift's WhatsApp chats (the tablet asks when washAt changed)
+    if (path === '/api/wash' && request.method === 'GET') {
+        const wash = (await get(env, 'wash')) || { start: 0, at: 0, chats: {} };
+        return json({ ok: true, start: Number(wash.start) || 0, at: Number(wash.at) || 0, chats: wash.chats || {}, now: now });
+    }
     if (path === '/api/state' && request.method === 'GET') {
         const state = (await get(env, 'state')) || { question: null, status: {}, at: 0 };
         const answers = (await get(env, 'answers')) || [];
-        return json({ ok: true, machines: await machinesView(env, now), state: state, now: now, pending: answers.map((answer) => answer.qid), vapid: (await vapid(env)).publicKey, wa: (await get(env, 'wa')) || null, wachat: (await get(env, 'wachat')) || null, alert: (await get(env, 'alert')) || null, walist: (await get(env, 'walist')) || null, waday: (await get(env, 'waday')) || null, slack: (await get(env, 'slack')) || null, slackchat: (await get(env, 'slackchat')) || null, slackpick: ((await get(env, 'slackpick')) || {}).ids || [], rauto: (await get(env, 'rauto')) || {}, rautoq: ((await get(env, 'rautost')) || {}).q || null, rautorun: ((await get(env, 'rautost')) || {}).run || null }); // 1.7.538: + the Chats tab; stage 2: + the relay's Tomorrow / 2-4 days
+        return json({ ok: true, machines: await machinesView(env, now), state: state, now: now, pending: answers.map((answer) => answer.qid), vapid: (await vapid(env)).publicKey, wa: (await get(env, 'wa')) || null, wachat: (await get(env, 'wachat')) || null, alert: (await get(env, 'alert')) || null, walist: (await get(env, 'walist')) || null, waday: (await get(env, 'waday')) || null, slack: (await get(env, 'slack')) || null, slackchat: (await get(env, 'slackchat')) || null, slackpick: ((await get(env, 'slackpick')) || {}).ids || [], washStart: Number(((await get(env, 'wash')) || {}).start) || 0, washAt: Number(((await get(env, 'wash')) || {}).at) || 0, rauto: (await get(env, 'rauto')) || {}, rautoq: ((await get(env, 'rautost')) || {}).q || null, rautorun: ((await get(env, 'rautost')) || {}).run || null }); // 1.7.538: + the Chats tab; stage 2: + the relay's Tomorrow / 2-4 days
     }
     if (path === '/api/answer' && request.method === 'POST') {
         const data = await body(request);
@@ -990,6 +1019,12 @@ async function api(request, env, ctx, url) {
             }
             return fail(400, 'bad request');
         }
+        // 1.7.556: Start shift (tablet): the WhatsApp list starts again from now
+        if (data.type === 'shift') {
+            if (data.op !== 'start') return fail(400, 'bad request');
+            await put(env, 'wash', { start: now, at: now, chats: {} });
+            return json({ ok: true, start: now, now: now });
+        }
         // 1.7.538: Slack (the Chats tab): read a chat / reply (the box's Slack tab sends it) / the picked channels
         if (data.type === 'slack') {
             if (data.op === 'pick') {
@@ -1002,7 +1037,9 @@ async function api(request, env, ctx, url) {
             const slack = await get(env, 'slack');
             if (!slack || now - Number(slack.at) > 3 * 60000) return fail(409, 'Slack is not open on the box');
             if (!slack.signedIn) return fail(409, 'Slack is signed out on the box — sign in there once (noVNC)');
-            const cmd = { op: data.op, item: item, key: data.op + ':' + item + ':' + now, at: now };
+            const th = /^\d{9,11}\.\d{1,8}$/.test(String(data.th || '')) ? String(data.th) : ''; // 1.7.554: a thread (its parent's ts)
+            const cmd = { op: data.op, item: item, key: data.op + ':' + item + (th ? '/' + th : '') + ':' + now, at: now };
+            if (th) cmd.th = th;
             if (data.op === 'reply') {
                 const text = String(data.text || '').trim();
                 if (!text || text.length > 2000) return fail(400, 'type a reply of up to 2000 characters');
@@ -1037,7 +1074,7 @@ async function api(request, env, ctx, url) {
             const item = String(data.item || '');
             const list = (await get(env, 'list')) || { rows: [] };
             if (!(list.rows || []).some((row) => String(row.id) === item)) return fail(409, 'that transfer is no longer in the list');
-            if (['bc', 'final', 'apply', 'acoff'].indexOf(data.action) < 0) return fail(400, 'bad request');
+            if (['bc', 'final', 'apply', 'acoff', 'acflip'].indexOf(data.action) < 0) return fail(400, 'bad request'); // 1.7.552: + acflip (A/C On/Off)
             entry = { type: 'quick', item: item, action: data.action, raise: String(data.raise || '').slice(0, 40), note: String(data.note || '').slice(0, 200), custom: String(data.custom || '').replace(/\s+/g, ' ').trim().slice(0, 200), at: now };
         } else if (data.type === 'cm') {
             // City Manager: open a city's window on the PC, or run one of its actions.
