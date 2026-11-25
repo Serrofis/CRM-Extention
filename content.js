@@ -11797,6 +11797,8 @@ async function wpTransferAssistantExtensionEnabled() {
                     if (/^sent to BC(?:,| and) Group$/i.test(String(options.customMessage || ''))) options.customMessage = '';
                 }
                 url.searchParams.set('wpCityTaskCustomMessage', String(options.customMessage || ''));
+                // 1.7.561: the tab must not add its own "sent to BC and Group" (1.7.315) — wpBcNoteTick writes it after WhatsApp (was written twice)
+                if (bcNoteLater) url.searchParams.set('wpBcNoteLater', '1'); else url.searchParams.delete('wpBcNoteLater');
                 url.searchParams.set('wpCityTaskNeedsEm', options.needsEm ? '1' : '0');
                 url.searchParams.set('wpCityTaskRaiseMessage', String(options.raiseMessage || ''));
                 url.searchParams.set('wpCityPriceIncrease', String(options.priceIncrease || ''));
@@ -19480,6 +19482,11 @@ async function wpTransferAssistantExtensionEnabled() {
             // Welcomers") is listed (its sends were missing from wlcm activity)
             if (/ → .*\(\d+\/\d+\)/.test(String(message.label || ''))) return;
             const label = String(message.label || '').slice(0, 80);
+            // 1.7.561: '📱 chat → X' = the tablet opening a chat to READ it — nothing is sent; it was logged as a red "NOT sent"
+            if (/^📱 chat → /.test(label)) {
+                if (!message.ok) wpActivityAdd('WhatsApp · tablet: could not open "' + who + '" to read it (only reading, no message was being sent) — ' + String(message.info || '').slice(0, 100), 'warn', 'wa' + message.jobId);
+                return;
+            }
             wpActivityAdd('WhatsApp · ' + (label && label.indexOf(who) >= 0 ? label : (label ? label + ' → ' : '') + who) + ': ' + (message.ok ? 'sent' : 'NOT sent — ' + String(message.info || '').slice(0, 120)), message.ok ? 'ok' : 'error', 'wa' + message.jobId);
         });
     } catch (_) {}
@@ -48500,6 +48507,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // 1.7.264: a raise made by you (not by mod) on a transfer already sent
     // to Final writes one note only
     const wpByDirector = params.get('wpByDirector') === '1';
+    const wpBcNoteLater = params.get('wpBcNoteLater') === '1'; // 1.7.561
     // 1.7.434: a wlcm tab opened just before Pause all does nothing
     if (wpByDirector && wpPauseAllOnTab()) {
         try { wpStep('Pause all is on — wlcm did nothing here'); } catch (_) {}
@@ -48566,7 +48574,8 @@ async function wpTransferAssistantExtensionEnabled() {
             'wpCityPriceIncrease',
             'wpCityBroadcastMode',
             'wpCityReenableAc30s',
-            'wpByDirector'
+            'wpByDirector',
+            'wpBcNoteLater'
         ].forEach(function(key) {
             params.delete(key);
         });
@@ -49646,7 +49655,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // City Manager's buttons) wrote no note at all; now the usual note is
         // added, as the quickbar does. Already sent to Final: no second one.
         if ((broadcastMode === 'final' || broadcastMode === 'send') && !sequence.some(function(note) { return !sameNote(note, 'em'); })) {
-            if (broadcastMode === 'send') sequence.push('sent to BC and Group');
+            if (broadcastMode === 'send') { if (wpBcNoteLater) wpStep('BC & Group: the note is written by wlcm once WhatsApp has sent'); else sequence.push('sent to BC and Group'); } // 1.7.561
             else if (!wpTransferHasFinalNote()) sequence.push('final BC');
             else wpStep('Already sent to Final — no second Final BC note');
         }
