@@ -40,6 +40,9 @@
     const JOB_MAX_AGE = 55 * 1000;
     const DUPLICATE_WINDOW = 10 * 60 * 1000;
     const OPENING_KEY = 'wp_wa_opening_v1';
+    // 1.7.366: the person's job while their contact is saved: saving can close the
+    // chat or reload the page, and the job is already off the queue by then.
+    const RESUME_KEY = 'wp_wa_person_resume_v1';
     // Invite code -> the group's exact name, learned the first time the
     // group is opened from its link. Afterwards the group is opened by
     // name (no reload) and only used when the open chat's name matches
@@ -126,8 +129,86 @@
     }
     const progress = function(job, info) { report(job, true, info, true); };
 
+    // 1.7.421: you come first. wlcm waits while you type in this WhatsApp, never
+    // adds to text already in a chat's box, and if you start typing while it
+    // types its own message it stops, clears its text and tries again later.
+    var wpUserTypedAt = 0;
+    var wpJobStartedAt = 0;
+    ['keydown', 'compositionstart'].forEach(function(type) {
+        document.addEventListener(type, function(event) { if (event.isTrusted) wpUserTypedAt = Date.now(); }, true);
+    });
+    const USER_QUIET_MS = 6000;
+    const USER_WAIT_MAX = 5 * 60000;
+    function userTypedDuringJob() { return wpJobStartedAt && wpUserTypedAt > wpJobStartedAt; }
+    async function keepJobAlive(job) {
+        try {
+            const jobs = (await getStore(JOBS_KEY)) || [];
+            const mine = jobs.find(function(j) { return j.id === job.id; });
+            if (mine) { mine.createdAt = Date.now(); await setStore(JOBS_KEY, jobs); }
+        } catch (_) {}
+    }
+    // true = you are done typing; false = still typing after 5 minutes
+    async function waitUserIdle(job) {
+        const started = Date.now();
+        let said = 0;
+        while (Date.now() - wpUserTypedAt < USER_QUIET_MS) {
+            if (Date.now() - started > USER_WAIT_MAX) return false;
+            if (Date.now() - said > 15000) {
+                said = Date.now();
+                progress(job, 'waiting — you are typing in WhatsApp; it goes when you stop');
+                await keepJobAlive(job);
+            }
+            await sleep(500);
+        }
+        return true;
+    }
+    // empties the chat's box (WhatsApp's editor needs a Backspace on the whole box)
+    async function clearComposer() {
+        const box = composer();
+        if (!box) return;
+        for (let i = 0; i < 3 && String(box.textContent || '').replace(/[\s\u00a0\u200b]+/g, ''); i++) {
+            box.focus();
+            const range = document.createRange();
+            range.selectNodeContents(box);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            await sleep(80);
+            box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true, cancelable: true }));
+            await sleep(200);
+        }
+    }
+    function userInterrupt() { const error = new Error('WP_USER_TYPED'); error.wpUserTyped = true; return error; }
+
     // ---- WhatsApp Web page parts (several selectors: WA changes its DOM) ----
     function paneSide() { return document.querySelector('#pane-side'); }
+    // 1.7.453: is this WhatsApp linked? (for the box health alert) — chat list = linked; QR / "log in" page = not linked
+    try {
+        setInterval(function() {
+            let linked = null, state = '';
+            const head = String(document.body && document.body.innerText || '').slice(0, 3000);
+            // 1.7.460: "WhatsApp is open in another window … Use here" = not usable
+            if (/open in another window|Use here/i.test(head) && !document.querySelector('#pane-side')) { linked = false; state = 'elsewhere'; }
+            else if (document.querySelector('#pane-side, #side')) linked = true;
+            else if (document.querySelector('[data-ref] canvas, canvas[aria-label*="QR" i], canvas[aria-label*="scan" i]') || /Steps to log in|Log in to WhatsApp|Scan to log in|Link with phone number/i.test(String(document.body && document.body.innerText || '').slice(0, 3000))) linked = false;
+            if (linked === null) return;
+            // 1.7.463: not linked and the QR is on screen: its picture goes to the app's Connect sheet
+            // (through the CRM page and your own relay), so the box can be linked from the phone / tablet
+            try {
+                const canvas = linked === false && state !== 'elsewhere' ? document.querySelector('[data-ref] canvas, canvas[aria-label*="QR" i], canvas[aria-label*="scan" i]') : null;
+                const qr = canvas ? canvas.toDataURL('image/png') : '';
+                if (qr !== (window.__wpWaQrLast || '')) { window.__wpWaQrLast = qr; chrome.storage.local.set({ wp_wa_qr_v1: { qr: qr, at: Date.now() } }); }
+            } catch (_) {}
+            const write = function() { try { chrome.storage.local.set({ wp_wa_link_v1: { linked: linked, at: Date.now(), s: state } }); } catch (_) {} };
+            // 1.7.460: a second WhatsApp (tab + side panel) always shows "Use here": it must not
+            // override the one that works — only written when no working one reported in 40 s
+            if (state === 'elsewhere') {
+                try { chrome.storage.local.get('wp_wa_link_v1', function(got) { const v = got && got.wp_wa_link_v1; if (v && v.linked === true && Date.now() - Number(v.at) < 40000) return; write(); }); } catch (_) {}
+                return;
+            }
+            write();
+        }, 15000);
+    } catch (_) {}
     function searchBox() {
         return document.querySelector(
             '#side div[contenteditable="true"][role="textbox"], ' +
@@ -169,6 +250,28 @@
             /^(profile details|details|search|menu|more options|video call|voice call|call|get the app|select messages|close chat)$/i.test(text) ||
             (text.split(',').length > 2);
     }
+    // 1.7.505: WhatsApp wraps an unsaved number in the header in invisible direction marks
+    // (‪+52 55 1097 090‬) and no-break spaces; the plain test missed it, so a driver's
+    // chat was never confirmed (the contact-panel fallback then closed the chat: header "").
+    function isPhoneTitle(title) {
+        const plain = String(title || '').replace(/[   ​-‏‪-‮⁦-⁩﻿]/g, ' ').trim();
+        return /^[+\d\s().-]+$/.test(plain) && plain.replace(/\D/g, '').length >= 6;
+    }
+    // 1.7.506: seen on the live WhatsApp Business (2026-11-21): a driver with a Business account shows its
+    // business name in the header ("Global Business Transportation"), the contact panel does not open with a
+    // plain click, but the message box is labelled "Type a message to +52 1 55 3109 7090". That label is the
+    // proof: its digits end with the number's last 9 (Mexico's extra "1" does not matter).
+    function composerPhoneDigits() {
+        const labels = [];
+        try {
+            Array.from(document.querySelectorAll('#main footer [aria-label], #main footer [title], #main footer [aria-placeholder], #main footer [data-placeholder], #main [contenteditable="true"]')).forEach(function(el) {
+                ['aria-label', 'title', 'aria-placeholder', 'data-placeholder', 'placeholder'].forEach(function(name) { const v = el.getAttribute(name); if (v) labels.push(v); });
+            });
+            Array.from(document.querySelectorAll('#main footer')).forEach(function(foot) { labels.push(String(foot.innerText || '').slice(0, 120)); });
+        } catch (_) {}
+        const hit = labels.map(function(text) { return String(text).match(/message\s+(?:to|for|a|à|an)\s+(.+)$/i); }).find(function(m) { return m && isPhoneTitle(m[1]); });
+        return hit ? hit[1].replace(/\D/g, '') : '';
+    }
     function headerTitle() {
         const header = document.querySelector('#main header');
         if (!header) return '';
@@ -181,8 +284,33 @@
     }
     function composer() {
         return document.querySelector(
-            '#main footer div[contenteditable="true"][role="textbox"], #main footer div[contenteditable="true"]'
+            '#main footer div[contenteditable="true"][role="textbox"], #main footer div[contenteditable="true"], #main div[contenteditable="true"][role="textbox"], #main [data-lexical-editor="true"]'
         );
+    }
+    // 1.7.365: the chat box can be missing for a moment after the contact panel
+    // was used (the chat redraws, or the panel is still over it): waited for, and
+    // the panel closed. composerHint says what was on screen when it never came.
+    async function waitComposer() {
+        let box = await waitFor(composer, 4000);
+        if (box) return box;
+        closeSidePanel();
+        box = await waitFor(composer, 3000);
+        if (box) return box;
+        try {
+            const close = findClickable(document, /^(close|wds-ic-close.*)$/i);
+            if (close && !close.closest('#main footer') && !close.closest('#side')) clickEl(close);
+            [document.activeElement, document].forEach(function(target) {
+                if (target) target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+            });
+        } catch (_) {}
+        return waitFor(composer, 3000);
+    }
+    function composerHint() {
+        const main = document.querySelector('#main');
+        const footer = main && main.querySelector('footer');
+        const said = footer ? String(footer.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60) : '';
+        return ' (chat ' + (main ? 'open' : 'not open') + ', footer ' + (footer ? 'yes' : 'no') +
+            ', typing boxes ' + document.querySelectorAll('[contenteditable="true"]').length + (said ? ', footer says "' + said + '"' : '') + ')';
     }
     function sendButton() {
         const icon = document.querySelector(
@@ -316,30 +444,123 @@
     // 1.7.296: "@all" at the start (Barcelona): typed by itself so WhatsApp
     // offers its "mention everyone" choice, which is clicked; when WhatsApp
     // offers none it stays as plain text "@all". Never presses Enter here.
+    // 1.7.377: "@" first, then "all", so WhatsApp's mention list opens and
+    // filters; the "everyone" entry is clicked, then Tab is tried (picks the
+    // highlighted entry; never Enter, which would send). A typed "@all" that
+    // is still plain text afterwards (not an admin) is selected and deleted.
+    function atAllPlainNode(box) {
+        const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            const holder = node.parentElement;
+            // a real mention is not ordinary editable text
+            if (holder && (holder.closest('[contenteditable="false"]') || /mention/i.test(String(holder.className || '') + ' ' + String((holder.parentElement || {}).className || '')))) continue;
+            const at = String(node.nodeValue || '').indexOf('@all');
+            if (at >= 0) return { node: node, at: at };
+        }
+        return null;
+    }
+    // 1.7.417: WhatsApp's editor now splits a typed "@all" over several pieces, so a
+    // success is only a real mention element in the box, never "the text is not found".
+    // 1.7.418 (checked on the live WhatsApp Web): a mention is a <span data-lexical-text>
+    // "@all" in the link green; typed text is the same kind of span in the text colour.
+    function atAllPieces(box) {
+        const base = window.getComputedStyle(box).color;
+        return Array.from(box.querySelectorAll('span[data-lexical-text], [contenteditable="false"], [data-mention], [class*="mention"], [class*="Mention"]')).map(function(el) {
+            const text = String(el.textContent || '');
+            // 1.7.468: a mention always reads "@…" — anything else not editable in the box (an emoji, a
+            // link preview, WhatsApp's own pieces) is not a mention. It used to count as "a person's name":
+            // messages were refused and the box emptied ("WhatsApp turned @all into a person's name").
+            const chip = /^[\s ​]*@\S/.test(text) && (el.getAttribute('contenteditable') === 'false' || el.hasAttribute('data-mention') || /mention/i.test(String(el.className || '')) ||
+                window.getComputedStyle(el).color !== base);
+            return { el: el, text: text, chip: chip };
+        });
+    }
+    function atAllChip(box) {
+        const hit = atAllPieces(box).find(function(piece) { return piece.chip; });
+        return hit ? hit.el : null;
+    }
+    function atAllPlainText(box) {
+        const plain = atAllPieces(box).filter(function(piece) { return !piece.chip && piece.el.matches('span[data-lexical-text]'); }).map(function(piece) { return piece.text; }).join('');
+        const text = plain || (atAllChip(box) ? '' : String(box.textContent || ''));
+        return /@\s*a(?:l(?:l)?)?/i.test(text.replace(/\u00a0/g, ' '));
+    }
+    function atAllOption(box) {
+        const root = box.closest('footer') || document;
+        const scope = Array.from(document.querySelectorAll('[role="listbox"], [role="list"], [role="menu"], [data-animate-dropdown-item], ul'))
+            .filter(function(el) { return !el.closest('#side') && !el.closest('#main header') && el !== root && (el.offsetParent !== null || el.getClientRects().length); });
+        const pool = scope.concat([document]); // 1.7.418: the list is plain buttons now, so the whole page is looked at too
+        let best = null;
+        pool.forEach(function(container) {
+            Array.from(container.querySelectorAll('[role="option"], [role="listitem"], [role="button"], [role="menuitem"], li, div[tabindex], button'))
+                .filter(function(el) { return !el.closest('#side') && !el.closest('#pane-side') && !el.closest('#main header') && !el.isContentEditable && el.getAttribute('role') !== 'tab' && (el.offsetParent !== null || el.getClientRects().length); })
+                .forEach(function(el) {
+                    const value = String(el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+                    if (!value || value.length > 60) return;
+                    // 1.7.463: only WhatsApp's own "everyone" entry ("all · Mention all members in this chat"),
+                    // never a person: "@all" also lists people whose name starts with "all" (Allander)
+                    if (!(/^@?(all|everyone)$/i.test(value) || /^@?(all|everyone) (mention|notify) (all|every)/i.test(value) || /^(mention|notify) (all members|everyone)/i.test(value))) return;
+                    if (el.querySelector('img') || /\+?\d[\d\s-]{6,}/.test(value)) return; // a contact row (photo / phone number)
+                    if (!best || best.contains(el)) best = el; // the innermost match
+                });
+        });
+        return best;
+    }
     async function typeAtAll(box) {
         box.focus();
-        document.execCommand('insertText', false, '@all');
-        const option = await waitFor(function() {
-            return Array.from(document.querySelectorAll('[role="option"], [role="listitem"], [role="button"], li, div[tabindex]'))
-                .filter(function(el) { return !el.closest('#side') && !el.closest('#main header') && (el.offsetParent !== null || el.getClientRects().length); })
-                .find(function(el) {
-                    const value = String(el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-                    return value && value.length < 60 && (/^@?(all|everyone)\b/i.test(value) || /(notify|mention) (everyone|all)/i.test(value));
-                }) || null;
-        }, 2000);
+        document.execCommand('insertText', false, '@');
+        await sleep(250);
+        document.execCommand('insertText', false, 'all');
+        const option = await waitFor(function() { return atAllOption(box); }, 2500);
+        // a mention = no typed "@a…" left as plain text (the chip itself is not plain text: same rule as before)
+        // 1.7.463: done only when the mention in the box reads exactly "@all" / "@everyone".
+        // Tab is not pressed any more: it takes the highlighted entry, which can be a person
+        // ("@Allander" went out instead of everyone).
+        const everyoneChip = function() {
+            const chips = atAllPieces(box).filter(function(piece) { return piece.chip; });
+            return chips.length === 1 && /^@(all|everyone)$/i.test(String(chips[0].text || '').replace(/[\s\u00a0\u200b]+/g, ''));
+        };
+        const converted = function() { return everyoneChip() && !atAllPlainText(box); };
+        let done = false;
         if (option) {
             clickEl(option);
-            await sleep(300);
+            await sleep(400);
+            done = converted();
+            if (!done && !atAllChip(box)) {
+                try { option.click(); } catch (_) {}
+                await sleep(400);
+                done = converted();
+            }
+        }
+        if (done) {
+            box.focus();
             // WhatsApp adds a space after a mention; one is added when it did not
-            if (!/\s$/.test(String(box.textContent || '').replace(/\u00a0/g, ' '))) document.execCommand('insertText', false, ' ');
+            if (!/\s$/.test(String(box.textContent || '').replace(/ /g, ' '))) document.execCommand('insertText', false, ' ');
             return true;
         }
-        document.execCommand('insertText', false, ' ');
+        // 1.7.417: no real mention: the mention list is closed and the box emptied, so
+        // nothing like "@al" is left in front of the message (it goes without @all)
+        // (no Escape: in WhatsApp it closes the whole chat; emptying the box closes the list)
+        for (let i = 0; i < 3 && String(box.textContent || '').replace(/[\s\u00a0\u200b]+/g, ''); i++) {
+            box.focus();
+            const range = document.createRange();
+            range.selectNodeContents(box);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            await sleep(80);
+            box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true, cancelable: true }));
+            await sleep(200);
+        }
+        box.focus();
         return false;
     }
     async function pasteAndSend(text) {
-        const box = composer();
-        if (!box) return 'no message box';
+        const box = await waitComposer();
+        if (!box) return 'no message box' + composerHint();
+        // 1.7.421: text already in this chat's box is yours: not touched, not sent
+        if (norm(box.textContent || '')) return 'there is unsent text in this chat\'s message box (yours?) — nothing added, nothing sent; send or clear it and try again';
+        if (userTypedDuringJob()) throw userInterrupt();
         box.focus();
         const atAll = String(text).match(/^@all[ \t]+/i);
         if (atAll) {
@@ -357,6 +578,13 @@
         }
         const button = await waitFor(sendButton, 4000);
         if (!button) return 'no send button';
+        // 1.7.421: you typed while it was typing: its text is taken out, it tries again later
+        if (userTypedDuringJob()) { await clearComposer(); throw userInterrupt(); }
+        // 1.7.463: last look before Send: a mention of a person in wlcm's message (it only ever
+        // mentions everyone) = not sent, the box emptied
+        const wrongMention = atAllPieces(composer() || box).filter(function(piece) { return piece.chip; })
+            .some(function(piece) { return !/^@(all|everyone)$/i.test(String(piece.text || '').replace(/[\s\u00a0\u200b]+/g, '')); });
+        if (wrongMention) { await clearComposer(); return 'WhatsApp turned "@all" into a person\'s name — nothing sent (the box was emptied)'; }
         clickEl(button);
         const emptied = await waitFor(function() {
             return !norm((composer() || {}).textContent || '');
@@ -415,6 +643,12 @@
         const box = await waitFor(mediaCaptionBox, 5000);
         if (!box) return 'no caption box';
         box.focus();
+        // 1.7.376: "@all" in the caption too (mention picked, or taken out)
+        const atAll = String(text).match(/^@all[ \t]+/i);
+        if (atAll) {
+            await typeAtAll(box);
+            text = String(text).slice(atAll[0].length);
+        }
         const firstLine = norm(String(text).split('\n')[0]).slice(0, 24);
         const typed = function() { return norm((mediaCaptionBox() || {}).textContent || '').indexOf(firstLine) >= 0; };
         const data = new DataTransfer();
@@ -441,8 +675,10 @@
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         const file = new File([bytes], 'transfers.' + (match[1] === 'image/jpeg' ? 'jpg' : 'png'), { type: match[1] });
-        const box = composer();
-        if (!box) return 'no message box';
+        const box = await waitComposer();
+        if (!box) return 'no message box' + composerHint();
+        if (norm(box.textContent || '')) return 'there is unsent text in this chat\'s message box (yours?) — the image was not added; send or clear it and try again';
+        if (userTypedDuringJob()) throw userInterrupt();
         box.focus();
         const data = new DataTransfer();
         data.items.add(file);
@@ -455,6 +691,15 @@
             if (captionProblem === 'caption could not be cleared') return captionProblem + ' — check the chat, nothing sent';
             result.captioned = !captionProblem;
             await sleep(300);
+        }
+        if (userTypedDuringJob()) {
+            // the preview is closed again (Escape inside the preview only closes the preview)
+            const previewBox = mediaCaptionBox();
+            [previewBox || document.activeElement || document].forEach(function(target) {
+                target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+            });
+            await sleep(400);
+            throw userInterrupt();
         }
         result.pressed = true;
         clickEl(mediaSendButton() || button);
@@ -487,9 +732,13 @@
     // chat to open. A dialog offering to open the chat is accepted; one
     // that only offers to JOIN is not (never joins a group by itself).
     // Returns the chat title, '' (did not open) or null (would need joining).
-    async function openedFromLink() {
-        const startedAt = Date.now();
+    // 1.7.371: allowJoin (group links only) — a dialog that only offers "Join"
+    // is joined by itself (once) and the chat is waited for, so the message
+    // still goes. "Request to join" (admin approval) is not pressed.
+    async function openedFromLink(allowJoin) {
+        let startedAt = Date.now();
         const clicked = new Set();
+        let joined = false;
         while (Date.now() - startedAt < 25000) {
             if (composer() && headerTitle()) return headerTitle().trim();
             const dialog = document.querySelector('[role="dialog"], [data-animate-modal-popup="true"]');
@@ -502,7 +751,13 @@
                     clicked.add(open);
                     clickEl(open);
                 } else if (buttons.some(function(button) { return /join/i.test(button.textContent || ''); }) || /join (this )?(group|chat)/i.test(dialog.textContent || '')) {
-                    return null;
+                    const join = allowJoin && !joined ? findClickable(dialog, /^join(?: (?:this )?(?:group|chat|community))?$/i) : null;
+                    if (!join) { if (!joined) return null; }
+                    else {
+                        joined = true;
+                        clickEl(join);
+                        startedAt = Date.now(); // joining takes a moment: the 25 s start again
+                    }
                 } else if (/invalid|expired|reset|revoked|couldn.t|can.t/i.test(dialog.textContent || '')) {
                     return '';
                 }
@@ -585,12 +840,350 @@
         const last = fields.find(function(el) { return /last\s*name|surname/.test(fieldLabel(el)); }) || null;
         return { first: first, last: last, fields: fields };
     }
+    // ---- 1.7.566: the contact panel and the contact forms as WhatsApp draws them now ----
+    // (user, 25 Nov: "check why whatsapp is not adding and sending to suggested and heroes"). The activity said
+    // 'no "Add to contacts" option found (seen: WhatsApp | Contact info | Add to list | Video call | Voice call | Search)'
+    // and earlier 'no Save button in the contact form': WhatsApp (Business) draws icon-only buttons as
+    // <svg><title>wds-ic-…</title> with no data-icon and often no label (1.7.424 saw it in the chat list), so the
+    // panel's add-contact / Edit / Close icons and the form's checkmark were never recognised (nor listed in "seen"),
+    // and a plain click on the header's first button does not always open the contact info (1.7.506). Now: icon names
+    // come from the svg titles too; the contact info is opened by its labelled button, the name, the picture, the
+    // first button or the chat menu, with a mouse-like click; when it has no Add / Edit, the number is saved through
+    // New chat → New contact (country and phone box checked before Save); "saved" = WhatsApp's contact list says so
+    // or the chat now shows the name. A click that opens any other form is backed out of (never typed into / saved).
+    function shownEl(el) {
+        try { return Boolean(el) && (el.offsetParent !== null || el.getClientRects().length > 0); } catch (_) { return false; }
+    }
+    function iconNamesOf(el) {
+        const names = [];
+        try {
+            const own = el.getAttribute && el.getAttribute('data-icon');
+            if (own) names.push(own);
+            Array.from(el.querySelectorAll('[data-icon], title')).forEach(function(node) {
+                const v = String(node.tagName || '').toLowerCase() === 'title' ? node.textContent : node.getAttribute('data-icon');
+                if (v && String(v).trim()) names.push(String(v).trim());
+            });
+        } catch (_) {}
+        return names.join(' ');
+    }
+    function textOf(el) {
+        return String((el && (el.innerText || el.textContent)) || '').replace(/\b(?:wds-)?ic-[a-z0-9-]+/g, '').replace(/\s+/g, ' ').trim();
+    }
+    function labelOf(el) {
+        return String((el && el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'))) || '').replace(/\s+/g, ' ').trim();
+    }
+    // the panel around `seed` (a drawer / form beside the chat): its biggest box that holds neither the chat nor the chat list
+    function panelAround(seed) {
+        let box = seed, top = seed;
+        for (let i = 0; i < 16 && box && box !== document.body; i++, box = box.parentElement) {
+            if (box.id === 'main' || box.id === 'side' || box.querySelector('#main') || box.querySelector('#side')) break;
+            top = box;
+        }
+        return top;
+    }
+    // a mouse-like click (pointer + mouse events at the element's middle, primary button)
+    function clickReal(el) {
+        if (!el) return;
+        try { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
+        let x = 0, y = 0;
+        try { const r = el.getBoundingClientRect(); x = Math.round(r.left + r.width / 2); y = Math.round(r.top + r.height / 2); } catch (_) {}
+        const P = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+        const fire = function(type, Ctor, extra) {
+            const init = Object.assign({ bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, screenX: x, screenY: y, button: 0 }, extra || {});
+            if (Ctor === P && P !== MouseEvent) Object.assign(init, { pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1 });
+            try { el.dispatchEvent(new Ctor(type, init)); } catch (_) {}
+        };
+        fire('pointerover', P, { buttons: 0 });
+        fire('mouseover', MouseEvent, { buttons: 0 });
+        fire('pointerdown', P, { buttons: 1 });
+        fire('mousedown', MouseEvent, { buttons: 1, detail: 1 });
+        try { if (typeof el.focus === 'function') el.focus({ preventScroll: true }); } catch (_) {}
+        fire('pointerup', P, { buttons: 0 });
+        fire('mouseup', MouseEvent, { buttons: 0, detail: 1 });
+        fire('click', MouseEvent, { buttons: 0, detail: 1 });
+    }
+    function pressEscape() {
+        [document.activeElement, document].forEach(function(target) {
+            try { if (target) target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true })); } catch (_) {}
+        });
+    }
+    const INFO_TITLE = /^(contact info|business info|contact details|business details)$/i;
+    // the open contact info panel (titled "Contact info" / "Business info"), or null
+    function infoPanel() {
+        try {
+            const title = Array.from(document.querySelectorAll('h1, h2, h3, span, div')).find(function(el) {
+                return el.childElementCount === 0 && !el.closest('#side') && !el.closest('#main header') && !el.closest('#main footer') &&
+                    INFO_TITLE.test(String(el.textContent || '').replace(/\s+/g, ' ').trim()) && shownEl(el);
+            });
+            return title ? panelAround(title) : null;
+        } catch (_) { return null; }
+    }
+    const ADD_WORDS = /^(add to contacts|add contact|add new contact|new contact|save contact|save to contacts|create contact|add)$/i;
+    const ADD_WORDS_STRICT = /^(add to contacts|add contact|add new contact|save contact|save to contacts|create contact)$/i;
+    const ADD_ICON = /(person|contact|user|people)[-_]?(add|plus)|(add|plus)[-_]?(person|contact|user)/i;
+    const EDIT_WORDS = /^edit( contact)?$/i;
+    const EDIT_ICON = /(^|[-_\s])(edit|pencil)([-_\s]|$)/i;
+    const NEVER_PRESS = /delete|block|report|clear|exit|leave|remove|mute|archive|unfollow|disappearing|favou?rite|list|label|share|export|call|search|media|starred|encrypt|wallpaper|notification|discard/i;
+    // the first shown button in `root` named by `words` (its label or its own text) or drawn with an icon named by `icons`
+    function actionIn(root, words, icons) {
+        if (!root) return null;
+        const skip = function(el) { return Boolean(el.closest('#side') || el.closest('#main header') || el.closest('#main footer') || el.closest('#main [data-id]') || el.closest('[role="switch"], [role="checkbox"], input[type="checkbox"]')); };
+        const pressable = function(el) { return el.closest('button, [role="button"], [role="menuitem"], [role="option"], li, [tabindex="0"]') || el; };
+        const safe = function(el) { const p = pressable(el); return NEVER_PRESS.test(labelOf(p) + ' ' + textOf(p).slice(0, 60)) ? null : p; };
+        try {
+            const nodes = Array.from(root.querySelectorAll('button, [role="button"], [role="menuitem"], [aria-label], [title], span, div, li'));
+            for (let i = 0; i < nodes.length; i++) {
+                const el = nodes[i];
+                if (skip(el) || !shownEl(el)) continue;
+                const label = labelOf(el);
+                const own = (el.childElementCount === 0 || /^(button|li)$/i.test(el.tagName) || el.getAttribute('role') === 'button') ? textOf(el) : '';
+                if ((label && words.test(label)) || (own && words.test(own))) { const p = safe(el); if (p) return p; }
+            }
+            if (icons) {
+                const marks = Array.from(root.querySelectorAll('[data-icon], svg'));
+                for (let i = 0; i < marks.length; i++) {
+                    const el = marks[i];
+                    if (skip(el) || !shownEl(el)) continue;
+                    const name = String(el.tagName || '').toLowerCase() === 'svg' ? iconNamesOf(el) : String(el.getAttribute('data-icon') || '');
+                    if (name && icons.test(name)) { const p = safe(el); if (p) return p; }
+                }
+            }
+        } catch (_) {}
+        return null;
+    }
+    // the ways to open the contact info, in order: its labelled button, the name, the picture, the header's first button
+    function infoOpeners() {
+        const header = document.querySelector('#main header');
+        if (!header) return [];
+        const out = [];
+        const add = function(el) { if (el && out.indexOf(el) < 0) out.push(el); };
+        Array.from(header.querySelectorAll('[aria-label], [title]')).forEach(function(el) {
+            if (/^(contact info|business info|profile details|contact details|business details|details)$/i.test(labelOf(el)) && shownEl(el)) add(el.closest('button, [role="button"]') || el);
+        });
+        const name = Array.from(header.querySelectorAll('span[dir="auto"], span[title]')).find(function(el) {
+            const t = String(el.textContent || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+            return t && !isHeaderNoise(t) && shownEl(el);
+        });
+        if (name) { add(name); add(name.closest('button, [role="button"]')); }
+        const img = header.querySelector('img');
+        if (img) add(img.closest('button, [role="button"]') || img);
+        add(header.querySelector('[role="button"]'));
+        return out.filter(Boolean);
+    }
+    // the chat menu (three dots) → "Contact info" / "Business info"
+    async function openInfoByMenu() {
+        const header = document.querySelector('#main header');
+        if (!header) return false;
+        const menu = Array.from(header.querySelectorAll('[aria-label], [title], [data-icon], svg')).find(function(el) {
+            const name = String(el.tagName || '').toLowerCase() === 'svg' ? iconNamesOf(el) : String(el.getAttribute('data-icon') || '');
+            return shownEl(el) && (/^(menu|more options)$/i.test(labelOf(el)) || /(^|[-_\s])(menu|more|more-vert|kebab|dots)([-_\s]|$)/i.test(name));
+        });
+        if (!menu) return false;
+        clickReal(menu.closest('button, [role="button"]') || menu);
+        const item = await waitFor(function() {
+            return Array.from(document.querySelectorAll('[role="menuitem"], [role="button"], li, span, div')).find(function(el) {
+                return el.childElementCount <= 3 && !el.closest('#main header') && !el.closest('#side') && shownEl(el) && /^(contact info|business info|view contact)$/i.test(textOf(el));
+            }) || null;
+        }, 2500);
+        if (!item) { pressEscape(); return false; }
+        clickReal(item.closest('[role="menuitem"], [role="button"], li') || item);
+        return true;
+    }
+    // the open form is a contact form (First / Last name, a phone box, a +NN country) — not a list name, a search, …
+    function looksLikeContactForm(form) {
+        try {
+            if (form.fields.some(function(el) { return /first\s*name|last\s*name|surname/.test(fieldLabel(el)); })) return true;
+            const root = panelAround(form.fields[0]);
+            if (root.querySelector('input[type="tel"]')) return true;
+            if (Array.from(root.querySelectorAll('span, div, button')).some(function(el) { return el.childElementCount === 0 && shownEl(el) && /^(?:[A-Z]{2}\s*)?\+\d{1,4}$/.test(String(el.textContent || '').replace(/\s+/g, ' ').trim()); })) return true;
+            return /phone( number)?|already in your contacts/i.test(String(root.innerText || '').slice(0, 3000));
+        } catch (_) { return false; }
+    }
+    // the country calling code of an international number (E.164 codes never start one another: 1 / 7, the
+    // two-digit ones below, all others three digits)
+    const TWO_DIGIT_CODES = ' 20 27 30 31 32 33 34 36 39 40 41 43 44 45 46 47 48 49 51 52 53 54 55 56 57 58 60 61 62 63 64 65 66 81 82 84 86 90 91 92 93 94 95 98 ';
+    function callingCode(digits) {
+        const d = String(digits || '').replace(/\D/g, '');
+        if (d.length < 8) return '';
+        if (/^[17]/.test(d)) return d[0];
+        if (TWO_DIGIT_CODES.indexOf(' ' + d.slice(0, 2) + ' ') >= 0) return d.slice(0, 2);
+        return d.slice(0, 3);
+    }
+    function formCountryCode(root) {
+        try {
+            const el = Array.from(root.querySelectorAll('span, div, button')).find(function(node) {
+                return node.childElementCount === 0 && shownEl(node) && /^(?:[A-Z]{2}\s*)?\+\d{1,4}$/.test(String(node.textContent || '').replace(/\s+/g, ' ').trim());
+            });
+            const m = el ? String(el.textContent).match(/\+(\d{1,4})/) : null;
+            return m ? { code: m[1], el: el } : null;
+        } catch (_) { return null; }
+    }
+    function phoneFieldIn(root) {
+        const all = Array.from(root.querySelectorAll('input, div[contenteditable="true"]')).filter(shownEl);
+        return all.find(function(el) { return String(el.type || '').toLowerCase() === 'tel'; }) ||
+            all.find(function(el) { const label = fieldLabel(el); return /phone|number|mobile/.test(label) && !/search|first|last|name/.test(label); }) || null;
+    }
+    async function setPhoneText(field, text) {
+        if (field.tagName === 'INPUT') {
+            field.focus();
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(field, '');
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            setter.call(field, text);
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            field.dispatchEvent(new Event('change', { bubbles: true }));
+            await sleep(300);
+            return String(field.value || '').replace(/\D/g, '');
+        }
+        await setFieldText(field, text);
+        await sleep(300);
+        return String(field.textContent || '').replace(/\D/g, '');
+    }
+    // the form's country set to +code (its list, searched by the code); true = the form shows +code
+    async function chooseCountry(root, code) {
+        const now = formCountryCode(root);
+        if (!now) return false;
+        if (now.code === code) return true;
+        const picker = now.el.closest('button, [role="button"], [role="combobox"], [tabindex]') || now.el;
+        clickReal(picker);
+        await sleep(500);
+        const search = await waitFor(function() {
+            return Array.from(document.querySelectorAll('input, div[contenteditable="true"]')).find(function(el) {
+                return shownEl(el) && !el.closest('#side') && !el.closest('#main') && /search|country/i.test(fieldLabel(el) + ' ' + String(el.getAttribute('placeholder') || ''));
+            }) || null;
+        }, 1500);
+        const codeMark = new RegExp('\\+' + code + '(?!\\d)');
+        const findItem = function() {
+            return Array.from(document.querySelectorAll('[role="option"], [role="listitem"], [role="button"], li, div[tabindex], button')).find(function(el) {
+                if (!shownEl(el) || el.closest('#side') || el.closest('#main') || el === picker || el.contains(picker) || picker.contains(el)) return false;
+                const t = textOf(el);
+                return t.length < 60 && codeMark.test(t);
+            }) || null;
+        };
+        let item = findItem();
+        if (!item && search) {
+            for (const text of ['+' + code, code]) {
+                if (search.tagName === 'INPUT') {
+                    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    search.focus(); setter.call(search, text); search.dispatchEvent(new Event('input', { bubbles: true }));
+                } else { await setFieldText(search, text); }
+                item = await waitFor(findItem, 1500);
+                if (item) break;
+            }
+        }
+        if (!item) { pressEscape(); await sleep(300); return false; }
+        clickReal(item);
+        await sleep(500);
+        const after = formCountryCode(root);
+        return Boolean(after && after.code === code);
+    }
+    // back out of the left panel (New chat / New contact) to the chat list; "Discard" if it asks
+    async function leaveLeftDrawer() {
+        for (let i = 0; i < 3; i++) {
+            const discard = findClickable(document, /^discard( changes)?$/i);
+            if (discard && !discard.closest('#main')) { clickReal(discard); await sleep(400); continue; }
+            const back = Array.from(document.querySelectorAll('[aria-label], [data-icon], svg')).find(function(el) {
+                if (el.closest('#main') || el.closest('#side') || !shownEl(el)) return false;
+                const name = String(el.tagName || '').toLowerCase() === 'svg' ? iconNamesOf(el) : String(el.getAttribute('data-icon') || '');
+                return /^back$/i.test(labelOf(el)) || /(^|[-_\s])(back|arrow-back|back-light|back-refreshed)([-_\s]|$)/i.test(name);
+            });
+            if (!back) return;
+            clickReal(back.closest('button, [role="button"]') || back);
+            await sleep(500);
+        }
+    }
+    // New chat → New contact: the number typed in (country checked), then the names and Save (fillContactForm).
+    // '' = Save pressed, ALREADY_SAVED = WhatsApp says it is a contact, else what went wrong (nothing saved).
+    async function addViaNewContact(first, last, phone) {
+        const digits = String(phone || '').replace(/\D/g, '');
+        const code = callingCode(digits);
+        if (!code) return 'New contact: the number is too short';
+        const newChat = Array.from(document.querySelectorAll('[aria-label], [title], [data-icon], svg')).find(function(el) {
+            if (el.closest('#main') || !shownEl(el)) return false;
+            const name = String(el.tagName || '').toLowerCase() === 'svg' ? iconNamesOf(el) : String(el.getAttribute('data-icon') || '');
+            return /^new chat$/i.test(labelOf(el)) || /(^|[-_\s])new[-_]?chat|chat[-_]?new|chat[-_]?(add|plus)/i.test(name);
+        });
+        if (!newChat) return 'New contact: no "New chat" button';
+        clickReal(newChat.closest('button, [role="button"]') || newChat);
+        const item = await waitFor(function() {
+            return Array.from(document.querySelectorAll('[role="button"], [role="listitem"], [role="option"], button, li, div[tabindex], span, div')).find(function(el) {
+                return el.childElementCount <= 4 && !el.closest('#main') && shownEl(el) && /^new contact$/i.test(textOf(el));
+            }) || null;
+        }, 4000);
+        if (!item) { await leaveLeftDrawer(); return 'New contact: no "New contact" in New chat'; }
+        clickReal(item.closest('[role="button"], [role="listitem"], [role="option"], button, li, div[tabindex]') || item);
+        const form = await waitFor(function() { const f = nameFields(); return f.fields.length ? f : null; }, 5000);
+        if (!form) { await leaveLeftDrawer(); return 'New contact: the form did not open'; }
+        await sleep(300);
+        const root = panelAround(form.fields[0]);
+        const phoneBox = phoneFieldIn(root);
+        if (!phoneBox) { const seen = panelButtonsSeen(root); await leaveLeftDrawer(); return 'New contact: no phone box (seen: ' + seen + ')'; }
+        if (!(await chooseCountry(root, code))) {
+            const c = formCountryCode(root);
+            await leaveLeftDrawer();
+            return 'New contact: the form\'s country is +' + (c ? c.code : '?') + ' and could not be set to +' + code;
+        }
+        const typed = await setPhoneText(phoneBox, digits.slice(code.length));
+        const cc = formCountryCode(root);
+        if (typed.slice(-9) !== digits.slice(-9) || !cc || cc.code !== code) {
+            await leaveLeftDrawer();
+            return 'New contact: the form shows +' + (cc ? cc.code : '?') + ' …' + typed.slice(-3) + ', not +' + code + ' …' + digits.slice(-3) + ' (not saved)';
+        }
+        const problem = await fillContactForm(first, last);
+        await sleep(800);
+        await leaveLeftDrawer();
+        return problem ? (problem === ALREADY_SAVED ? ALREADY_SAVED : 'New contact: ' + problem) : '';
+    }
+    // after Save: WhatsApp's contact list says saved, or the chat shows the new name (not a number, not a "~" profile name)
+    async function savedNow(phone, first, last) {
+        const startedAt = Date.now();
+        const want = norm((String(first || '') + ' ' + String(last || '')).trim());
+        const wantFirst = norm(first);
+        while (Date.now() - startedAt < 12000) {
+            const store = await storeSavedState(phone);
+            if (store.saved === true) return 'list';
+            const title = headerTitle().trim();
+            if (title && !/^~/.test(title) && !isPhoneTitle(title) && !composerPhoneDigits() && (norm(title) === want || (wantFirst && norm(title).indexOf(wantFirst) === 0))) return 'name';
+            await sleep(700);
+        }
+        return '';
+    }
     // Fills the open contact form and presses Save. '' = pressed.
+    // 1.7.562: what the contact panel / form offers when an expected button is missing (labels and icon names only,
+    // never message text) — the side panel is narrow and WhatsApp may draw these differently there
+    function panelButtonsSeen(root) {
+        try {
+            const seen = [];
+            Array.from((root || document).querySelectorAll('button, [role="button"], [data-icon]'))
+                .filter(function(el) { return !el.closest('#side') && !el.closest('#main footer') && !el.closest('#main [data-id]'); })
+                .forEach(function(el) {
+                    let t = String(el.getAttribute('aria-label') || el.getAttribute('title') || String(el.innerText || '').replace(/\b(?:wds-)?ic-[a-z0-9-]+/g, '') || '').replace(/\s+/g, ' ').trim();
+                    // 1.7.566: an icon-only button by its icon's name (data-icon or <svg><title>), e.g. "icon person-add"
+                    if (!t) { const icon = iconNamesOf(el).split(' ')[0] || ''; if (icon) t = 'icon ' + icon.replace(/^(?:wds-)?ic-/, ''); }
+                    t = t.slice(0, 28);
+                    // 1.7.564: WhatsApp's left menu filled the whole list (the activity line is cut at its end)
+                    if (/^(chats|calls|status|channels|communities|tools|advertise|media|settings|profile|meta ai|archived|starred( messages)?|new chat|menu|lists)$/i.test(t)) return;
+                    if (t && (el.disabled || el.getAttribute('aria-disabled') === 'true')) t += ' (off)';
+                    if (t && seen.indexOf(t) < 0) seen.push(t);
+                });
+            return seen.slice(0, 18).join(' | ');
+        } catch (_) { return ''; }
+    }
+    // 1.7.562: the person has written to you in this chat before (an incoming message) = not a stranger
+    function chatHasIncoming() {
+        try {
+            return Array.from(document.querySelectorAll('#main [data-id]')).some(function(el) {
+                return /^false_/.test(String(el.getAttribute('data-id') || '')) || Boolean(el.closest('.message-in') || el.querySelector('.message-in'));
+            });
+        } catch (_) { return false; }
+    }
     async function fillContactForm(first, last) {
         const found = await waitFor(function() { const form = nameFields(); return form.fields.length ? form : null; }, 6000);
         if (!found) return 'the contact form did not open';
         await sleep(300);
         const form = nameFields();
+        // 1.7.566: only a contact form is typed into and saved (a click may have opened another one: a list name, a search)
+        if (!form.fields.length || !looksLikeContactForm(form)) { const seen = form.fields.length ? panelButtonsSeen(panelAround(form.fields[0])) : ''; pressEscape(); return 'the contact form did not open (another form' + (seen ? ': ' + seen : '') + ')'; }
         const firstField = form.first || form.fields.find(function(el) { return !/phone|number|search/.test(fieldLabel(el)); }) || null;
         if (!firstField) return 'no name field in the contact form';
         const lastField = form.last && form.last !== firstField ? form.last : null;
@@ -599,38 +1192,203 @@
         if (lastField && !(await setFieldText(lastField, last))) return 'the city / car type could not be typed into Last name';
         await sleep(500);
         // 1.7.292: WhatsApp Business calls it "Save contact" (shown once a name is typed)
-        const save = await waitFor(function() { return findClickable(document, /^save( contact)?$/i); }, 4000);
-        if (!save) return 'no Save button in the contact form';
+        let save = await waitFor(function() { return findClickable(document, /^save( contact)?$/i); }, 4000);
+        if (!save) {
+            // 1.7.562: the narrow side panel — scroll the form down and look again (icon-only buttons included)
+            try { (lastField || firstField).scrollIntoView({ block: 'end' }); } catch (_) {}
+            try { Array.from(document.querySelectorAll('div')).filter(function(el) { return el.scrollHeight > el.clientHeight + 20 && el.contains(firstField); }).forEach(function(el) { el.scrollTop = el.scrollHeight; }); } catch (_) {}
+            await sleep(400);
+            save = findClickable(document, /^(save( contact)?|done|wds-ic-checkmark.*|ic-checkmark.*|checkmark)$/i);
+            // 1.7.564: the bare checkmark-icon pick is gone: it could press the "Sync contact to phone" switch's tick
+            // (seen in the stand-in); formSaveFallback below looks for icons only inside the form and never in a switch
+        }
+        if (!save && formSaysAlreadySaved(firstField)) return ALREADY_SAVED; // 1.7.563
+        if (!save) save = formSaveFallback(firstField); // 1.7.564
+        if (!save) return 'no Save button in the contact form (seen: ' + panelButtonsSeen() + ')';
         clickEl(save);
         return '';
     }
+    // 1.7.563: WhatsApp's new-contact form for a number that is ALREADY a contact says so ("This phone number is
+    // already in your contacts") and has no Save button — that is not a failure, the person is saved.
+    const ALREADY_SAVED = '__already_saved__';
+    function formSaysAlreadySaved(field) {
+        try {
+            let box = field, top = null;
+            for (let i = 0; i < 14 && box && box !== document.body; i++, box = box.parentElement) {
+                if (box.id === 'main' || box.id === 'side' || box.querySelector('#main') || box.querySelector('#side')) break;
+                top = box;
+            }
+            const text = String((top || field).innerText || '').replace(/\s+/g, ' ');
+            return /already (?:in|on|one of|saved (?:in|to|as)) (?:your |my )?contacts?|already (?:a |your )?(?:saved )?contact|contact already exists|already saved/i.test(text);
+        } catch (_) { return false; }
+    }
+    // 1.7.564: Save drawn without a button role (missed by findClickable): in the form's own panel, the deepest
+    // element whose label or text is Save / Save contact / Done / OK, else a checkmark icon there, else the form's
+    // submit button. Never Delete / Back / Close / Cancel, the country picker (+30) or a switch.
+    function formSaveFallback(field) {
+        try {
+            let box = field, top = field;
+            for (let i = 0; i < 14 && box && box !== document.body; i++, box = box.parentElement) {
+                if (box.id === 'main' || box.id === 'side' || box.querySelector('#main') || box.querySelector('#side')) break;
+                top = box;
+            }
+            const clean = function(v) { return String(v || '').replace(/\b(?:wds-)?ic-[a-z0-9-]+/g, '').replace(/\s+/g, ' ').trim(); };
+            const bad = /delete|remove|block|report|back|close|cancel|discard|clear|search|sync|\+\s*\d/i;
+            const word = /^(save( contact)?|done|ok)$/i;
+            const shown = Array.from(top.querySelectorAll('*')).filter(function(el) {
+                if (el === field || el.contains(field) || field.contains(el)) return false;
+                if (!(el.offsetParent !== null || el.getClientRects().length)) return false;
+                if (el.closest('[role="switch"], [role="checkbox"], input[type="checkbox"], label')) return false;
+                const all = [el.getAttribute('aria-label'), el.getAttribute('title'), el.getAttribute('data-icon'), el.closest('button, [role="button"]') ? el.closest('button, [role="button"]').getAttribute('aria-label') : '', clean(el.textContent)].join(' ');
+                return !bad.test(all);
+            });
+            const byWord = shown.find(function(el) {
+                return word.test(clean(el.getAttribute('aria-label') || el.getAttribute('title'))) || (!el.children.length && word.test(clean(el.textContent)));
+            });
+            // 1.7.566: + icons drawn as <svg><title>wds-ic-checkmark</title> (no data-icon)
+            const byIcon = byWord ? null : shown.find(function(el) { return /(^|-)(checkmark|check|done)(-|$)/i.test(String(el.getAttribute('data-icon') || '') || (String(el.tagName || '').toLowerCase() === 'svg' ? iconNamesOf(el) : '')); });
+            const form = field.closest('form');
+            const submit = form ? form.querySelector('button[type="submit"]') : null;
+            const hit = byWord || byIcon || submit;
+            return hit ? (hit.closest('button, [role="button"]') || hit) : null;
+        } catch (_) { return null; }
+    }
+    // 1.7.563: WhatsApp's own contact list (asked in the page, wp-whatsapp-main.js): true = saved contact,
+    // false = not saved, null = could not tell (older page script, WhatsApp changed its code) -> the screen checks.
+    function storeSavedState(phone) {
+        return new Promise(function(resolve) {
+            const ask = 'a' + Date.now() + Math.random().toString(36).slice(2, 7);
+            let done = false;
+            const listen = function(event) {
+                try { const a = JSON.parse(String(event.detail || '{}')); if (a.ask === ask) finish({ saved: a.saved === true ? true : a.saved === false ? false : null, how: String(a.how || '') }); } catch (_) {}
+            };
+            const finish = function(value) { if (done) return; done = true; document.removeEventListener('wp-wa-contact-answer', listen); resolve(value); };
+            document.addEventListener('wp-wa-contact-answer', listen);
+            setTimeout(function() { finish({ saved: null, how: 'no answer from the page' }); }, 1500);
+            try { document.dispatchEvent(new CustomEvent('wp-wa-contact-ask', { detail: JSON.stringify({ ask: ask, digits: String(phone || '').replace(/\D/g, '') }) })); } catch (_) { finish({ saved: null, how: 'ask failed' }); }
+        });
+    }
     function closeSidePanel() {
         try {
-            const close = Array.from(document.querySelectorAll('[aria-label="Close"], [data-icon="x"], [data-icon="close"], [data-icon="x-alt"]'))
+            let close = Array.from(document.querySelectorAll('[aria-label="Close"], [data-icon="x"], [data-icon="close"], [data-icon="x-alt"]'))
                 .find(function(el) { return !el.closest('#main footer') && !el.closest('#side'); });
+            // 1.7.566: the contact info's own close icon drawn as <svg><title>…x / close…</title>
+            if (!close) { const panel = infoPanel(); if (panel) close = Array.from(panel.querySelectorAll('svg')).find(function(svg) { return shownEl(svg) && /(^|[-_\s])(x|close|x-alt|x-refreshed|close-refreshed)([-_\s]|$)/i.test(iconNamesOf(svg)); }) || null; }
             if (close) clickEl(close.closest('button, [role="button"]') || close);
             else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         } catch (_) {}
     }
-    async function addContact(first, last) {
-        const addPattern = /^(add|add to contacts|add contact|save contact)$/i;
-        let add = findClickable(document.querySelector('#main'), addPattern);
-        if (!add) {
-            // Contact info panel (click the chat header).
-            const header = document.querySelector('#main header');
-            if (header) clickEl(header.querySelector('[role="button"]') || header);
-            add = await waitFor(function() { return findClickable(document, /^(add to contacts|add contact|save contact|add)$/i); }, 6000);
+    // 1.7.464: close the contact panel and wait for the chat header; if it is not back,
+    // the newer close button (icon name in its text) and Escape are tried too
+    async function closeSidePanelAndWait() {
+        closeSidePanel();
+        if (await waitFor(function() { return document.querySelector('#main header'); }, 1500)) return true;
+        try {
+            const close = findClickable(document, /^(close|wds-ic-close.*|ic-close.*)$/i);
+            if (close && !close.closest('#main footer') && !close.closest('#side')) clickEl(close);
+            [document.activeElement, document].forEach(function(target) {
+                if (target) target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+            });
+        } catch (_) {}
+        return Boolean(await waitFor(function() { return document.querySelector('#main header'); }, 2500));
+    }
+    // 1.7.559 (user, 25 Nov: WhatsApp blocked the account; "make it always add them first"): since 1.7.557 an
+    // unsaved number can show the person's own profile name, so header / message box no longer prove a saved
+    // contact. The contact info is looked at: an Add / Save contact option = not saved, an Edit option = saved.
+    // Numbers seen saved (or saved by wlcm) are remembered (last 9 digits), so this runs once per person.
+    const SAVED_PEOPLE_KEY = 'wp_wa_saved_people_v1';
+    async function savedPersonKnown(phone) {
+        const tail = String(phone || '').replace(/\D/g, '').slice(-9);
+        if (tail.length < 7) return false;
+        try { const all = (await getStore(SAVED_PEOPLE_KEY)) || {}; return Boolean(all[tail]); } catch (_) { return false; }
+    }
+    async function savedPersonRemember(phone) {
+        const tail = String(phone || '').replace(/\D/g, '').slice(-9);
+        if (tail.length < 7) return;
+        try {
+            const all = (await getStore(SAVED_PEOPLE_KEY)) || {};
+            all[tail] = Date.now();
+            const keys = Object.keys(all);
+            if (keys.length > 2000) keys.sort(function(a, b) { return all[a] - all[b]; }).slice(0, keys.length - 2000).forEach(function(k) { delete all[k]; });
+            await setStore(SAVED_PEOPLE_KEY, all);
+        } catch (_) {}
+    }
+    function findEditOption() {
+        const icon = Array.from(document.querySelectorAll('[data-icon], [aria-label], [title]'))
+            .filter(function(el) { return !el.closest('#main') && !el.closest('#side') && (el.offsetParent !== null || el.getClientRects().length); })
+            .find(function(el) {
+                return /^(pencil|edit|ic-edit|wds-ic-edit|edit-contact)/i.test(el.getAttribute('data-icon') || '') ||
+                    /^edit( contact)?$/i.test(String(el.getAttribute('aria-label') || el.getAttribute('title') || '').trim());
+            });
+        return icon ? (icon.closest('button, [role="button"]') || icon) : findClickable(document, /^edit( contact)?$/i);
+    }
+    // 'unsaved' | 'saved' | 'unknown' (unknown is treated as not saved: saved first or nothing sent)
+    async function contactSavedState() {
+        if (findClickable(document.querySelector('#main'), /^(add|add to contacts|add contact|save contact)$/i)) return 'unsaved';
+        const header = document.querySelector('#main header');
+        if (!header) return 'unknown';
+        clickEl(header.querySelector('[role="button"]') || header);
+        let state = 'unknown';
+        await waitFor(function() {
+            const add = findClickable(document, /^(add to contacts|add contact|save contact)$/i);
+            if (add && !add.closest('#side')) { state = 'unsaved'; return true; }
+            if (findEditOption()) { state = 'saved'; return true; }
+            return false;
+        }, 6000);
+        await closeSidePanelAndWait();
+        return state;
+    }
+    // 1.7.566: three ways, in order: the chat's own "Add" (a number that wrote to you), the contact info's Add /
+    // add-contact icon (else its Edit), New chat → New contact with the number. '' = saved (proven), else why not.
+    async function addContact(first, last, phone) {
+        const problems = [];
+        const proven = async function(how) {
+            const proof = await savedNow(phone, first, last);
+            await closeSidePanelAndWait();
+            return proof ? '' : how + ': Save was pressed but WhatsApp does not show it as a saved contact yet';
+        };
+        const chatAdd = findClickable(document.querySelector('#main'), /^(add|add to contacts|add contact|save contact)$/i);
+        if (chatAdd && !chatAdd.closest('#main footer')) {
+            clickEl(chatAdd);
+            const r = await fillContactForm(first, last);
+            if (r === ALREADY_SAVED) { await closeSidePanelAndWait(); return ''; }
+            if (!r) return proven('chat Add');
+            problems.push('chat Add: ' + r);
+            closeSidePanel();
+            await leaveLeftDrawer();
+            await sleep(400);
         }
-        if (!add) { closeSidePanel(); return 'no "Add to contacts" option found'; }
-        clickEl(add);
-        const problem = await fillContactForm(first, last);
-        if (problem) { closeSidePanel(); return problem; }
-        const saved = await waitFor(function() {
-            const title = headerTitle().trim();
-            return title && !/^[+\d\s().-]+$/.test(title);
-        }, 12000);
-        try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); } catch (_) {}
-        return saved ? '' : 'the chat still shows the number after saving';
+        let panel = infoPanel();
+        if (!panel) {
+            const openers = infoOpeners();
+            for (let i = 0; i < openers.length && !panel; i++) { clickReal(openers[i]); panel = await waitFor(infoPanel, 2500); }
+            if (!panel && (await openInfoByMenu())) panel = await waitFor(infoPanel, 3000);
+        }
+        let btn = null;
+        if (panel) {
+            await sleep(500); // its icons are drawn
+            btn = actionIn(panel, ADD_WORDS, ADD_ICON) || actionIn(panel, EDIT_WORDS, EDIT_ICON);
+        } else {
+            btn = actionIn(document.body, ADD_WORDS_STRICT, ADD_ICON); // the panel's title not found: Add-contact anywhere beside the chat
+        }
+        if (btn) {
+            const what = labelOf(btn) || textOf(btn).slice(0, 24) || (iconNamesOf(btn).split(' ')[0] || 'icon').replace(/^(?:wds-)?ic-/, 'icon ');
+            clickReal(btn);
+            const r = await fillContactForm(first, last);
+            if (r === ALREADY_SAVED) { await closeSidePanelAndWait(); return ''; }
+            if (!r) return proven('contact info "' + what + '"');
+            problems.push('contact info "' + what + '": ' + r);
+            closeSidePanel();
+            await leaveLeftDrawer();
+        } else {
+            problems.push(panel ? 'the contact info has no Add / Edit (seen: ' + panelButtonsSeen(panel) + ')' : 'the contact info did not open (seen: ' + panelButtonsSeen() + ')');
+        }
+        await closeSidePanelAndWait();
+        const r3 = await addViaNewContact(first, last, phone);
+        if (r3 === ALREADY_SAVED) { await closeSidePanelAndWait(); return ''; }
+        if (!r3) return proven('New contact');
+        problems.push(r3);
+        return problems.join('; ');
     }
     // 1.7.281: a saved contact with another name → its contact info, Edit,
     // the same First / Last name, Save. '' = renamed.
@@ -649,7 +1407,8 @@
         }, 6000);
         if (!edit) { closeSidePanel(); return 'no Edit option in the contact info'; }
         clickEl(edit);
-        const problem = await fillContactForm(first, last);
+        let problem = await fillContactForm(first, last);
+        if (problem === ALREADY_SAVED) problem = 'WhatsApp says the number is already a contact';
         if (problem) { closeSidePanel(); return problem; }
         const wanted = norm(first + ' ' + last);
         const renamed = await waitFor(function() { return norm(headerTitle()) === wanted; }, 12000);
@@ -665,6 +1424,21 @@
     // seen". The group's name must also contain the city (job.expect, e.g.
     // "Budapest", "Heraklion"), so a driver's chat can never pass.
     const GENERIC_WORDS = /^(welcomers?|dispatchers?|welcome|group|drivers?|wp|team|the|and)$/;
+    // 1.7.440: the open chat's last messages, for the phone (time, who, text; yours marked)
+    const plainTitle = function(value) { return norm(value).replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, ''); };
+    function readChat(max) {
+        const main = document.querySelector('#main') || document;
+        const out = [];
+        Array.from(main.querySelectorAll('[data-pre-plain-text]')).slice(-max).forEach(function(node) {
+            const pre = String(node.getAttribute('data-pre-plain-text') || '');
+            const m = pre.match(/^\[([^\]]*)\]\s*(.*?):\s*$/);
+            const textEl = node.querySelector('.selectable-text') || node;
+            const x = String(textEl.innerText || '').trim().slice(0, 1000);
+            const me = Boolean(node.closest('.message-out'));
+            out.push({ t: m ? m[1].split(',')[0].trim().slice(0, 12) : '', w: me ? 'you' : (m ? m[2].trim().slice(0, 60) : ''), x: x || '[media]', me: me });
+        });
+        return out;
+    }
     function chatIsGroup() {
         const header = document.querySelector('#main header');
         if (!header) return false;
@@ -687,13 +1461,127 @@
         const title = headerTitle().trim();
         return Boolean(title && composer() && chatIsGroup() && titleMatchesCity(title, job));
     }
+    // 1.7.557 (23 Nov: 3 of 5 Budapest heroes, Hurghada, Cartagena not sent, "header zs / Peter / exp"): WhatsApp now
+    // shows a number you have not saved under that person's own profile name, and its message ids no longer carry
+    // the number. Opened fresh from this number's link, the chat SWITCHED away from the one open before the link
+    // (kept in BEFORE_KEY), it is not a group and no message id names another number → it is this number's chat.
+    // A number not on WhatsApp keeps the chat that was open (same header) → still refused.
+    var BEFORE_KEY = 'wp_wa_before_link_v1';
+    // 1.7.558 (user, 23 Nov: "make it faster"): every person a message reached is remembered by the name their chat
+    // shows (number's last 9 digits → title). Next time their chat is opened by that name from the search, like a
+    // known group — no WhatsApp reload (the reload was most of the ~40 s per person). Checked: same name, not a group,
+    // the message box / message ids name no other number, and no other person has the same chat name. Anything off →
+    // the number's link, as before.
+    var PERSON_TITLES_KEY = 'wp_wa_person_titles_v1';
+    function personTail(job) { return String(job && job.phone || '').replace(/\D/g, '').slice(-9); }
+    function personChatOk(tail) {
+        if (!tail || tail.length < 7 || chatIsGroup() || !composer()) return false;
+        const box = composerPhoneDigits();
+        if (box && !box.endsWith(tail)) return false;
+        try {
+            if (Array.from(document.querySelectorAll('#main [data-id]')).slice(-30).some(function(el) {
+                const m = String(el.getAttribute('data-id') || '').match(/(\d{7,15})@c\.us/);
+                return Boolean(m && !m[1].endsWith(tail));
+            })) return false;
+        } catch (_) {}
+        return true;
+    }
+    async function personTitleRemember(job) {
+        try {
+            const tail = personTail(job);
+            const title = headerTitle().trim();
+            if (!tail || tail.length < 7 || !title || chatIsGroup()) return;
+            const all = (await getStore(PERSON_TITLES_KEY)) || {};
+            all[tail] = { t: title.slice(0, 80), at: Date.now() };
+            const keys = Object.keys(all);
+            if (keys.length > 600) keys.sort(function(a, b) { return all[a].at - all[b].at; }).slice(0, keys.length - 600).forEach(function(k) { delete all[k]; });
+            await setStore(PERSON_TITLES_KEY, all);
+        } catch (_) {}
+    }
+    function chatSwitchedFromBefore(tail) {
+        const title = headerTitle().trim();
+        if (!title || chatIsGroup()) return false;
+        let before = '';
+        try { before = String(sessionStorage.getItem(BEFORE_KEY) || ''); } catch (_) {}
+        if (!before || plainTitle(before) === plainTitle(title)) return false; // nothing known open before: not enough (WhatsApp may restore a chat by itself)
+        try {
+            const other = Array.from(document.querySelectorAll('#main [data-id]')).slice(-30).some(function(el) {
+                const m = String(el.getAttribute('data-id') || '').match(/(\d{7,15})@c\.us/);
+                return Boolean(m && !m[1].endsWith(tail));
+            });
+            if (other) return false;
+        } catch (_) {}
+        return true;
+    }
+    // 1.7.499: true when the open chat is clearly this person — the header is the number, a message id
+    // carries the number, or the header has the hero's name. Nothing is clicked (no contact panel).
+    function chatLooksLikePhone(job) {
+        const tail = String(job && job.phone || '').replace(/\D/g, '').slice(-9);
+        const title = headerTitle().trim();
+        if (!title || tail.length < 7) return false;
+        if (isPhoneTitle(title)) return title.replace(/\D/g, '').endsWith(tail);
+        const boxDigits = composerPhoneDigits(); // 1.7.506
+        if (boxDigits) return boxDigits.endsWith(tail);
+        try {
+            if (Array.from(document.querySelectorAll('#main [data-id]')).slice(-30).some(function(el) {
+                const m = String(el.getAttribute('data-id') || '').match(/(\d{7,15})@c\.us/);
+                return Boolean(m && m[1].endsWith(tail));
+            })) return true;
+        } catch (_) {}
+        const words = norm(String(job.contactFirst || job.contactName || '')).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function(w) { return w.length >= 3 && !/^(hero|driver|suggested|paris|the)$/.test(w); });
+        if (words.length && plainTitle(title).replace(/[^a-z0-9\s]/g, ' ').indexOf(words[0]) >= 0) return true;
+        return chatSwitchedFromBefore(tail); // 1.7.557: their profile name (the wait below ends at once instead of after 12 s)
+    }
     // A person by phone: the header shows the number, or (saved contact)
     // the contact info panel does. The last 9 digits must match.
-    async function chatIsPhone(phone) {
+    var phoneDiag = ''; // 1.7.449
+    async function chatIsPhone(phone, trustLink, job) {
         const tail = String(phone || '').replace(/\D/g, '').slice(-9);
         if (tail.length < 7) return false;
+        // 1.7.464: the chat (header + title) may still be drawing, or the contact panel from the
+        // last check still covering it (narrow side panel): closed and waited for, max ~6 s
+        if (!headerTitle()) {
+            if (!document.querySelector('#main header')) await closeSidePanelAndWait();
+            await waitFor(function() { return headerTitle(); }, 4000);
+        }
         const title = headerTitle().trim();
-        if (/^[+\d\s().-]+$/.test(title)) return title.replace(/\D/g, '').endsWith(tail);
+        phoneDiag = 'header "' + title.slice(0, 30) + '"';
+        if (isPhoneTitle(title)) return title.replace(/\D/g, '').endsWith(tail);
+        // 1.7.506: the message box's label "Type a message to +52 1 55 …" (unsaved numbers, Business names too)
+        const boxDigits = composerPhoneDigits();
+        if (boxDigits) {
+            if (boxDigits.endsWith(tail)) return true;
+            phoneDiag += ', message box is for …' + boxDigits.slice(-4);
+            return false; // another number's chat is open: never fall through to the name checks
+        }
+        phoneDiag += ', message box has no number';
+        // 1.7.449: the chat's messages carry its id ("…_306912345678@c.us_…"): a match there is enough, no contact panel needed
+        try {
+            const ids = Array.from(document.querySelectorAll('#main [data-id]')).slice(-30).map(function(el) { return String(el.getAttribute('data-id') || ''); });
+            if (ids.some(function(id) { const m = id.match(/(\d{7,15})@c\.us/); return Boolean(m && m[1].endsWith(tail)); })) return true;
+            phoneDiag += ', ' + ids.length + ' msg ids';
+        } catch (_) {}
+        // 1.7.465: this page was loaded fresh from web.whatsapp.com/send?phone=<this number>, so no other chat
+        // can be open: that is enough. The contact panel is not used — closing it in the narrow side panel
+        // closed the chat itself, and every first driver failed with header "".
+        // 1.7.488: the link alone is not proof — WhatsApp can keep the chat that was open (a hero's message went
+        // 3 times to another hero). Fresh from its link AND the header is this person's name → that is enough.
+        if (trustLink && title && job) {
+            const words = norm(String(job.contactFirst || job.contactName || job.city || '')).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function(w) { return w.length >= 3 && !/^(hero|driver|suggested|paris|the)$/.test(w); });
+            const head = plainTitle(title).replace(/[^a-z0-9\s]/g, ' ');
+            if (words.length && head.indexOf(words[0]) >= 0) { phoneDiag += ', opened fresh from its own link, named "' + title.slice(0, 30) + '"'; return true; }
+            // 1.7.557: their WhatsApp profile name — accepted when the chat switched from the one open before the link
+            // and still shows the same name 1.5 s later (not a chat that is still changing)
+            if (chatSwitchedFromBefore(tail)) {
+                await sleep(1500);
+                if (headerTitle().trim() === title && chatSwitchedFromBefore(tail)) {
+                    let before = ''; try { before = String(sessionStorage.getItem(BEFORE_KEY) || ''); } catch (_) {}
+                    phoneDiag += ', opened fresh from its own link: the chat switched from "' + before.slice(0, 20) + '" to "' + title.slice(0, 30) + '" (their WhatsApp profile name)';
+                    return true;
+                }
+            }
+            phoneDiag += ', the open chat "' + title.slice(0, 30) + '" is not named ' + (words[0] || '?');
+        }
         const header = document.querySelector('#main header');
         if (!header) return false;
         clickEl(header.querySelector('[role="button"]') || header);
@@ -708,8 +1596,9 @@
                     return text.length <= 40 && /^[+\d\s().\u00a0\u200e\u200f\u202a-\u202e-]+$/.test(text.trim()) ? text.replace(/\D/g, '') : '';
                 })
                 .find(function(digits) { return digits.length >= 9 && digits.length <= 15 && digits.endsWith(tail); });
-        }, 6000);
-        closeSidePanel();
+        }, 10000); // 1.7.449: was 6 s — the box is slower right after linking
+        if (!found) phoneDiag += ', number not seen in the contact panel';
+        await closeSidePanelAndWait(); // 1.7.464: was closeSidePanel() — the chat did not always come back
         return Boolean(found);
     }
 
@@ -718,6 +1607,50 @@
         Object.keys(sent).forEach(function(key) { if (Date.now() - sent[key] > DUPLICATE_WINDOW) delete sent[key]; });
         const cityKey = norm(job.city);
         const dupKey = dupKeyFor(job);
+        if (job.read) { // 1.7.440: open the chat and read it for the phone — nothing is typed or sent
+            let ok = false;
+            let readTitle = job.city;
+            if (job.code && viaLink) {
+                // 1.7.454: a city group this WhatsApp never opened by name (e.g. the box, newly linked): opened from
+                // its invite link (never joined), its title remembered for next time, then read
+                let opened = null;
+                try { opened = await openedFromLink(false); } catch (_) {}
+                ok = Boolean(opened) && chatIsGroup();
+                if (ok) {
+                    readTitle = headerTitle().trim();
+                    const codeTitles = (await getStore(CODE_TITLES_KEY)) || {};
+                    codeTitles[job.code] = readTitle;
+                    await setStore(CODE_TITLES_KEY, codeTitles);
+                }
+            } else {
+                try { ok = await openChat(job.city); } catch (_) {}
+                ok = ok && plainTitle(headerTitle()) === plainTitle(job.city);
+            }
+            if (ok) await sleep(800);
+            const msgs = ok ? readChat(40) : [];
+            // 1.7.558: each message that carries a transfer wlcm sent (wp_wa_crm_links_v1, as the PC's "open in CRM"
+            // buttons) gets tr: [[transfer id, label]] — the tablet shows a button that opens that transfer
+            try {
+                const links = (await getStore('wp_wa_crm_links_v1')) || [];
+                const flat = function(text) { return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+                if (Array.isArray(links) && links.length) msgs.forEach(function(m) {
+                    const text = flat(m.x);
+                    if (text.length < 20) return;
+                    const seen = {}, tr = [];
+                    links.forEach(function(link) {
+                        if (!link || !link.k || !link.p || seen[link.p] || text.indexOf(link.k) < 0) return;
+                        seen[link.p] = true;
+                        const tid = (String(link.p).match(/transfers\/(\d+)/) || [])[1];
+                        if (tid) tr.push([tid, String(link.l || '').slice(0, 30)]);
+                    });
+                    if (tr.length) m.tr = tr.slice(0, 6);
+                });
+            } catch (_) {}
+            await setStore('wp_wa_chat_v1', { title: readTitle, ok: ok, msgs: msgs, at: Date.now() });
+            try { setSearch(''); } catch (_) {}
+            report(job, ok, ok ? 'read ' + msgs.length + ' messages for the phone' : 'could not open the chat "' + (job.code ? 'from its group link' : job.city) + '"');
+            return;
+        }
         if (sent[dupKey]) {
             report(job, false, 'the same message was already sent to this group in the last 10 minutes — not sent again');
             return;
@@ -726,17 +1659,39 @@
         // web.whatsapp.com/send?phone=… Only sent to saved contacts — a chat
         // whose header shows the bare number is not in your contacts.
         if (job.phone) {
-            const chatTitle = viaLink ? await openedFromLink() : '';
+            const chatTitle = viaLink ? await openedFromLink() : (job.byName ? headerTitle().trim() : ''); // 1.7.558: + opened by name
             if (!chatTitle) {
                 report(job, false, 'could not open the chat with +' + job.phone + ' — is the number on WhatsApp?');
                 return;
             }
+            // 1.7.499: WhatsApp first shows the chat that was open before (e.g. a city group) and only then
+            // switches to this number's chat. That first chat failed the check below, the contact-panel check then
+            // closed the chat, and the hero was neither saved nor messaged (it worked on the 2nd try, when this
+            // chat was already the last one open). Wait (max 12 s) until the header is this person.
+            if (viaLink && !chatLooksLikePhone(job)) {
+                await waitFor(function() { return chatLooksLikePhone(job); }, 12000);
+                await sleep(400); // the chat finishes drawing
+            }
             // Only the chat with this exact number (not a chat that happened
             // to be open) — checked twice while the page settles.
-            let isRight = await chatIsPhone(job.phone);
-            if (!isRight) { await sleep(2500); isRight = await chatIsPhone(job.phone); }
+            // 1.7.558: opened by its remembered name: that name, not a group, no other number → right; else the number's link
+            if (job.byName) {
+                if (!(norm(headerTitle()) === norm(job.byName) && personChatOk(personTail(job)))) {
+                    const again = Object.assign({}, job, { byName: '', byNameTried: true, createdAt: Date.now() });
+                    await setStore(JOBS_KEY, [again].concat(((await getStore(JOBS_KEY)) || []).filter(function(j) { return j.id !== job.id; })));
+                    try { sessionStorage.setItem(OPENING_KEY, again.id); sessionStorage.setItem(BEFORE_KEY, headerTitle().trim()); } catch (_) {}
+                    progress(job, 'the chat "' + job.byName + '" did not check out — opening it from the number instead');
+                    navigating = true;
+                    wpWaGo('https://web.whatsapp.com/send?phone=' + encodeURIComponent(job.phone));
+                    return;
+                }
+            }
+            let isRight = job.byName ? true : await chatIsPhone(job.phone, Boolean(viaLink), job); // 1.7.465: viaLink = fresh load of this number's link; 1.7.488: + its name
+            const firstDiag = phoneDiag; // 1.7.505: the 1st try's view too (the 2nd often sees a closed chat)
+            if (!isRight) { await sleep(2500); isRight = await chatIsPhone(job.phone, Boolean(viaLink), job); }
             if (!isRight) {
-                report(job, false, 'could not confirm the open chat is +' + job.phone + ' — nothing sent');
+                const marks = (headerTitle() || '').match(/[^\x20-\x7e]/g); // 1.7.505: any odd characters in the header, as codes
+                report(job, false, 'could not confirm the open chat is +' + job.phone + ' (1st: ' + firstDiag + '; 2nd: ' + phoneDiag + (marks ? '; header chars ' + Array.from(new Set(marks)).slice(0, 6).map(function(c) { return 'U+' + c.charCodeAt(0).toString(16); }).join(' ') : '') + ') — nothing sent'); // 1.7.449: what was seen
                 return;
             }
             let contactTitle = headerTitle().trim() || chatTitle;
@@ -746,19 +1701,46 @@
             const last = String(job.contactLast || '').trim();
             const wantedName = first ? (first + ' ' + last).trim() : String(job.contactName || '').trim();
             let contactNote = '';
-            if (/^[+\d\s().-]+$/.test(contactTitle)) {
+            // 1.7.506: a Business account shows its business name, not the number, even when not saved —
+            // the message box label "Type a message to +52 …" says it is not a saved contact
+            let notSaved = isPhoneTitle(contactTitle) || composerPhoneDigits();
+            // 1.7.563 (user, 25 Nov: Crete drivers already in contacts were "saved" again, failed, and got nothing):
+            // WhatsApp's own contact list decides first; the screen (header / Edit / Add, which the narrow side
+            // panel often hides) only when it cannot tell.
+            const store = await storeSavedState(job.phone);
+            if (store.saved === true) { notSaved = false; await savedPersonRemember(job.phone); progress(job, 'WhatsApp contacts: +' + job.phone + ' is a saved contact'); }
+            else if (store.saved === false) { notSaved = true; progress(job, 'WhatsApp contacts: +' + job.phone + ' is not a saved contact — saving first'); }
+            // 1.7.564: the list could not tell → the rule from before 1.7.559: a number in the header or the message box,
+            // or a "~" profile name = not saved; a name = saved. The 1.7.559 look into the contact info is gone (the
+            // narrow side panel hides its Edit / Add, so saved drivers counted as strangers and got nothing).
+            // 1.7.567: "@name" (a WhatsApp username, shown for a number that is not in your contacts) = not saved too
+            // (25 Nov: a suggested driver got the message in a chat titled "@infiniturcolombia")
+            if (store.saved === null && !notSaved && /^\s*[~@]/.test(contactTitle)) notSaved = true;
+            if (notSaved) {
                 // Not a saved contact: add them first, then send.
-                const addProblem = wantedName ? await addContact(first || wantedName, first ? last : '') : 'no name to save';
+                let addProblem = job.contactTried ? 'tried already' : 'no name to save';
+                if (wantedName && !job.contactTried) {
+                    try { await setStore(RESUME_KEY, { job: Object.assign({}, job, { contactTried: true }), at: Date.now() }); } catch (_) {}
+                    addProblem = await addContact(first || wantedName, first ? last : '', job.phone); // 1.7.566: + the number (New contact)
+                }
                 if (addProblem) {
-                    // 1.7.281: not waiting for you — the chat is this number, so the message still goes
+                    // 1.7.559: never a message to a number that is not a saved contact (WhatsApp blocked the account) —
+                    // was "sending anyway" (1.7.281). The usual retry (15 min, 3 tries) tries saving again.
                     if (job.contactOnly) { report(job, false, '+' + job.phone + ': could not save as "' + wantedName + '" (' + addProblem + ')'); return; }
-                    contactNote = ' (not saved as a contact: ' + addProblem + ' — save it as "' + wantedName + '" by hand)';
-                    progress(job, 'could not save +' + job.phone + ' as "' + wantedName + '" (' + addProblem + ') — sending anyway');
+                    // 1.7.562: someone who has written to you before is not a stranger: the message still goes
+                    if (chatHasIncoming()) {
+                        contactNote = ' (not saved as a contact: ' + addProblem + ' — they have written to you before, so it was sent)';
+                        progress(job, 'could not save +' + job.phone + ' (' + addProblem + ') — they wrote to you before: sending');
+                    } else {
+                    report(job, false, 'could not save +' + job.phone + ' as a contact' + (wantedName ? ' "' + wantedName + '"' : '') + ' (' + addProblem + (store.saved === null ? '; WhatsApp contact list: ' + store.how : '') + ') — nothing sent (only saved contacts get messages)');
+                    return;
+                    }
                 } else {
+                    await savedPersonRemember(job.phone); // 1.7.559
                     contactTitle = headerTitle().trim();
                     progress(job, 'added "' + contactTitle + '" to your contacts');
                 }
-            } else if (first && norm(contactTitle) !== norm(wantedName)) {
+            } else if (first && !job.contactKeep && norm(contactTitle) !== norm(wantedName)) {
                 // Saved under another name: the same format for everyone
                 const failed = (await getStore(RENAME_FAILED_KEY)) || {};
                 const tail = String(job.phone).slice(-9);
@@ -778,23 +1760,47 @@
                 }
             }
             if (job.contactOnly) { report(job, true, 'saved as "' + contactTitle + '"'); return; }
-            progress(job, 'chat with "' + contactTitle + '" open — typing and sending');
-            const personProblem = await pasteAndSend(job.text);
-            if (personProblem) {
-                report(job, false, personProblem + ' (chat "' + contactTitle + '")');
+            if (!(await waitComposer())) {
+                if (!job.reopened) {
+                    const again = Object.assign({}, job, { reopened: true, contactTried: true, createdAt: Date.now() });
+                    await setStore(JOBS_KEY, [again].concat((await getStore(JOBS_KEY)) || []));
+                    try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {}
+                    try { sessionStorage.setItem(OPENING_KEY, again.id); } catch (_) {}
+                    progress(job, 'no message box in "' + contactTitle + '" — opening the chat again');
+                    try { sessionStorage.setItem(BEFORE_KEY, headerTitle().trim()); } catch (_) {} // 1.7.557
+                    navigating = true;
+                    wpWaGo('https://web.whatsapp.com/send?phone=' + encodeURIComponent(job.phone));
+                    return;
+                }
+                report(job, false, 'no message box' + composerHint() + ' (chat "' + contactTitle + '", opened twice)');
                 return;
+            }
+            progress(job, 'chat with "' + contactTitle + '" open — typing and sending');
+            // 1.7.365: with a picture, the text is its caption (one message)
+            const personResult = {};
+            const personProblem = job.image ? await sendImage(job.image, job.text, personResult) : await pasteAndSend(job.text);
+            if (personProblem) {
+                report(job, false, (personResult.pressed ? 'send pressed but ' : '') + personProblem + ' (chat "' + contactTitle + '")');
+                return;
+            }
+            try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {}
+            // the picture is out but its caption did not take: the text goes after it
+            if (job.image && job.text && !personResult.captioned) {
+                const afterProblem = await pasteAndSend(job.text);
+                if (afterProblem) contactNote += ' (the picture went, the text did not: ' + afterProblem + ')';
             }
             sent[dupKey] = Date.now();
             await setStore(SENT_KEY, sent);
-            report(job, true, 'sent to "' + contactTitle + '"' + contactNote);
+            await personTitleRemember(job); // 1.7.558
+            report(job, true, 'sent to "' + contactTitle + '"' + contactNote + (job.byName ? ' (opened by name, no reload)' : ''));
             return;
         }
         const groups = (await getStore(GROUPS_KEY)) || {};
         let title = '';
         if (viaLink) {
-            const opened = await openedFromLink();
+            const opened = await openedFromLink(true);
             if (opened === null) {
-                report(job, false, 'the ' + job.city + ' link asks to JOIN the group — you are not in it, so nothing was sent');
+                report(job, false, 'the ' + job.city + ' link asks to JOIN the group and has no plain Join button (approval needed?) — nothing was sent');
                 return;
             }
             // The chat shown first can be another one (restored / clicked):
@@ -818,6 +1824,7 @@
         } else {
             progress(job, 'WhatsApp Web picked up the message');
         }
+        if (job.chat) title = job.city; // 1.7.440: a phone reply goes to that exact chat, never a remembered city group
         if (!title) title = job.knownTitle || groups[cityKey] || '';
         if (!title) {
             if (!searchBox()) {
@@ -848,11 +1855,12 @@
         // Last check before typing: this must be the city's group. (A chat
         // you picked in the chooser only needs to be a group.)
         const openTitle = headerTitle().trim();
-        if (!(composer() && chatIsGroup() && (job.chosenByYou || titleMatchesCity(openTitle, job)))) {
+        // 1.7.440: a phone reply needs the exact chat title (it can be a person, not a group)
+        if (job.chat ? !(composer() && plainTitle(openTitle) === plainTitle(job.city)) : !(composer() && chatIsGroup() && (job.chosenByYou || titleMatchesCity(openTitle, job)))) {
             report(job, false, 'the open chat "' + openTitle + '" is not the ' + job.city + ' group — nothing sent');
             return;
         }
-        if (!groups[cityKey] || groups[cityKey] !== openTitle) {
+        if (!job.chat && (!groups[cityKey] || groups[cityKey] !== openTitle)) { // 1.7.440: a reply's chat is not a city group
             groups[cityKey] = openTitle;
             await setStore(GROUPS_KEY, groups);
         }
@@ -867,7 +1875,8 @@
         title = openTitle;
         // 1.7.319: with an image, the text is its caption (one message).
         // "@all" groups keep text first (the mention needs the chat box).
-        if (job.image && !/^@all\b/i.test(String(job.text))) {
+        // 1.7.376: "@all" now goes in the caption as well
+        if (job.image) {
             progress(job, 'sending the image with the text');
             const result = {};
             const imageProblem = await sendImage(job.image, job.text, result);
@@ -920,7 +1929,28 @@
         return Boolean(box && box.ready && Date.now() - Number(box.at) < BOX_FRESH);
     }
 
+    // 1.7.421: one send; when you typed in the middle of it, the message goes back to the
+    // front of the queue (at most 3 times) and is sent once you have stopped.
+    async function handleOrRetry(job, viaLink) {
+        wpJobStartedAt = Date.now();
+        try {
+            await handle(job, viaLink);
+        } catch (error) {
+            if (error && error.wpUserTyped) {
+                const tries = Number(job.userRetries || 0) + 1;
+                if (tries > 3) { report(job, false, 'not sent — you kept typing in WhatsApp while wlcm was sending'); return; }
+                progress(job, 'you typed in WhatsApp — wlcm stopped, took its text out, and sends it when you stop');
+                const jobs = (await getStore(JOBS_KEY)) || [];
+                await setStore(JOBS_KEY, [Object.assign({}, job, { createdAt: Date.now(), userRetries: tries })].concat(jobs.filter(function(j) { return j.id !== job.id; })));
+                return;
+            }
+            report(job, false, 'error: ' + (error && error.message || error));
+        } finally {
+            wpJobStartedAt = 0;
+        }
+    }
     async function runJobs() {
+        if (!IN_PANEL) return; // 1.7.464: messages go out from the side panel only, never from a WhatsApp tab
         if (running) return;
         running = true;
         try {
@@ -953,6 +1983,13 @@
                 return;
             }
             await sleep(800);
+            const resume = await getStore(RESUME_KEY);
+            if (resume) {
+                try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {}
+                if (resume.job && Date.now() - Number(resume.at) < 180000) {
+                    await setStore(JOBS_KEY, [Object.assign({}, resume.job, { createdAt: Date.now() })].concat((await getStore(JOBS_KEY)) || []));
+                }
+            }
             for (;;) {
                 if (navigating) return;
                 if (await panelTakesJobs()) return;
@@ -967,6 +2004,12 @@
                     await dropJobs(expired);
                     try { sessionStorage.removeItem(OPENING_KEY); } catch (_) {}
                     break;
+                }
+                // 1.7.421: you are typing in WhatsApp: wait until you stop (up to 5 min)
+                if (!(await waitUserIdle(job))) {
+                    await dropJobs(function(j) { return j.id === job.id; });
+                    report(job, false, 'not sent — you were typing in WhatsApp for 5 minutes');
+                    continue;
                 }
                 // Group link known: load it (the page reloads; the job stays
                 // queued and is sent by the reloaded page). Duplicates are
@@ -988,22 +2031,42 @@
                             jobs.shift();
                             await dropJobs(function(j) { return j.id === job.id || expired(j); });
                             job.knownTitle = known;
-                            try {
-                                await handle(job, false);
-                            } catch (error) {
-                                report(job, false, 'error: ' + (error && error.message || error));
-                            }
-                            // 5 s between messages.
+                            await handleOrRetry(job, false);
+                            // 1.7.479: back to 5 s between messages (2 s got the account blocked)
                             await sleep(5000);
                             continue;
                         }
                         progress(job, 'could not open "' + known + '" by name — using the group link');
                     }
                 }
+                // 1.7.558: a person whose chat name is known: opened by that name, without reloading
+                if (job.phone && !job.byNameTried && !job.image && opening !== job.id && !(await isDuplicate(job))) {
+                    const tail = personTail(job);
+                    const titles = (await getStore(PERSON_TITLES_KEY)) || {};
+                    const known = titles[tail] && titles[tail].t;
+                    const shared = known && Object.keys(titles).some(function(k) { return k !== tail && titles[k] && norm(titles[k].t) === norm(known); });
+                    if (known && !shared) {
+                        progress(job, 'opening the chat "' + known + '" (no reload)');
+                        let opened = false;
+                        try { opened = await openChat(known); } catch (_) {}
+                        opened = opened && norm(headerTitle()) === norm(known) && personChatOk(tail);
+                        try { setSearch(''); } catch (_) {}
+                        if (opened) {
+                            jobs.shift();
+                            await dropJobs(function(j) { return j.id === job.id || expired(j); });
+                            job.byName = known;
+                            await handleOrRetry(job, false);
+                            await sleep(5000); // 1.7.479: 5 s between messages
+                            continue;
+                        }
+                        progress(job, 'could not open "' + known + '" by name — using the number link');
+                    }
+                }
                 if ((job.code || job.phone) && opening !== job.id && !(await isDuplicate(job))) {
                     await dropJobs(expired);
                     try { sessionStorage.setItem(OPENING_KEY, job.id); } catch (_) {}
                     progress(job, job.phone ? 'opening the chat with ' + job.city : 'opening the ' + job.city + ' group from its link');
+                    try { sessionStorage.setItem(BEFORE_KEY, job.phone ? headerTitle().trim() : ''); } catch (_) {} // 1.7.557
                     navigating = true;
                     wpWaGo(job.phone
                         ? 'https://web.whatsapp.com/send?phone=' + encodeURIComponent(job.phone)
@@ -1013,12 +2076,9 @@
                 jobs.shift();
                 await dropJobs(function(j) { return j.id === job.id || expired(j); });
                 try { sessionStorage.removeItem(OPENING_KEY); } catch (_) {}
-                try {
-                    await handle(job, opening === job.id);
-                } catch (error) {
-                    report(job, false, 'error: ' + (error && error.message || error));
-                }
-                // 5 s between messages.
+                await handleOrRetry(job, opening === job.id);
+                if (!navigating) { try { await chrome.storage.local.remove(RESUME_KEY); } catch (_) {} }
+                // 1.7.479: back to 5 s between messages (2 s got the account blocked)
                 await sleep(5000);
             }
         } finally {
@@ -1133,13 +2193,131 @@
         const setMute = function(on) {
             try { if (on) document.documentElement.setAttribute('data-wp-mute', '1'); else document.documentElement.removeAttribute('data-wp-mute'); } catch (_) {}
         };
+        setMute(true); // 1.7.355: silent from the start, until the stored choice is read
         getStore(MUTE_KEY).then(function(on) { setMute(Boolean(on)); }, function() {});
         chrome.storage.onChanged.addListener(function(changes, area) {
             if (area === 'local' && changes[MUTE_KEY]) setMute(Boolean(changes[MUTE_KEY].newValue));
         });
+        // 1.7.423: what gets through the Mute: an @mention of you or a reply to
+        // you in a group (the "@" WhatsApp shows next to the unread count) and
+        // every direct chat. Read from the chat list only (nothing is opened, so
+        // nothing is marked read); a new one goes to wp_wa_alerts_v1, where the
+        // CRM shows a card (Open / ×) and the phone app shows it too. The chime
+        // plays only while the panel is muted (unmuted, WhatsApp plays its own).
+        // Only the chat's name and the kind are kept, never the message text.
+        const ALERTS_KEY = 'wp_wa_alerts_v1';
+        const alertSeen = new Map(); // chat → unread count last seen
+        let unreadSig = '', unreadPut = 0; // 1.7.538: the unread list (wp_wa_unread_v1) last written
+        let alertBase = 0;           // the first rounds only learn what is already unread
+        let alertMuted = true;
+        getStore(MUTE_KEY).then(function(on) { alertMuted = Boolean(on); }, function() {});
+        chrome.storage.onChanged.addListener(function(changes, area) {
+            if (area === 'local' && changes[MUTE_KEY]) alertMuted = Boolean(changes[MUTE_KEY].newValue);
+        });
+        const rowUnread = function(row) {
+            let count = 0;
+            row.querySelectorAll('[aria-label]').forEach(function(el) {
+                const m = String(el.getAttribute('aria-label') || '').match(/(\d+)\s+unread/i);
+                if (m) count = Math.max(count, Number(m[1]));
+            });
+            return count;
+        };
+        const rowMention = function(row) {
+            if (row.querySelector('[data-icon*="mention" i], [data-icon*="reply" i], [data-icon*="tagged" i]')) return true;
+            // 1.7.424 (seen on the live WhatsApp Web): icons are <svg><title>wds-ic-…</title>, no data-icon
+            if (Array.from(row.querySelectorAll('svg title')).some(function(t) { return /mention|at-?sign|(^|-)at$|reply|tagged/i.test(String(t.textContent || '')); })) return true;
+            if (Array.from(row.querySelectorAll('[aria-label]')).some(function(el) { return /mention|tagged you|repl(y|ied) to you/i.test(el.getAttribute('aria-label') || ''); })) return true;
+            // the "@" pill: a leaf whose whole text is "@"
+            return Array.from(row.querySelectorAll('span, div')).some(function(el) { return !el.children.length && String(el.textContent || '').trim() === '@'; });
+        };
+        const rowGroup = function(row, title) {
+            if (row.querySelector('[data-icon*="group" i], [data-icon*="community" i]')) return true;
+            if (Array.from(row.querySelectorAll('svg title')).some(function(t) { return /group|communit/i.test(String(t.textContent || '')); })) return true; // 1.7.424
+            // a group's last-message line starts with the sender: "Maria: …" / "~ Maria: …"
+            const lines = Array.from(row.querySelectorAll('span[title], span[dir="auto"], span[dir="ltr"]'))
+                .map(function(el) { return String(el.getAttribute('title') || el.textContent || '').trim(); })
+                .filter(function(text) { return text && text !== title; });
+            return lines.some(function(text, i) {
+                const next = lines[i + 1] || '';
+                return /^~?\s?[^:]{1,40}:\s/.test(text) || (/^~?\s?[^:]{1,40}$/.test(text) && /^:\s?/.test(next));
+            }) || Boolean(Array.from(row.querySelectorAll('span')).some(function(el) { return !el.children.length && /^:\s*$/.test(String(el.textContent || '')); })); // 1.7.424: live: sender / ":" + spaces / text
+        };
+        // 1.7.538: the chat list's last-message line (nothing is opened, nothing marked read)
+        const rowPreview = function(entry) {
+            try {
+                const lines = Array.from(entry.row.querySelectorAll('span[title], span[dir="auto"], span[dir="ltr"]')).map(function(el) { return String(el.getAttribute('title') || el.textContent || '').replace(/\s+/g, ' ').trim(); }).filter(function(text) { return text && text !== entry.title && !/^\d{1,2}:\d{2}$|^\d+$/.test(text); });
+                return (lines[lines.length - 1] || '').slice(0, 200);
+            } catch (_) { return ''; }
+        };
+        // 1.7.540: the time a chat row shows for its last message; HH:MM = today (else "Yesterday", a day or a date)
+        const rowTime = function(row) {
+            const leaves = Array.from(row.querySelectorAll('span, div')).filter(function(el) { return !el.children.length; });
+            for (let i = 0; i < leaves.length; i++) { const x = String(leaves[i].textContent || '').trim(); if (/^\d{1,2}:\d{2}(\s?[AaPp][Mm])?$/.test(x)) return x; }
+            return '';
+        };
+        const alertScan = function() {
+            const pane = paneSide();
+            if (!pane) return;
+            const fresh = [];
+            const unreadNow = []; // 1.7.538: every chat still unread that is a DM or mentions you (the tablet's Chats tab)
+            // 1.7.556: in the order the chat list shows them (WhatsApp places its rows by position, not page order)
+            const topOf = function(entry) { try { return entry.row.getBoundingClientRect().top; } catch (_) { return 0; } };
+            chatRows().filter(function(entry) { return pane.contains(entry.row); }).sort(function(a, b) { return topOf(a) - topOf(b); }).forEach(function(entry) {
+                if (!pane.contains(entry.row)) return;
+                const unread = rowUnread(entry.row);
+                const before = alertSeen.has(entry.title) ? alertSeen.get(entry.title) : 0;
+                alertSeen.set(entry.title, unread);
+                // 1.7.538: unread DMs + mentions; 1.7.540: plus every chat with a message today (groups too), for the day list by city
+                try {
+                    const tm = rowTime(entry.row);
+                    if (unread || tm) {
+                        const m = unread ? rowMention(entry.row) : false;
+                        // 1.7.556: a city team's chat is a group even when its last line has no sender ("Gran Canaria Welcomers")
+                        const g = !m && (rowGroup(entry.row, entry.title) || /\b(welcomers|dispatchers|drivers|group|team|ops)\b/i.test(entry.title));
+                        // 1.7.556: the last message's time as a time stamp (HH:MM = today; later than now = yesterday)
+                        let ts = 0;
+                        const hm = String(tm || '').match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])?$/);
+                        if (hm) { const d = new Date(); let h = Number(hm[1]) % (hm[3] ? 12 : 24); if (hm[3] && /p/i.test(hm[3])) h += 12; d.setHours(h, Number(hm[2]), 0, 0); if (d.getTime() > Date.now() + 120000) d.setDate(d.getDate() - 1); ts = d.getTime(); }
+                        if (m || !g || tm) unreadNow.push({ title: entry.title.slice(0, 80), kind: m ? 'mention' : g ? 'group' : 'direct', count: unread, preview: rowPreview(entry), tm: tm, ts: ts });
+                    }
+                } catch (_) {}
+                if (!unread || unread <= before || alertBase < 2) return;
+                const mention = rowMention(entry.row);
+                const direct = !mention && !rowGroup(entry.row, entry.title);
+                // 1.7.439: the last-message line the chat list shows (nothing is opened or marked read), for the phone
+                let preview = '';
+                try {
+                    const lines = Array.from(entry.row.querySelectorAll('span[title], span[dir="auto"], span[dir="ltr"]')).map(function(el) { return String(el.getAttribute('title') || el.textContent || '').replace(/\s+/g, ' ').trim(); }).filter(function(text) { return text && text !== entry.title && !/^\d{1,2}:\d{2}$|^\d+$/.test(text); });
+                    preview = (lines[lines.length - 1] || '').slice(0, 200);
+                } catch (_) {}
+                if (mention || direct) fresh.push({ title: entry.title.slice(0, 80), kind: mention ? 'mention' : 'direct', count: unread, preview: preview });
+            });
+            alertBase += 1;
+            // 1.7.538: written when it changed and every 30 s (the CRM page drops a list older than 2 min)
+            try {
+                const hash = function(text) { let h = 2166136261; for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h.toString(36).padStart(7, '0'); };
+                const list = unreadNow.slice(0, 40).map(function(a) { return Object.assign({ id: 'wu' + hash(a.title) }, a); });
+                const sig = JSON.stringify(list);
+                const nowMs = Date.now();
+                if (sig !== unreadSig || nowMs - unreadPut > 30000) { unreadSig = sig; unreadPut = nowMs; chrome.storage.local.set({ wp_wa_unread_v1: { at: nowMs, list: list } }); }
+            } catch (_) {}
+            if (!fresh.length) return;
+            getStore(ALERTS_KEY).then(function(list) {
+                const now = Date.now();
+                const keep = (Array.isArray(list) ? list : []).filter(function(a) { return a && now - Number(a.at) < 1800000; });
+                fresh.forEach(function(item) {
+                    const old = keep.find(function(a) { return a.title === item.title; });
+                    if (old) { old.count = item.count; old.at = now; old.preview = item.preview; if (item.kind === 'mention') old.kind = 'mention'; }
+                    else keep.unshift({ id: 'w' + now.toString(36) + Math.random().toString(36).slice(2, 6), title: item.title, kind: item.kind, count: item.count, preview: item.preview, at: now });
+                });
+                chrome.storage.local.set({ [ALERTS_KEY]: keep.slice(0, 8) });
+                if (alertMuted) { try { chrome.runtime.sendMessage({ type: 'WP_PLAY_SOUND', kind: 'found' }, function() { void chrome.runtime.lastError; }); } catch (_) {} }
+            }, function() {});
+        };
+        setInterval(alertScan, 2000);
         const beat = function(ready) {
             try { chrome.storage.local.set({ [BOX_KEY]: { at: Date.now(), ready: Boolean(ready) } }); } catch (_) {}
-            say(ready ? 'logged in — mod sends from here' : 'not logged in — scan the QR code once (mod uses a WhatsApp tab meanwhile)');
+            say(ready ? 'logged in — wlcm sends from here' : 'not logged in — scan the QR code once (wlcm uses a WhatsApp tab meanwhile)');
         };
         (async function() {
             // a page that is still loading keeps the last "logged in" (a send's reload)
@@ -1158,8 +2336,56 @@
             if (!msg) return;
             if (msg.type === 'WP_WA_RUN') runJobs();
             if (msg.type === 'WP_WA_SHOW' && /^[A-Za-z0-9]{10,40}$/.test(String(msg.code || ''))) showGroup(String(msg.code));
+            // 1.7.423: Open on a mention / direct-message card in the CRM
+            if (msg.type === 'WP_WA_OPEN_TITLE' && msg.title) { if (!running) { running = true; openChat(String(msg.title).slice(0, 80)).catch(function() {}).then(function() { running = false; runJobs(); }); } }
         });
     }
     runJobs();
     tourPaste();
+    // 1.7.473: in the side panel, a transfer ghas sent (city group, heroes, suggested — content.js
+    // wpWaLinkRecord, chrome.storage wp_wa_crm_links_v1) gets a small "open in CRM" button under its message;
+    // a click opens that transfer in a CRM tab. Nothing is typed or sent; the message itself is not changed.
+    if (IN_PANEL) {
+        try {
+            let crmLinks = [];
+            const loadCrmLinks = function() { chrome.storage.local.get('wp_wa_crm_links_v1', function(got) { crmLinks = Array.isArray(got && got.wp_wa_crm_links_v1) ? got.wp_wa_crm_links_v1 : []; }); };
+            loadCrmLinks();
+            chrome.storage.onChanged.addListener(function(changes, area) { if (area === 'local' && changes.wp_wa_crm_links_v1) loadCrmLinks(); });
+            const flat = function(text) { return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+            const scanCrmLinks = function() {
+                if (!crmLinks.length) return;
+                document.querySelectorAll('#main [data-id]').forEach(function(msg) {
+                    if (msg.querySelector('[data-id]') || msg.querySelector('.wp-crm-links')) return; // innermost message only, once
+                    const text = flat(msg.innerText);
+                    if (text.length < 20) return;
+                    const seen = {};
+                    const hits = crmLinks.filter(function(link) {
+                        if (!link || !link.k || !link.p || text.indexOf(link.k) < 0 || seen[link.p]) return false;
+                        seen[link.p] = true;
+                        return true;
+                    });
+                    if (!hits.length) return;
+                    const box = document.createElement('div');
+                    box.className = 'wp-crm-links';
+                    box.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;padding:2px 8px 6px;justify-content:flex-end';
+                    hits.forEach(function(link) {
+                        const button = document.createElement('button');
+                        button.type = 'button';
+                        button.textContent = '↗ ' + (link.l || 'open') + ' in CRM';
+                        button.title = 'Open this transfer in the CRM';
+                        button.style.cssText = 'border:0;border-radius:999px;padding:2px 9px;background:#2fbf71;color:#06210f;font:600 11px "Segoe UI",system-ui,sans-serif;cursor:pointer';
+                        ['mousedown', 'mouseup', 'pointerdown'].forEach(function(type) { button.addEventListener(type, function(event) { event.stopPropagation(); }, true); });
+                        button.addEventListener('click', function(event) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            try { chrome.runtime.sendMessage({ type: 'WP_OPEN_CRM', path: link.p }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+                        });
+                        box.appendChild(button);
+                    });
+                    msg.appendChild(box);
+                });
+            };
+            setInterval(scanCrmLinks, 1500);
+        } catch (_) {}
+    }
 })();
