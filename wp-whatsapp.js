@@ -885,9 +885,39 @@
             save = findClickable(document, /^(save( contact)?|done|wds-ic-checkmark.*|ic-checkmark.*|checkmark)$/i);
             if (!save) { const icon = document.querySelector('[data-icon="checkmark"], [data-icon="wds-ic-checkmark"], [data-icon="check"]'); if (icon && !icon.closest('#main') && !icon.closest('#side')) save = icon.closest('button, [role="button"]') || icon; }
         }
+        if (!save && formSaysAlreadySaved(firstField)) return ALREADY_SAVED; // 1.7.563
         if (!save) return 'no Save button in the contact form (seen: ' + panelButtonsSeen() + ')';
         clickEl(save);
         return '';
+    }
+    // 1.7.563: WhatsApp's new-contact form for a number that is ALREADY a contact says so ("This phone number is
+    // already in your contacts") and has no Save button — that is not a failure, the person is saved.
+    const ALREADY_SAVED = '__already_saved__';
+    function formSaysAlreadySaved(field) {
+        try {
+            let box = field, top = null;
+            for (let i = 0; i < 14 && box && box !== document.body; i++, box = box.parentElement) {
+                if (box.id === 'main' || box.id === 'side' || box.querySelector('#main') || box.querySelector('#side')) break;
+                top = box;
+            }
+            const text = String((top || field).innerText || '').replace(/\s+/g, ' ');
+            return /already (?:in|on|one of|saved (?:in|to|as)) (?:your |my )?contacts?|already (?:a |your )?(?:saved )?contact|contact already exists|already saved/i.test(text);
+        } catch (_) { return false; }
+    }
+    // 1.7.563: WhatsApp's own contact list (asked in the page, wp-whatsapp-main.js): true = saved contact,
+    // false = not saved, null = could not tell (older page script, WhatsApp changed its code) -> the screen checks.
+    function storeSavedState(phone) {
+        return new Promise(function(resolve) {
+            const ask = 'a' + Date.now() + Math.random().toString(36).slice(2, 7);
+            let done = false;
+            const listen = function(event) {
+                try { const a = JSON.parse(String(event.detail || '{}')); if (a.ask === ask) finish({ saved: a.saved === true ? true : a.saved === false ? false : null, how: String(a.how || '') }); } catch (_) {}
+            };
+            const finish = function(value) { if (done) return; done = true; document.removeEventListener('wp-wa-contact-answer', listen); resolve(value); };
+            document.addEventListener('wp-wa-contact-answer', listen);
+            setTimeout(function() { finish({ saved: null, how: 'no answer from the page' }); }, 1500);
+            try { document.dispatchEvent(new CustomEvent('wp-wa-contact-ask', { detail: JSON.stringify({ ask: ask, digits: String(phone || '').replace(/\D/g, '') }) })); } catch (_) { finish({ saved: null, how: 'ask failed' }); }
+        });
     }
     function closeSidePanel() {
         try {
@@ -969,6 +999,7 @@
         if (!add) { const seen = panelButtonsSeen(); closeSidePanel(); return 'no "Add to contacts" option found (seen: ' + seen + ')'; } // 1.7.562: what was there
         clickEl(add);
         const problem = await fillContactForm(first, last);
+        if (problem === ALREADY_SAVED) { await closeSidePanelAndWait(); return ''; } // 1.7.563: it was saved already
         if (problem) { closeSidePanel(); return problem; }
         const saved = await waitFor(function() {
             const title = headerTitle().trim();
@@ -994,7 +1025,8 @@
         }, 6000);
         if (!edit) { closeSidePanel(); return 'no Edit option in the contact info'; }
         clickEl(edit);
-        const problem = await fillContactForm(first, last);
+        let problem = await fillContactForm(first, last);
+        if (problem === ALREADY_SAVED) problem = 'WhatsApp says the number is already a contact';
         if (problem) { closeSidePanel(); return problem; }
         const wanted = norm(first + ' ' + last);
         const renamed = await waitFor(function() { return norm(headerTitle()) === wanted; }, 12000);
@@ -1290,7 +1322,13 @@
             // 1.7.506: a Business account shows its business name, not the number, even when not saved —
             // the message box label "Type a message to +52 …" says it is not a saved contact
             let notSaved = isPhoneTitle(contactTitle) || composerPhoneDigits();
-            if (!notSaved && !(await savedPersonKnown(job.phone))) { // 1.7.559: a name in the header is no proof any more
+            // 1.7.563 (user, 25 Nov: Crete drivers already in contacts were "saved" again, failed, and got nothing):
+            // WhatsApp's own contact list decides first; the screen (header / Edit / Add, which the narrow side
+            // panel often hides) only when it cannot tell.
+            const store = await storeSavedState(job.phone);
+            if (store.saved === true) { notSaved = false; await savedPersonRemember(job.phone); progress(job, 'WhatsApp contacts: +' + job.phone + ' is a saved contact'); }
+            else if (store.saved === false) { notSaved = true; progress(job, 'WhatsApp contacts: +' + job.phone + ' is not a saved contact — saving first'); }
+            if (store.saved === null && !notSaved && !(await savedPersonKnown(job.phone))) { // 1.7.559: a name in the header is no proof any more
                 const state = await contactSavedState();
                 progress(job, 'contact info of +' + job.phone + ': ' + (state === 'saved' ? 'a saved contact' : state === 'unsaved' ? 'not a saved contact — saving first' : 'could not tell — saving first'));
                 if (state === 'saved') await savedPersonRemember(job.phone); else notSaved = true;
@@ -1312,7 +1350,7 @@
                         contactNote = ' (not saved as a contact: ' + addProblem + ' — they have written to you before, so it was sent)';
                         progress(job, 'could not save +' + job.phone + ' (' + addProblem + ') — they wrote to you before: sending');
                     } else {
-                    report(job, false, 'could not save +' + job.phone + ' as a contact' + (wantedName ? ' "' + wantedName + '"' : '') + ' (' + addProblem + ') — nothing sent (only saved contacts get messages)');
+                    report(job, false, 'could not save +' + job.phone + ' as a contact' + (wantedName ? ' "' + wantedName + '"' : '') + ' (' + addProblem + (store.saved === null ? '; WhatsApp contact list: ' + store.how : '') + ') — nothing sent (only saved contacts get messages)');
                     return;
                     }
                 } else {

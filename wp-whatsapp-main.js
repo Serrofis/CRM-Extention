@@ -121,3 +121,64 @@
         new MutationObserver(apply).observe(document.documentElement, { attributes: true, attributeFilter: ['data-wp-mute'] });
     } catch (_) {}
 })();
+
+// its own guard: a WhatsApp page that already ran an older copy of this script still gets this part
+(function() {
+    'use strict';
+    if (window.__wpWaContactAsk) return;
+    window.__wpWaContactAsk = true;
+    const originalAdd = EventTarget.prototype.addEventListener;
+    // 5) 1.7.563: "is this number one of my saved contacts?" asked by wp-whatsapp.js (event wp-wa-contact-ask,
+    // detail = digits). WhatsApp's own contact list answers (isAddressBookContact / isMyContact), not the screen:
+    // the narrow side panel hides the Edit / Add buttons, so already-saved drivers were "saved" again and failed.
+    // Answer: event wp-wa-contact-answer, detail = JSON {ask, saved: true | false | null, how}. Only the yes / no
+    // leaves this script (no names, no numbers).
+    try {
+        const modReq = function(name) {
+            try { if (typeof window.require === 'function') return window.require(name); } catch (_) {}
+            try { if (typeof window.importNamespace === 'function') return window.importNamespace(name); } catch (_) {}
+            return null;
+        };
+        const contactList = function() {
+            const tries = [['WAWebCollections', 'Contact'], ['WAWebContactCollection', 'ContactCollection']];
+            for (let i = 0; i < tries.length; i++) {
+                const mod = modReq(tries[i][0]);
+                const col = mod && (mod[tries[i][1]] || (mod.default && mod.default[tries[i][1]]));
+                if (col) {
+                    const models = typeof col.getModelsArray === 'function' ? col.getModelsArray() : (col._models || col.models || []);
+                    if (models && models.length) return { models: models, how: tries[i][0] };
+                }
+            }
+            return null;
+        };
+        const savedFlag = function(m) {
+            if (!m) return null;
+            if (m.isAddressBookContact !== undefined && m.isAddressBookContact !== null) return Boolean(m.isAddressBookContact);
+            if (m.isMyContact !== undefined && m.isMyContact !== null) return Boolean(m.isMyContact);
+            return null;
+        };
+        const userOf = function(w) { try { return String((w && (w.user || (w._serialized || '').split('@')[0])) || ''); } catch (_) { return ''; } };
+        originalAdd.call(document, 'wp-wa-contact-ask', function(event) {
+            let ask = '', saved = null, how = 'no contact list';
+            try {
+                const req = JSON.parse(String(event.detail || '{}'));
+                ask = String(req.ask || '');
+                const tail = String(req.digits || '').replace(/\D/g, '').slice(-9);
+                const list = tail.length >= 7 ? contactList() : null;
+                if (list) {
+                    how = list.how + ': not in the list';
+                    list.models.forEach(function(m) {
+                        try {
+                            const users = [userOf(m.id), userOf(m.phoneNumber)];
+                            if (!users.some(function(u) { return u && /^\d+$/.test(u) && u.slice(-9) === tail; })) return;
+                            const flag = savedFlag(m);
+                            if (flag === true) { saved = true; how = list.how; }
+                            else if (flag === false && saved !== true) { saved = false; how = list.how; }
+                        } catch (_) {}
+                    });
+                }
+            } catch (_) {}
+            try { document.dispatchEvent(new CustomEvent('wp-wa-contact-answer', { detail: JSON.stringify({ ask: ask, saved: saved, how: how }) })); } catch (_) {}
+        });
+    } catch (_) {}
+})();
