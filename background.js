@@ -1,5 +1,5 @@
 // 1.7.512: the build of THIS background.js; bump it with the manifest version on every build (wa-panel.js reloads wlcm when it differs)
-const WP_BG_BUILD = '1.7.564'; // 1.7.564: was left at 1.7.551 since 1.7.552, so wa-panel.js reloaded wlcm when the panel opened (at most every 30 min)
+const WP_BG_BUILD = '1.7.565'; // bump with the manifest version on every build (1.7.512)
 
 // ---- WhatsApp Web in the side panel (1.7.282) ----
 // WhatsApp refuses to load inside a frame. For the extension's own side
@@ -828,6 +828,18 @@ chrome.runtime.onStartup.addListener(wpOverviewAlarm);
 // 'wp_booted' mark is missing, content.js switches every automation off once (wpBootAllOff). (1.7.521 used
 // onStartup, which the box's cached old background handled before the new one was loaded.)
 try { chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }); } catch (_) {}
+// 1.7.565 (25 Nov: the 1.7.564 update switched Today off on the PC mid-shift): a wlcm update that wlcm itself did
+// while the browser ran (wpSelfUpdateCheck stamps wp_self_update_v1.at just before chrome.runtime.reload) is not a
+// browser start: the mark is set again at once (before the CRM tabs reload), so the automations stay as they were.
+// A browser start, also one that brings a new version (the box's ext.new swap), has no fresh stamp: all off, as before.
+chrome.runtime.onInstalled.addListener(async (details) => {
+    if (!details || details.reason !== 'update') return;
+    try {
+        const got = await chrome.storage.local.get('wp_self_update_v1');
+        const stamp = got.wp_self_update_v1;
+        if (stamp && Number(stamp.at) && Date.now() - Number(stamp.at) < 120000) await chrome.storage.session.set({ wp_booted: Date.now(), wp_boot_kept: 1 });
+    } catch (_) {}
+});
 chrome.alarms.onAlarm.addListener((alarm) => {
     if (!alarm || alarm.name !== WP_OV_ALARM) return;
     const url = chrome.runtime.getURL('overview.html');

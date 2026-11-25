@@ -11877,7 +11877,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // message + details so it is ready to paste into WhatsApp. Progress
         // goes to the dashboard debug panel.
         function copyBroadcastMessageWhenReady(copyId, mode, city, raiseValue, rowMinutes, noteFor) {
-            wpBcNoteWait(noteFor); // 1.7.479
+            wpBcNoteWait(noteFor, city); // 1.7.479; 1.7.565: + city
             const key = WP_BATCH_COPY_PREFIX + copyId + '_0';
             const label = orderLabel();
             const startedAt = Date.now();
@@ -27482,11 +27482,11 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpBcNoteLoad() { try { const list = JSON.parse(localStorage.getItem(WP_BC_NOTE_KEY) || '[]'); return Array.isArray(list) ? list : []; } catch (_) { return []; } }
     function wpBcNoteSave(list) { try { localStorage.setItem(WP_BC_NOTE_KEY, JSON.stringify(list.slice(-60))); } catch (_) {} }
     function wpBcNoteIdOf(path) { return (String(path || '').match(/\/transfers\/(\d+)/) || [])[1] || ''; }
-    function wpBcNoteWait(noteFor) {
+    function wpBcNoteWait(noteFor, city) {
         if (!noteFor || !wpBcNoteIdOf(noteFor.path)) return;
         const id = wpBcNoteIdOf(noteFor.path);
         const list = wpBcNoteLoad().filter(function(one) { return one.id !== id; });
-        list.push({ id: id, path: noteFor.path, label: String(noteFor.label || id), at: Date.now(), jobs: [], fails: 0, ok: false, end: '' });
+        list.push({ id: id, path: noteFor.path, label: String(noteFor.label || id), city: String(city || ''), at: Date.now(), jobs: [], fails: 0, ok: false, end: '' });
         wpBcNoteSave(list);
     }
     function wpBcNoteChange(notes, change) {
@@ -27521,7 +27521,7 @@ async function wpTransferAssistantExtensionEnabled() {
             try { wpAutoSendWriteNote({ item: { id: one.id, path: one.path, label: one.label }, data: { tasks: [{ note: '' }] }, row: null }, note); } catch (_) {}
             // 1.7.536: why it was not sent, and what was done instead
             const whyNot = one.end === 'fail' ? 'the WhatsApp send failed' : one.jobs.length && Number(one.fails) >= one.jobs.length ? 'WhatsApp failed ' + one.fails + ' time' + (Number(one.fails) === 1 ? '' : 's') : !one.jobs.length ? 'no WhatsApp send was ever started for it' : 'no WhatsApp result in 20 min';
-            wpDashLog((one.ok ? '✓ ' : '') + 'wlcm: ' + one.label + ' — note "' + note + '"' + (one.ok ? ' (WhatsApp sent the group message)' : ' — the WhatsApp group message was NOT sent: ' + whyNot + ', so the note says only BC'), one.ok ? '' : 'warn');
+            wpDashLog((one.ok ? '✓ ' : '') + 'wlcm: ' + one.label + (one.city ? ' (' + one.city + ')' : '') + ' — note "' + note + '"' /* 1.7.565: the city (25 Nov: a Malta line looked like Istanbul's) */ + (one.ok ? ' (WhatsApp sent the group message)' : ' — the WhatsApp group message was NOT sent: ' + whyNot + ', so the note says only BC'), one.ok ? '' : 'warn');
         });
         if (keep.length !== list.length) wpBcNoteSave(keep);
     }
@@ -32246,9 +32246,16 @@ async function wpTransferAssistantExtensionEnabled() {
         const again = function() { if (++wpBootTries < 20) setTimeout(wpBootAllOff, 15000); };
         try {
             if (!chrome.storage || !chrome.storage.session) { again(); return; }
-            chrome.storage.session.get('wp_booted', function(got) {
+            chrome.storage.session.get(['wp_booted', 'wp_boot_kept'], function(got) {
                 if (chrome.runtime.lastError || !got) { again(); return; }
-                if (got.wp_booted) return;
+                if (got.wp_booted) {
+                    // 1.7.565: wlcm updated itself while the browser ran (background set the mark): nothing switched off
+                    if (got.wp_boot_kept === 1) {
+                        try { chrome.storage.session.set({ wp_boot_kept: 2 }); } catch (_) {}
+                        wpDashLog('wlcm: ' + (wpIsMainMachine() ? 'box' : 'PC') + ' updated to wlcm ' + chrome.runtime.getManifest().version + ' — automations kept as they were (only a browser start switches them off)');
+                    }
+                    return;
+                }
                 try { chrome.storage.session.set({ wp_booted: Date.now() }); } catch (_) {}
                 const was = [];
                 ['today', 'tomorrow', 'later'].forEach(function(day) { try { if (wpAutoDayMode(day) !== 'off') { wpAutoDaySetMode(day, 'off'); was.push(wpAutoDayName(day)); } } catch (_) {} });
