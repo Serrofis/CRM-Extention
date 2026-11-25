@@ -1,5 +1,5 @@
 // 1.7.512: the build of THIS background.js; bump it with the manifest version on every build (wa-panel.js reloads wlcm when it differs)
-const WP_BG_BUILD = '1.7.551';
+const WP_BG_BUILD = '1.7.564'; // 1.7.564: was left at 1.7.551 since 1.7.552, so wa-panel.js reloaded wlcm when the panel opened (at most every 30 min)
 
 // ---- WhatsApp Web in the side panel (1.7.282) ----
 // WhatsApp refuses to load inside a frame. For the extension's own side

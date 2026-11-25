@@ -849,7 +849,10 @@
             Array.from(document.querySelectorAll('button, [role="button"], [data-icon]'))
                 .filter(function(el) { return !el.closest('#side') && !el.closest('#main footer') && !el.closest('#main [data-id]'); })
                 .forEach(function(el) {
-                    const t = String(el.getAttribute('aria-label') || el.getAttribute('data-icon') || el.getAttribute('title') || el.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 28);
+                    let t = String(el.getAttribute('aria-label') || el.getAttribute('data-icon') || el.getAttribute('title') || el.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 28);
+                    // 1.7.564: WhatsApp's left menu filled the whole list (the activity line is cut at its end)
+                    if (/^(chats|calls|status|channels|communities|tools|advertise|media|settings|profile|meta ai|archived|starred( messages)?|new chat|menu|lists)$/i.test(t)) return;
+                    if (t && (el.disabled || el.getAttribute('aria-disabled') === 'true')) t += ' (off)';
                     if (t && seen.indexOf(t) < 0) seen.push(t);
                 });
             return seen.slice(0, 18).join(' | ');
@@ -883,9 +886,11 @@
             try { Array.from(document.querySelectorAll('div')).filter(function(el) { return el.scrollHeight > el.clientHeight + 20 && el.contains(firstField); }).forEach(function(el) { el.scrollTop = el.scrollHeight; }); } catch (_) {}
             await sleep(400);
             save = findClickable(document, /^(save( contact)?|done|wds-ic-checkmark.*|ic-checkmark.*|checkmark)$/i);
-            if (!save) { const icon = document.querySelector('[data-icon="checkmark"], [data-icon="wds-ic-checkmark"], [data-icon="check"]'); if (icon && !icon.closest('#main') && !icon.closest('#side')) save = icon.closest('button, [role="button"]') || icon; }
+            // 1.7.564: the bare checkmark-icon pick is gone: it could press the "Sync contact to phone" switch's tick
+            // (seen in the stand-in); formSaveFallback below looks for icons only inside the form and never in a switch
         }
         if (!save && formSaysAlreadySaved(firstField)) return ALREADY_SAVED; // 1.7.563
+        if (!save) save = formSaveFallback(firstField); // 1.7.564
         if (!save) return 'no Save button in the contact form (seen: ' + panelButtonsSeen() + ')';
         clickEl(save);
         return '';
@@ -903,6 +908,36 @@
             const text = String((top || field).innerText || '').replace(/\s+/g, ' ');
             return /already (?:in|on|one of|saved (?:in|to|as)) (?:your |my )?contacts?|already (?:a |your )?(?:saved )?contact|contact already exists|already saved/i.test(text);
         } catch (_) { return false; }
+    }
+    // 1.7.564: Save drawn without a button role (missed by findClickable): in the form's own panel, the deepest
+    // element whose label or text is Save / Save contact / Done / OK, else a checkmark icon there, else the form's
+    // submit button. Never Delete / Back / Close / Cancel, the country picker (+30) or a switch.
+    function formSaveFallback(field) {
+        try {
+            let box = field, top = field;
+            for (let i = 0; i < 14 && box && box !== document.body; i++, box = box.parentElement) {
+                if (box.id === 'main' || box.id === 'side' || box.querySelector('#main') || box.querySelector('#side')) break;
+                top = box;
+            }
+            const clean = function(v) { return String(v || '').replace(/\b(?:wds-)?ic-[a-z0-9-]+/g, '').replace(/\s+/g, ' ').trim(); };
+            const bad = /delete|remove|block|report|back|close|cancel|discard|clear|search|sync|\+\s*\d/i;
+            const word = /^(save( contact)?|done|ok)$/i;
+            const shown = Array.from(top.querySelectorAll('*')).filter(function(el) {
+                if (el === field || el.contains(field) || field.contains(el)) return false;
+                if (!(el.offsetParent !== null || el.getClientRects().length)) return false;
+                if (el.closest('[role="switch"], [role="checkbox"], input[type="checkbox"], label')) return false;
+                const all = [el.getAttribute('aria-label'), el.getAttribute('title'), el.getAttribute('data-icon'), el.closest('button, [role="button"]') ? el.closest('button, [role="button"]').getAttribute('aria-label') : '', clean(el.textContent)].join(' ');
+                return !bad.test(all);
+            });
+            const byWord = shown.find(function(el) {
+                return word.test(clean(el.getAttribute('aria-label') || el.getAttribute('title'))) || (!el.children.length && word.test(clean(el.textContent)));
+            });
+            const byIcon = byWord ? null : shown.find(function(el) { return /(^|-)(checkmark|check|done)(-|$)/i.test(String(el.getAttribute('data-icon') || '')); });
+            const form = field.closest('form');
+            const submit = form ? form.querySelector('button[type="submit"]') : null;
+            const hit = byWord || byIcon || submit;
+            return hit ? (hit.closest('button, [role="button"]') || hit) : null;
+        } catch (_) { return null; }
     }
     // 1.7.563: WhatsApp's own contact list (asked in the page, wp-whatsapp-main.js): true = saved contact,
     // false = not saved, null = could not tell (older page script, WhatsApp changed its code) -> the screen checks.
@@ -1328,12 +1363,10 @@
             const store = await storeSavedState(job.phone);
             if (store.saved === true) { notSaved = false; await savedPersonRemember(job.phone); progress(job, 'WhatsApp contacts: +' + job.phone + ' is a saved contact'); }
             else if (store.saved === false) { notSaved = true; progress(job, 'WhatsApp contacts: +' + job.phone + ' is not a saved contact — saving first'); }
-            if (store.saved === null && !notSaved && !(await savedPersonKnown(job.phone))) { // 1.7.559: a name in the header is no proof any more
-                const state = await contactSavedState();
-                progress(job, 'contact info of +' + job.phone + ': ' + (state === 'saved' ? 'a saved contact' : state === 'unsaved' ? 'not a saved contact — saving first' : 'could not tell — saving first'));
-                if (state === 'saved') await savedPersonRemember(job.phone); else notSaved = true;
-                contactTitle = headerTitle().trim() || contactTitle;
-            }
+            // 1.7.564: the list could not tell → the rule from before 1.7.559: a number in the header or the message box,
+            // or a "~" profile name = not saved; a name = saved. The 1.7.559 look into the contact info is gone (the
+            // narrow side panel hides its Edit / Add, so saved drivers counted as strangers and got nothing).
+            if (store.saved === null && !notSaved && /^\s*~/.test(contactTitle)) notSaved = true;
             if (notSaved) {
                 // Not a saved contact: add them first, then send.
                 let addProblem = job.contactTried ? 'tried already' : 'no name to save';

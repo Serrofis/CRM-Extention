@@ -19438,7 +19438,8 @@ async function wpTransferAssistantExtensionEnabled() {
             if (!Array.isArray(list)) list = [];
             const now = Date.now();
             if (list.slice(-40).some(function(entry) { return entry && (key ? entry.j === key : entry.x === clean && now - Number(entry.at) < 10 * 60000); })) return;
-            const one = { at: now, k: String(kind || (/^✓/.test(clean) ? 'ok' : '')), x: clean.length > 300 ? clean.slice(0, 299) + '…' : clean };
+            const cut = /^(error|warn)$/.test(String(kind || '')) ? 520 : 300; // 1.7.564: error / warn lines longer (WhatsApp diagnosis was cut)
+            const one = { at: now, k: String(kind || (/^✓/.test(clean) ? 'ok' : '')), x: clean.length > cut ? clean.slice(0, cut - 1) + '…' : clean };
             if (key) one.j = String(key).slice(0, 40);
             if (step) one.s = 1; // 1.7.555 (was h: hidden)
             list.push(one);
