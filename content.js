@@ -18615,7 +18615,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const MINT = '#8fffd5';
         style.textContent = [
             '#wp-dash-term{position:fixed;left:14px;bottom:14px;z-index:2147483646;width:420px;max-width:calc(100vw - 24px);max-height:260px;display:flex;flex-direction:column;',
-            'background:rgba(17,20,22,0.96);color:#dfe4e6;border:1px solid rgba(143,255,213,0.35);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.5);font:11px/1.45 ' + MONO + ';overflow:hidden}',
+            'background:rgba(17,20,22,0.96);color:#dfe4e6;border:1px solid rgba(143,255,213,0.35);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.5);font:13px/1.45 ' + MONO + ';overflow:hidden}', // 1.7.560: was 11px (user, 25 Nov: can't read the small ones)
             '#wp-dash-term *{box-sizing:border-box;font-family:' + MONO + '}',
             '#wp-dash-term .wpdt-head{display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid rgba(143,255,213,0.2);color:' + MINT + ';font-weight:700;user-select:none}',
             '#wp-dash-term .wpdt-title{white-space:nowrap}',
@@ -18629,10 +18629,10 @@ async function wpTransferAssistantExtensionEnabled() {
             '#wp-dash-term .wpdt-line.is-act .wpdt-text{color:#dfe4e6;font-weight:400!important}',
             '#wp-dash-term .wpdt-line.is-act{display:flex;gap:7px;align-items:baseline}', // 1.7.555
             '#wp-dash-term .wpdt-line.is-act .wpdt-subj{margin-right:7px;color:#8fffd5;font-weight:700}',
-            '#wp-dash-term .wpdt-line.is-step{opacity:.62;padding-left:16px;font-size:.92em}',
+            '#wp-dash-term .wpdt-line.is-step{opacity:.72;padding-left:16px;font-size:1em}', // 1.7.560: was .62 / .92em
             '#wp-dash-term .wpdt-who.is-box{border-color:rgba(255,210,122,.45);color:#ffd27a}',
-            '#wp-dash-term .wpdt-line.is-day{justify-content:center;color:#8a9499;font-size:11px;padding:4px 0}',
-            '#wp-dash-term .wpdt-who{flex:0 0 auto;font-size:10px;line-height:15px;padding:0 5px;border-radius:999px;border:1px solid rgba(143,255,213,.35);color:#8fffd5;text-transform:uppercase;letter-spacing:.4px}',
+            '#wp-dash-term .wpdt-line.is-day{justify-content:center;color:#8a9499;font-size:12.5px;padding:4px 0}', // 1.7.560: was 11px
+            '#wp-dash-term .wpdt-who{flex:0 0 auto;font-size:11.5px;line-height:17px;padding:0 5px;border-radius:999px;border:1px solid rgba(143,255,213,.35);color:#8fffd5;text-transform:uppercase;letter-spacing:.4px}',
             '#wp-dash-term .wpdt-line.is-act.is-ok .wpdt-text{color:#7ee2a8}',
             '#wp-dash-term .wpdt-line.is-act.is-error .wpdt-text{color:#ff7b7b}',
             '#wp-dash-term .wpdt-line.is-act.is-warn .wpdt-text{color:#ffc94d}',
@@ -25968,6 +25968,24 @@ async function wpTransferAssistantExtensionEnabled() {
         group('Phone');
         row('Phone app', 'Suggestions on your phone, answered with a tap.', { toggle: 'phone', buttons: [['Settings', 'phone-settings']] });
         row('Phone notifications', 'A notification for each new suggestion.', { toggle: 'pnotify' });
+        // 1.7.560: the app's Connect from this PC (only on the PC; the box never picks itself from here)
+        if (!wpIsMainMachine()) row('Work from', 'Which machine runs wlcm and sends WhatsApp. Same as Connect in the app. The box going down does not switch by itself: tap This PC (or the top bar\'s Work from this PC).', { extra: function(top) {
+            const now = wpRemoteStandby ? (wpBoxSyncActive() ? 'the box works' : 'the box is not answering') : 'this PC works';
+            const note = document.createElement('span');
+            note.textContent = now;
+            Object.assign(note.style, { color: wpRemoteStandby && !wpBoxSyncActive() ? '#ffc94d' : '#8fffd5', fontSize: '11px', marginLeft: '6px' });
+            top.appendChild(note);
+            [['pc', 'This PC'], ['box', 'Box']].forEach(function(pair) {
+                const mine = (pair[0] === 'pc') === !wpRemoteStandby;
+                const b = document.createElement('span');
+                b.className = 'wpr-link';
+                b.textContent = pair[1];
+                Object.assign(b.style, { marginLeft: '8px', padding: '1px 9px', borderRadius: '999px', border: '1px solid rgba(143,255,213,.45)', background: mine ? 'rgba(143,255,213,.18)' : 'transparent', cursor: 'pointer' });
+                b.title = pair[0] === 'pc' ? 'This PC runs wlcm and sends WhatsApp; the box goes on standby' : 'The box runs wlcm; this PC goes on standby';
+                b.addEventListener('click', function() { b.textContent = pair[1] + '…'; wpConnectTo(pair[0], 'Settings'); });
+                top.appendChild(b);
+            });
+        } });
         if (false) row('Full auto', 'Kept down here so it is not switched on by mistake. Answers its own suggestions, silently (no card, no sound, nothing to the phone); written in the Terminal and the history.', { state: full, stateKey: 'full', exceptOf: 'fullauto' });
 
         }
@@ -31612,6 +31630,23 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpBoxSyncOn() { return true; }
     function wpBoxSyncActive() { return Boolean(wpRemoteStandby && Date.now() - wpBoxUpAt < 30000); }
     function wpBoxMirror(path, body) { return wpRemoteCall('/api/mirror', { path: path, body: body || {} }); }
+    // 1.7.560 (user, 25 Nov: "put a button … to be able to do it from the pc too"): the app's Connect, from this PC.
+    // to = 'pc' (this PC works and sends, the box goes on standby) or 'box'. The relay switches at the next sync (~10 s).
+    var wpConnectBusy = false;
+    async function wpConnectTo(to, where) {
+        if (wpConnectBusy) return;
+        wpConnectBusy = true;
+        try {
+            const result = await wpBoxMirror('/api/connect', { to: to });
+            if (result && result.ok) wpDashLog('🔗 Work from: ' + (to === 'pc' ? 'this PC — it runs wlcm and sends WhatsApp from its own side panel; the box goes on standby' : 'the box — this PC goes on standby') + ' (' + (where || 'Settings') + '; switches within ~10 s)', 'ok');
+            else wpDashLog('🔗 Work from ' + (to === 'pc' ? 'this PC' : 'the box') + ': the relay did not take it (' + String(result && (result.error || result.status) || 'no answer') + ') — use Connect in the app', 'warn');
+        } catch (_) {
+            wpDashLog('🔗 Work from ' + (to === 'pc' ? 'this PC' : 'the box') + ': the relay did not answer — use Connect in the app', 'warn');
+        } finally {
+            wpConnectBusy = false;
+            setTimeout(function() { try { if (document.getElementById('wp-rules-window')) wpRulesWindow(true); } catch (_) {} }, 12000);
+        }
+    }
     function wpBoxSyncBar() {
         if (!document.body) return;
         let bar = document.getElementById('wp-box-sync-bar');
@@ -31625,6 +31660,13 @@ async function wpTransferAssistantExtensionEnabled() {
         bar.textContent = up ? 'Synced with the box: its activity shows here · Ask me, BC&G, Final BC and day modes are done by the box'
             : 'Standby: the box is not answering — tap Connect on this PC in the app to work here';
         bar.style.color = up ? '#8fffd5' : '#ffc94d';
+        if (!up) { // 1.7.560: the same from here
+            const go = document.createElement('span');
+            go.textContent = 'Work from this PC';
+            go.style.cssText = 'margin-left:10px;padding:2px 10px;border-radius:999px;border:1px solid #8fffd5;color:#8fffd5;cursor:pointer';
+            go.addEventListener('click', function(event) { event.stopPropagation(); wpConnectTo('pc', 'top bar'); });
+            bar.appendChild(go);
+        }
     }
     var wpBoxMirrorLast = 0, wpBoxMirrorBusy = false;
     async function wpBoxMirrorTick() {

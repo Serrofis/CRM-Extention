@@ -435,7 +435,7 @@ async function pushAll(env, origin) {
 // through the phone's own endpoints: POST /api/mirror {path, body} with the PC key. MIRROR_TAG never
 // leaves this process, so only this route can use the phone endpoints without a paired phone.
 const MIRROR_TAG = Array.from(crypto.getRandomValues(new Uint8Array(16))).map((b) => b.toString(16).padStart(2, '0')).join('');
-const MIRROR_PATHS = ['/api/state', '/api/answer', '/api/command', '/api/list', '/api/detail'];
+const MIRROR_PATHS = ['/api/state', '/api/answer', '/api/command', '/api/list', '/api/detail', '/api/connect']; // 1.7.560: + connect (Work from: This PC / Box in the PC's Settings)
 async function api(request, env, ctx, url) {
     const path = url.pathname;
     const now = Date.now();
@@ -1037,8 +1037,8 @@ async function api(request, env, ctx, url) {
             const item = String(data.item || '');
             const list = (await get(env, 'list')) || { rows: [] };
             if (!(list.rows || []).some((row) => String(row.id) === item)) return fail(409, 'that transfer is no longer in the list');
-            if (['bc', 'final', 'apply', 'acoff', 'acset'].indexOf(data.action) < 0) return fail(400, 'bad request'); // 1.7.552: + acset (A/C On / Off)
-            entry = { type: 'quick', item: item, action: data.action, want: data.want === 'on' ? 'on' : 'off', raise: String(data.raise || '').slice(0, 40), note: String(data.note || '').slice(0, 200), custom: String(data.custom || '').replace(/\s+/g, ' ').trim().slice(0, 200), at: now };
+            if (['bc', 'final', 'apply', 'acoff'].indexOf(data.action) < 0) return fail(400, 'bad request');
+            entry = { type: 'quick', item: item, action: data.action, raise: String(data.raise || '').slice(0, 40), note: String(data.note || '').slice(0, 200), custom: String(data.custom || '').replace(/\s+/g, ' ').trim().slice(0, 200), at: now };
         } else if (data.type === 'cm') {
             // City Manager: open a city's window on the PC, or run one of its actions.
             const city = String(data.city || '').slice(0, 60);
