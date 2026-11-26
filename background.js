@@ -1,5 +1,5 @@
 // 1.7.512: the build of THIS background.js; bump it with the manifest version on every build (wa-panel.js reloads wlcm when it differs)
-const WP_BG_BUILD = '1.7.568'; // bump with the manifest version on every build (1.7.512)
+const WP_BG_BUILD = '1.7.575'; // bump with the manifest version on every build (1.7.512)
 
 // ---- WhatsApp Web in the side panel (1.7.282) ----
 // WhatsApp refuses to load inside a frame. For the extension's own side
@@ -340,7 +340,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const url = String((tab && tab.url) || '');
         // 1.7.367: also the drivers list tab of a phone "message all drivers" job
         const driversJob = url.startsWith('https://crm.welcomepickups.com/admin/drivers?') && /[?&]wp_send_all=/.test(url);
-        if (!tab || !Number.isInteger(tab.id) || !(url.startsWith('https://crm.welcomepickups.com/admin/transfers/') || driversJob)) {
+        if (/[?&]wpOpenOnly=1/.test(url) || !tab || !Number.isInteger(tab.id) || !(url.startsWith('https://crm.welcomepickups.com/admin/transfers/') || driversJob)) { // 1.7.574: City Manager Open all tabs are never closed
             sendResponse({ ok: false });
             return;
         }
@@ -356,8 +356,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return;
         }
 
-        chrome.tabs.remove(message.tabId, () => {
-            sendResponse({ ok: !chrome.runtime.lastError });
+        // 1.7.574: a City Manager "Open all" tab (wpOpenOnly=1) is never closed
+        chrome.tabs.get(message.tabId, (tab) => {
+            if (chrome.runtime.lastError || !tab) { sendResponse({ ok: false }); return; }
+            if (/[?&]wpOpenOnly=1/.test(String(tab.url || tab.pendingUrl || ''))) { sendResponse({ ok: false }); return; }
+            chrome.tabs.remove(message.tabId, () => {
+                sendResponse({ ok: !chrome.runtime.lastError });
+            });
         });
 
         return true;
