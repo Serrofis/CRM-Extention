@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mod</title>
+<title>wlcm</title>
 <style>
     /* 1.7.271: the look of your web apps; 1.7.274: the director app's icon and mint */
     :root {
-        --bg: #0b0b0b; --surface: #161616; --surface-2: #1f1f1f; --line: #232323;
-        --text: #f4f1ee; --muted: #8d8a86; --faint: #6a6764;
-        --accent: #6EE7B7; --on-accent: #0b0b0b; --danger: #F09595; --ok: #8fd6a8; --warn: #f2c27b;
+        --bg: #14181b; --surface: #1f2529; --surface-2: #2a3136; --line: rgba(255,255,255,.09);
+        --text: #e8ecee; --muted: #9aa6ad; --faint: #7d8a90;
+        --accent: #2fbf71; --on-accent: #06210f; --danger: #F09595; --ok: #8fd6a8; --warn: #f2c27b;
         --radius: 12px;
         --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         color-scheme: dark;
@@ -52,7 +52,7 @@
 <body>
     <div class="head">
         <img src="icon128.png" alt="">
-        <h1>mod</h1>
+        <h1>wlcm</h1>
         <span class="ver" id="ver"></span>
     </div>
 
@@ -67,6 +67,7 @@
     <div class="actions">
         <button class="btn primary" id="open">Open Em Hailing</button>
         <button class="btn" id="term">Terminal</button>
+        <button class="btn" id="autos" title="Every automation (Today, Tomorrow, later days) in one window">Automations</button>
         <button class="btn" id="wa" title="WhatsApp Web in the side panel — stays open when the CRM page refreshes">WhatsApp</button>
         <button class="btn" id="overview" title="The big picture: all cities, 7 days, events, EM policy, Slack (opens in its own tab)">Overview</button>
     </div>
