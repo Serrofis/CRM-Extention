@@ -11887,7 +11887,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const pct = String(value).match(/^pct:([\d.]+):([\d.]+)$/);
             if (!config && pct) return '+' + pct[1] + '% (+' + pct[2] + '% total)';
             if (/^eur:/.test(String(value))) return 'to ' + String(value).slice(4) + '€';
-            if (/^set:/.test(String(value))) return 'set to +' + String(value).split(':')[2] + '% (' + String(value).split(':')[1] + '€)';
+            if (/^set:/.test(String(value))) return (/:up$/.test(String(value)) ? 'raised to +' : 'set to +') + String(value).split(':')[2] + '%';
             return config ? config.label : '+' + value + '%';
         }
 
@@ -14315,7 +14315,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 const dcEqualsTc = Boolean(managedCostOption && managedCostOption.dcEqualsTc);
                 const dcBeforeRaise = parseFloat(String(field.value || '').replace(',', '.'));
                 // 1.7.343: Custom amount ('eur:<new DC>'): writes that exact driver cost.
-                const exactAmount = String(select.value).match(/^(?:eur|set):([\d.]+)(?::[\d.]+)?$/); // 1.7.584: + Set to %
+                const exactAmount = String(select.value).match(/^(?:eur|set):([\d.]+)(?::[\d.]+)?(?::up)?$/); // 1.7.584: + Set to %
 
                 if (exactAmount) {
                     field.value = exactAmount[1];
@@ -20189,7 +20189,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const value = String(raiseValue || '').trim();
         if (!value || value === '0') return '';
         if (/^eur:[\d.]+$/.test(value)) return value.slice(4); // 1.7.343: Custom amount
-        if (/^set:[\d.]+:[\d.]+$/.test(value)) return value.split(':')[1]; // 1.7.584: Set to %
+        if (/^set:[\d.]+:[\d.]+(?::up)?$/.test(value)) return value.split(':')[1]; // 1.7.584: Set to %
         const match = String(oldPrice || '').match(/\d+(?:[.,]\d+)?/);
         const pctPair = value.match(/^pct:([\d.]+):([\d.]+)$/); // 1.7.582: raise to % / suggested = +<add>% now
         if (pctPair && match) { const b = parseFloat(match[0].replace(',', '.')), a = Number(pctPair[1]); return Number.isFinite(b) && a > 0 ? String(Math.ceil(b * (1 + a / 100) - 1e-9)) : ''; }
@@ -20640,7 +20640,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const money = function(v) { return (Math.round(v * 100) / 100) + '€'; };
         if (Math.abs(next - dc) < 0.05 || Math.abs(now - target) < 0.5) return { value: '', note: 'no change (already +' + now + '%, DC ' + money(dc) + ')', base: base, now: now };
         return {
-            value: 'set:' + next + ':' + target, base: base, now: now, dc: dc, next: next,
+            value: 'set:' + next + ':' + target + (next > dc ? ':up' : ''), base: base, now: now, dc: dc, next: next,
             note: (next > dc ? 'up' : 'DOWN') + ' from +' + now + '% to +' + target + '% · DC ' + money(dc) + ' → ' + money(next) + ' (original ' + money(base) + ')'
         };
     }
@@ -20688,8 +20688,9 @@ async function wpTransferAssistantExtensionEnabled() {
         if (suggested) return 'raised to +' + suggested[2] + '% DC/ sent to BC, Group';
         // 1.7.343: Custom amount: the exact new driver cost.
         if (/^eur:[\d.]+$/.test(value)) return 'raised to ' + value.slice(4) + '€ DC/ sent to BC, Group';
-        const setTo = value.match(/^set:([\d.]+):([\d.]+)$/); // 1.7.584: Set to %
-        if (setTo) return 'DC set to +' + setTo[2] + '% (' + setTo[1] + '€)/ sent to BC, Group';
+        const setTo = value.match(/^set:([\d.]+):([\d.]+)(:up)?$/); // 1.7.584: Set to %
+        // 1.7.585 (user: "raised to % or if its not a raise, set to %, no need for the actual price"): up = "raised to", else "set to"
+        if (setTo) return (setTo[3] ? 'raised to +' : 'set to +') + setTo[2] + '% DC/ sent to BC, Group';
 
         try {
             const config = wpGetManagedCostOptions().find(function(item) {
@@ -49458,7 +49459,7 @@ async function wpTransferAssistantExtensionEnabled() {
             select.appendChild(option);
             optionExists = true;
         }
-        if (!optionExists && /^(?:eur:[\d.]+|set:[\d.]+:[\d.]+)$/.test(value)) { // 1.7.343: Custom amount; 1.7.584: Set to %
+        if (!optionExists && /^(?:eur:[\d.]+|set:[\d.]+:[\d.]+(?::up)?)$/.test(value)) { // 1.7.343: Custom amount; 1.7.584: Set to %
             const option = document.createElement('option');
             option.value = value;
             option.textContent = 'DC ' + value.split(':')[1] + '€';
