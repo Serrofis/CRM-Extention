@@ -1572,6 +1572,13 @@ async function wpTransferAssistantExtensionEnabled() {
             color: #dcc2ff !important;
         }
 
+        /* 1.7.575: "asked best drivers" → "best", green */
+        td.wp-transfer-tags .wp-transfer-tag-best {
+            background: rgba(111, 209, 111, 0.2) !important;
+            border-color: rgba(111, 209, 111, 0.72) !important;
+            color: #6fd16f !important;
+        }
+
         td.wp-transfer-tags .wp-transfer-tag-10 {
             background: rgba(181, 138, 5, 0.24) !important;
             border-color: rgba(181, 138, 5, 0.72) !important;
@@ -10310,6 +10317,14 @@ async function wpTransferAssistantExtensionEnabled() {
             };
         }
 
+        // 1.7.575: "asked best drivers" (Ops Hub) → "best", green; below sugg (user, 26 Nov)
+        if (/\bbest\s+drivers?\b/i.test(value)) {
+            return {
+                text: 'best',
+                type: 'best'
+            };
+        }
+
         if (/(?:\bDC\s*=\s*TC\b|\bDC\s*TC\b|\bDC\s*=\s*\bTC\b)/i.test(value)) {
             return {
                 text: 'dc = tc',
@@ -10424,7 +10439,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // found, so "sent to suggested" could hide a later "final BC").
     function wpStepTagRank(tag) {
         const type = tag && tag.type;
-        return type === 'final' ? 3 : type === 'hero' ? 2 : type === 'suggested' ? 1 : 0;
+        return type === 'final' ? 3 : type === 'hero' ? 2 : type === 'suggested' ? 1 : type === 'best' ? 0.5 : 0; // 1.7.575: best
     }
     function wpEarlierNoteTag(row) {
         let path = '';
@@ -21403,6 +21418,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     taskUrl.searchParams.set('wpCityTaskBatchId', batch.batchId);
                     taskUrl.searchParams.set('wpCityTaskIndex', String(index));
                     taskUrl.searchParams.set('wpCityTaskCustomMessage', customMessage);
+                    if (batch.note2) taskUrl.searchParams.set('wpCityTaskNote2', String(batch.note2)); else taskUrl.searchParams.delete('wpCityTaskNote2'); // 1.7.575
                     taskUrl.searchParams.set(
                         'wpCityTaskNeedsEm',
                         batch.noteOnly ? '0' : (batch.forceEm || !(item && item.tagged) ? '1' : '0')
@@ -32609,7 +32625,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const done = tasks.some(function(task) {
             const text = String(task && task.note || '').replace(/\s+/g, ' ');
             if (/\bBC\b[^\n]*?\b(?:group|grp)\b/i.test(text) || /\bBC\s*(?:&|and|,|\/|\+)\s*G\b/i.test(text)) return true; // Today's BC & Group test (wpDetectTransferTag)
-            try { const tag = wpDetectTransferTag(text); return Boolean(tag && ['final', 'hero', 'suggested'].indexOf(tag.type) >= 0); } catch (_) { return false; }
+            try { const tag = wpDetectTransferTag(text); return Boolean(tag && ['final', 'hero', 'suggested', 'best'].indexOf(tag.type) >= 0); } catch (_) { return false; } // 1.7.575: best = done too
         });
         return done ? '' : hasEm ? 'bcg' : 'chain'; // 1.7.550: BC & Group already there = nothing, even without EM
     }
@@ -33521,7 +33537,7 @@ async function wpTransferAssistantExtensionEnabled() {
         wpRemoteHubLast = { text: 'Chain on ' + wanted.length + ': running in the Hub…', tone: '', at: Date.now(), action: 'Chain' };
         wpRemoteCmPush([100]);
         const note = String(command.note || '').replace(/\s+/g, ' ').trim().slice(0, 280);
-        const result = await panel._wpRemoteChain(wanted, price, note, ids, dayStep ? { noTag: dayStep === 'bcg', acKeep: acKeep } : null);
+        const result = await panel._wpRemoteChain(wanted, price, note, ids, dayStep ? { noTag: dayStep === 'bcg', acKeep: acKeep, dayRun: true } : null);
         if (result.busy) { dayFinish(false, 'hub busy'); finish('the Hub is busy with another run on the PC — try again when it is done. Nothing was run.', 'warn'); return; }
         if (result.missing) { dayFinish(false, 'not in the city list'); finish(result.missing + ' of the ' + wanted.length + ' selected transfers are no longer in ' + cityName + ' — open the city again on the phone. Nothing was run.', 'warn'); return; }
         const text = String(result.text || '').replace(/\n/g, ' ').trim() || 'Chain: the PC did not say how it went';
@@ -36245,7 +36261,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 'wpBatchCopyTotal',
                 'wpCityTaskBatchId',
                 'wpCityTaskIndex',
-                'wpCityTaskCustomMessage',
+                'wpCityTaskCustomMessage', 'wpCityTaskNote2',
                 'wpCityTaskNeedsEm',
                 'wpCityTaskRaiseMessage',
                 'wpCityPriceIncrease',
@@ -41302,7 +41318,13 @@ async function wpTransferAssistantExtensionEnabled() {
                         else { asked = true; done.push(label + ' ✓'); wpDashLog(logName + ' → Ops Hub chain: ' + label + ' ✓' + (answer.result ? ' — Hub: ' + answer.result : '')); }
                     }
                 }
-                if (asked) plan.note = plan.note + ' / asked best drivers';
+                // 1.7.575: the relay's Tomorrow / 2-4 days (user, 26 Nov): its own note "sent to BC and Group", and
+                // "asked best drivers" as a SECOND note when the Hub took it (no custom note needed); by hand unchanged
+                let note2 = '';
+                if (opts.dayRun) {
+                    if (!String(hubAuto.note || '').trim()) plan.note = plan.note.replace(/sent to BC, Group$/, 'sent to BC and Group');
+                    if (asked) note2 = 'asked best drivers';
+                } else if (asked) plan.note = plan.note + ' / asked best drivers';
                 if (autoCOff) {
                     if (broadcast) {
                         for (let left = 30; left > 0; left--) { say('Chain · Broadcast sent — Enable Auto-C in ' + left + ' s…'); await new Promise(function(resolve) { window.setTimeout(resolve, 1000); }); }
@@ -41319,6 +41341,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     if (batch) {
                         batch.broadcastMode = '';
                         batch.noteOnly = true;
+                        batch.note2 = note2; // 1.7.575
                         wpOpenCityBatchTransfers(batch, null, plan.note, '');
                         try { startBatchSummary(batch); } catch (_) {}
                         panel.dataset.wpLastBatchId = batch.batchId;
@@ -41349,7 +41372,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     if (crmDone) { done.push('CRM BC & Group + note on ' + crmDone + (hubFailed.length ? '' : ' not in the Hub')); wpDashLog(logName + ' → chain: ' + crmDone + ' done in the CRM instead (BC & Group + note)'); }
                     if (gone.length) { done.push('no CRM fallback on ' + gone.length + ': no longer unassigned (taken by a driver or cancelled)'); wpDashLog(logName + ' → chain: no CRM fallback on #' + gone.join(', #') + ' — no longer in the unassigned list (taken by a driver or cancelled), nothing left to do'); }
                 }
-                const summary = done.join(' · ') + (stopped ? ' · stopped at ' + stoppedAt + ': ' + stopped : '') + (noted ? ' — the note "' + plan.note + '" is being written on ' + noted + ' transfer' + (noted === 1 ? '' : 's') : '');
+                const summary = done.join(' · ') + (stopped ? ' · stopped at ' + stoppedAt + ': ' + stopped : '') + (noted ? ' — the note' + (note2 ? 's "' + plan.note + '" + "' + note2 + '" are' : ' "' + plan.note + '" is') + ' being written on ' + noted + ' transfer' + (noted === 1 ? '' : 's') : '');
                 say((stopped ? 'Chain stopped — ' : partialSteps ? 'Chain done, but not every transfer went through — ' : '✓ Chain done — ') + summary, stopped || partialSteps ? '#ffd27a' : '#6fd16f');
                 wpHubHistoryAdd({ id: runId, action: 'Chain', city: popupTitle, count: ids.length, text: summary, tone: stopped || partialSteps ? 'warn' : 'ok', by: 'PC' });
                 wpDashLog(logName + ' → Ops Hub chain: ' + (stopped ? 'stopped — ' : partialSteps ? 'done, but not every transfer went through — ' : 'done — ') + summary, stopped || partialSteps ? 'warn' : 'ok');
@@ -46621,7 +46644,7 @@ async function wpTransferAssistantExtensionEnabled() {
             ...(function() {
                 const CELL = 'table.transfers td:is(.wp-transfer-tags,.wp-price-cell)';
                 const kinds = [
-                    ['final', '123,63,152', '#c98ae6'], ['hero', '123,63,152', '#c98ae6'], ['suggested', '186,140,255', '#dcc2ff'],
+                    ['final', '123,63,152', '#c98ae6'], ['hero', '123,63,152', '#c98ae6'], ['suggested', '186,140,255', '#dcc2ff'], ['best', '111,209,111', '#6fd16f'], // 1.7.575
                     ['10', '181,138,5', '#e0b92e'], ['20', '220,126,18', '#ffb347'],
                     ['no-tag', '165,31,31', '#ff6b6b'],
                     ['bc', '110,118,124', '#aab3ba'], ['bc-grp', '110,118,124', '#aab3ba'], ['high-vol', '110,118,124', '#aab3ba'],
@@ -48791,6 +48814,7 @@ async function wpTransferAssistantExtensionEnabled() {
     const needsEm = params.get('wpCityTaskNeedsEm') === '1';
     let raiseMessage = String(params.get('wpCityTaskRaiseMessage') || '').trim(); // 1.7.427: let (already-raised check)
     const customMessage = String(params.get('wpCityTaskCustomMessage') || '').trim();
+    const note2 = String(params.get('wpCityTaskNote2') || '').trim(); // 1.7.575: "asked best drivers" as its own note
     let priceIncrease = String(params.get('wpCityPriceIncrease') || '').trim(); // 1.7.427: let (already-raised check)
     const broadcastMode = String(params.get('wpCityBroadcastMode') || '').trim();
     const reenableAcAfter30s = params.get('wpCityReenableAc30s') === '1';
@@ -48858,7 +48882,7 @@ async function wpTransferAssistantExtensionEnabled() {
         [
             'wpCityTaskBatchId',
             'wpCityTaskIndex',
-            'wpCityTaskCustomMessage',
+            'wpCityTaskCustomMessage', 'wpCityTaskNote2',
             'wpCityTaskNeedsEm',
             'wpCityTaskRaiseMessage',
             'wpCityPriceIncrease',
@@ -49889,6 +49913,7 @@ async function wpTransferAssistantExtensionEnabled() {
             wpStep(lastResortNote ? 'Last resort note: the separate raise note is not written' : 'Raise note and note are the same: written once');
         }
         if (customMessage) sequence.push(customMessage);
+        if (note2 && !sameNote(note2, customMessage)) sequence.push(note2); // 1.7.575
 
         wpStep('Workflow started' +
             (broadcastMode === 'send' ? ' — BC (A/C Off)' : broadcastMode === 'final' ? ' — Final BC (A/C On)' : '') +
