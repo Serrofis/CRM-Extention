@@ -40125,6 +40125,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (!wpCmBgOpening) {
             document.documentElement.classList.remove('wp-cm-bgrun');
             wpCmCityAnchor = { dx: 0, dy: 0 }; // 1.7.578: each city you open starts in the middle
+            try { wpCmExpand(document.getElementById('wp-today-city-window')); } catch (_) {} // 1.7.580: the old one-body City Manager
         }
 
         const panel =
@@ -43768,13 +43769,31 @@ async function wpTransferAssistantExtensionEnabled() {
         const top = Math.max(8, Math.min(window.innerHeight - 120, Math.round((window.innerHeight - 700) / 2) + (wpCmCityAnchor.dy || 0)));
         return { left: right - 390, right: right, top: top, bottom: top + 700, width: 390, height: 700 };
     }
+    // 1.7.580 (user, 26 Nov: "when the city manager expands in the middle I want it to look like it used to"): a city you
+    // open takes the list with it into the old one-body City Manager in the middle (draggable, its old look); when the
+    // city is closed the list goes back beside Activity. Only that open/close moves it.
+    var wpCmExpanded = false;
+    function wpCmExpand(overview) {
+        if (!overview || overview.classList.contains('is-closed')) return;
+        wpCmExpanded = true;
+        if (!overview.dataset.wpDocked) return;
+        wpCmUndock(overview);
+        document.documentElement.classList.remove('wp-cm-stuck');
+        try { wpTodayCityCenter(overview); } catch (_) {}
+        requestAnimationFrame(function() { requestAnimationFrame(function() { requestAnimationFrame(function() {
+            const orders = document.getElementById('wp-today-city-orders-window');
+            if (orders) { try { wpTodayCityPositionOrdersWindow(orders); } catch (_) {} }
+        }); }); });
+    }
     function wpCmDockTick() {
         const root = document.documentElement;
         const overview = document.getElementById('wp-today-city-window');
         const orders = document.getElementById('wp-today-city-orders-window');
         if (root.classList.contains('wp-cm-bgrun') && !orders && !wpCmAutoRunning) root.classList.remove('wp-cm-bgrun');
+        if (!orders) wpCmExpanded = false;
         if (!overview) return;
-        if (overview.classList.contains('is-closed')) { wpCmUndock(overview); return; }
+        if (overview.classList.contains('is-closed')) { wpCmExpanded = false; wpCmUndock(overview); return; }
+        if (wpCmExpanded && orders && !wpCmBgRun()) { if (overview.dataset.wpDocked) wpCmExpand(overview); return; }
         const wasDocked = Boolean(overview.dataset.wpDocked);
         wpCmDockPlace(overview);
         if (!wasDocked && orders) { try { wpTodayCityPositionOrdersWindow(orders); } catch (_) {} }
