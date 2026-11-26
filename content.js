@@ -43734,7 +43734,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const rect = wpCmTermRect();
         let right = 14, bottom = 56, width = 440, height = 0;
         if (rect) {
-            right = Math.round(window.innerWidth - rect.left + 10);
+            right = Math.round(window.innerWidth - rect.left); // 1.7.579 (user: "stick the boxes together"): no gap, one body with Activity
             bottom = Math.max(0, Math.round(window.innerHeight - rect.bottom));
             width = Math.round(rect.width);
             height = Math.round(rect.height);
@@ -43742,16 +43742,20 @@ async function wpTransferAssistantExtensionEnabled() {
             try { const footer = document.getElementById('footer'); const bar = footer ? footer.getBoundingClientRect() : null; if (bar && bar.height && bar.top > window.innerHeight / 2) bottom = Math.round(window.innerHeight - bar.top + 8); } catch (_) {}
         }
         const maxH = height ? Math.max(200, height) : Math.max(200, Math.min(520, Math.round(window.innerHeight - bottom - 16)));
-        const values = { position: 'fixed', left: 'auto', top: 'auto', right: right + 'px', bottom: bottom + 'px', width: width + 'px', height: 'auto',
-            'max-height': maxH + 'px', 'overflow-y': 'auto', 'overflow-x': 'hidden', transform: 'none', 'z-index': '2147482999' };
+        // 1.7.579 (user, 26 Nov: "why does it have 2 scroll bars? make them stick"): exactly Activity's height, the box itself
+        // never scrolls; only the city list inside does (one thin bar)
+        const values = { position: 'fixed', left: 'auto', top: 'auto', right: right + 'px', bottom: bottom + 'px', width: width + 'px', height: maxH + 'px',
+            'max-height': maxH + 'px', 'overflow-y': 'hidden', 'overflow-x': 'hidden', transform: 'none', 'z-index': '2147482999' };
         Object.keys(values).forEach(function(prop) { wpCmDockSet(overview, prop, values[prop]); });
         if (!overview.classList.contains('wp-cm-docked')) overview.classList.add('wp-cm-docked');
         overview.dataset.wpDocked = '1';
+        document.documentElement.classList.toggle('wp-cm-stuck', Boolean(rect));
     }
     function wpCmUndock(overview) {
         if (!overview || !overview.dataset.wpDocked) return;
         delete overview.dataset.wpDocked;
         overview.classList.remove('wp-cm-docked');
+        document.documentElement.classList.remove('wp-cm-stuck');
         WP_CM_DOCK_PROPS.forEach(function(prop) { overview.style.removeProperty(prop); });
         if (overview.classList.contains('is-closed')) { try { wpTodayCityApplyClosedPosition(overview); } catch (_) {} }
     }
@@ -43812,9 +43816,17 @@ async function wpTransferAssistantExtensionEnabled() {
             id + '{background:#1f2529!important;color:#e8ecee!important;border:1px solid rgba(255,255,255,.09)!important;border-radius:14px!important;box-shadow:0 14px 40px rgba(0,0,0,.55)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-sizing:border-box!important;padding:0 0 6px!important;font:13px/1.4 Segoe UI,system-ui,sans-serif!important}',
             id + ',' + id + ' *{scrollbar-width:thin!important;scrollbar-color:#4c5358 transparent!important;font-family:Segoe UI,system-ui,sans-serif!important}',
             id + ' .wp-today-city-window-header{border-bottom:0!important;background:transparent!important;cursor:default!important}',
+            id + '{display:flex!important;flex-direction:column!important}', // 1.7.579: one scroll bar (the list), the box fills Activity's height
+            id + ' > *{flex:0 0 auto!important}',
+            id + ' > .wp-today-city-window-content{flex:1 1 auto!important;min-height:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;max-height:none!important}',
+            id + ' .wp-today-city-window-content > *{flex:0 0 auto!important}',
+            id + ' .wp-today-city-window-content > .wp-today-city-summary{flex:1 1 auto!important;min-height:0!important;max-height:none!important;overflow-y:auto!important;overflow-x:hidden!important}',
             id + ' .wp-today-city-summary{background:transparent!important;padding:2px 8px!important}',
             id + ' .wp-today-city-stat{background:rgba(255,255,255,.045)!important;border-bottom:0!important;border-radius:9px!important;margin:0 0 4px!important;font-size:13px!important}',
             id + ' .wp-today-city-stat:hover{background:rgba(255,255,255,.08)!important}',
+            // 1.7.579: stuck to Activity: the two boxes share one edge (square inner corners, one line between them)
+            'html.wp-cm-stuck:not(#wpz) body:not(#wpz) ' + '#wp-today-city-window'.repeat(6) + '.wp-cm-docked{border-right:0!important;border-top-right-radius:0!important;border-bottom-right-radius:0!important;box-shadow:-10px 14px 40px rgba(0,0,0,.45)!important}',
+            'html.wp-cm-stuck:not(#wpz) body:not(#wpz) ' + '#wp-dash-term'.repeat(6) + '{border-top-left-radius:0!important;border-bottom-left-radius:0!important}',
             hide + '{opacity:0!important;pointer-events:none!important}'
         ].join('\n');
         (document.head || document.documentElement).appendChild(style);
