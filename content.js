@@ -20613,6 +20613,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 try {
                     const url = new URL(item.url, window.location.href);
                     url.searchParams.set('wpAutoRefresh', 'off');
+                    url.searchParams.set('wpOpenOnly', '1'); // 1.7.574: Open all tabs are never closed by mod
                     targetUrl = url.toString();
                 } catch (_) {}
                 try {
@@ -49284,6 +49285,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // tab stays open so the red line is seen). First waits for this tab's
     // details to reach the batch WhatsApp image, if it is part of one.
     async function wpCloseThisTabWhenDone() {
+        if (params.get('wpOpenOnly') === '1') return; // 1.7.574: a City Manager "Open all" tab stays open
         const copyId = params.get('wpBatchCopyId');
         const copyIndex = params.get('wpBatchCopyIndex');
         if (copyId && copyIndex !== null) {
