@@ -11887,6 +11887,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const pct = String(value).match(/^pct:([\d.]+):([\d.]+)$/);
             if (!config && pct) return '+' + pct[1] + '% (+' + pct[2] + '% total)';
             if (/^eur:/.test(String(value))) return 'to ' + String(value).slice(4) + '€';
+            if (/^set:/.test(String(value))) return 'set to +' + String(value).split(':')[2] + '% (' + String(value).split(':')[1] + '€)';
             return config ? config.label : '+' + value + '%';
         }
 
@@ -12034,15 +12035,15 @@ async function wpTransferAssistantExtensionEnabled() {
         // 1.7.343: Custom amount: last option; type the exact new driver cost.
         // 1.7.582: Raise to % — the TOTAL raise to reach (same as the City Manager's "Raise to %"):
         // what is already raised counts, only the difference is added (already +10%, to 15 → +5%).
-        o=document.createElement('option');o.value='__to__';o.textContent='Raise to %…';raise.appendChild(o);
+        o=document.createElement('option');o.value='__to__';o.textContent='Set to %…';raise.appendChild(o); // 1.7.584: was "Raise to %"; can lower
         o=document.createElement('option');o.value='__amount__';o.textContent='Custom amount…';raise.appendChild(o);
-        const toPct=document.createElement('input'); toPct.type='number'; toPct.min='1'; toPct.max='100'; toPct.step='any'; toPct.placeholder='to %'; toPct.className='wp-raise-to';
-        toPct.title='Raise TO this % in total. Already raised (notes or by hand) counts: already +10%, to 15 → +5% more. Already there → no raise.';
+        const toPct=document.createElement('input'); toPct.type='number'; toPct.min='0'; toPct.max='100'; toPct.step='any'; toPct.placeholder='set %'; toPct.className='wp-raise-to';
+        toPct.title='Set the driver cost to the ORIGINAL driver cost + this % (every change in the price history counted: raises, surges). Can go lower; 0 = back to the original.';
         Object.assign(toPct.style,{display:'none',height:'27px',width:'62px',boxSizing:'border-box',padding:'3px 6px',background:'#111416',color:'#ffb347',textAlign:'center',border:'1px solid rgba(255,179,71,.45)',borderRadius:'6px',fontSize:'11px',fontWeight:'700',outline:'none',flex:'0 0 auto'});
         toPct.addEventListener('click',e=>e.stopPropagation());
         toPct.addEventListener('keydown',e=>e.stopPropagation());
         let toData=null, toAsked=false;
-        function toTarget(){ const n=parseFloat(String(toPct.value||'').replace('%','').replace(',','.')); return n>0&&n<=100 ? n : NaN; }
+        function toTarget(){ const n=parseFloat(String(toPct.value||'').replace('%','').replace(',','.')); return String(toPct.value||'').trim()!==''&&n>=0&&n<=100 ? n : NaN; }
         const customAmount=document.createElement('input'); customAmount.type='number'; customAmount.min='1'; customAmount.step='1'; customAmount.placeholder='DC €'; customAmount.title='Exact new driver cost'; customAmount.className='wp-raise-amount';
         Object.assign(customAmount.style,{display:'none',height:'27px',width:'72px',boxSizing:'border-box',padding:'3px 6px',background:'#111416',color:'#e8eef0',border:'1px solid rgba(143,255,213,.30)',borderRadius:'6px',fontSize:'11px',outline:'none',flex:'0 0 auto'});
         customAmount.addEventListener('click',e=>e.stopPropagation());
@@ -12060,17 +12061,15 @@ async function wpTransferAssistantExtensionEnabled() {
             if(raise.value==='__to__'){
                 priceNote.style.display='';
                 const target=toTarget();
-                if(!Number.isFinite(target)){ priceNote.textContent='type the total %'; try{positionBar();}catch(_){} return; }
+                if(!Number.isFinite(target)){ priceNote.textContent='type the % (0-100)'; try{positionBar();}catch(_){} return; }
                 if(!toData){
                     priceNote.textContent='DC …';
                     if(!toAsked){ toAsked=true; Promise.resolve().then(function(){ return wpFetchTransferCrmDetails(transferUrl,false); }).then(function(data){ toData=data||{}; showPrice(); },function(){ toData={}; showPrice(); }); }
                     try{positionBar();}catch(_){}
                     return;
                 }
-                const r=wpCustomRaiseFor(toData,target,transferUrl);
-                const dcNow=toData.prices&&toData.prices.dc!==null&&toData.prices.dc!==undefined?Number(toData.prices.dc):NaN;
-                const next=r.value?Number(wpCalculateRaisedDriverCost(String(dcNow),r.value)):NaN;
-                priceNote.textContent=r.note.replace(/^no increase/,'no raise')+(Number.isFinite(dcNow)&&Number.isFinite(next)&&next>0?' · DC '+(Math.round(dcNow*100)/100)+'€ → '+next+'€':'');
+                const r=wpSetPctFor(toData,target);
+                priceNote.textContent=r.note;
                 try{positionBar();}catch(_){}
                 return;
             }
@@ -12101,14 +12100,14 @@ async function wpTransferAssistantExtensionEnabled() {
         async function resolveRaiseTo(label){
             raise.__wpToValue='';
             const target=toTarget();
-            if(!Number.isFinite(target)){ toPct.style.borderColor='#ff8a80'; try{toPct.focus();}catch(_){} wpDashLog(orderLabel()+': Raise to % — type the total % first (1-100). Nothing done.','warn'); return false; }
+            if(!Number.isFinite(target)){ toPct.style.borderColor='#ff8a80'; try{toPct.focus();}catch(_){} wpDashLog(orderLabel()+': Set to % — type the % first (0-100). Nothing done.','warn'); return false; }
             let data=null;
             try{ data=await wpFetchTransferCrmDetails(transferUrl,true); }catch(_){}
-            const r=wpCustomRaiseFor(data,target,transferUrl);
-            if(!data||!data.prices||/not loaded|not read/.test(r.note)){ wpDashLog(orderLabel()+': Raise to +'+target+'% — CRM prices not read, nothing done ('+label+' not pressed)','error'); return false; }
+            const r=wpSetPctFor(data,target);
+            if(r.fail){ wpDashLog(orderLabel()+': Set to +'+target+'% — '+r.note+' ('+label+' not pressed)','error'); return false; }
             toData=data;
             raise.__wpToValue=r.value;
-            wpDashLog(orderLabel()+': Raise to +'+target+'%: '+r.note.replace(/^no increase/,'no raise'));
+            wpDashLog(orderLabel()+': Set to +'+target+'%: '+r.note);
             return true;
         }
 
@@ -14316,7 +14315,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 const dcEqualsTc = Boolean(managedCostOption && managedCostOption.dcEqualsTc);
                 const dcBeforeRaise = parseFloat(String(field.value || '').replace(',', '.'));
                 // 1.7.343: Custom amount ('eur:<new DC>'): writes that exact driver cost.
-                const exactAmount = String(select.value).match(/^eur:([\d.]+)$/);
+                const exactAmount = String(select.value).match(/^(?:eur|set):([\d.]+)(?::[\d.]+)?$/); // 1.7.584: + Set to %
 
                 if (exactAmount) {
                     field.value = exactAmount[1];
@@ -20190,6 +20189,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const value = String(raiseValue || '').trim();
         if (!value || value === '0') return '';
         if (/^eur:[\d.]+$/.test(value)) return value.slice(4); // 1.7.343: Custom amount
+        if (/^set:[\d.]+:[\d.]+$/.test(value)) return value.split(':')[1]; // 1.7.584: Set to %
         const match = String(oldPrice || '').match(/\d+(?:[.,]\d+)?/);
         const pctPair = value.match(/^pct:([\d.]+):([\d.]+)$/); // 1.7.582: raise to % / suggested = +<add>% now
         if (pctPair && match) { const b = parseFloat(match[0].replace(',', '.')), a = Number(pctPair[1]); return Number.isFinite(b) && a > 0 ? String(Math.ceil(b * (1 + a / 100) - 1e-9)) : ''; }
@@ -20618,6 +20618,33 @@ async function wpTransferAssistantExtensionEnabled() {
     // "DC+10%") or raises by hand in the price history, the higher of the
     // two — and only the difference is added on the current DC: already
     // +10%, target 15 → +5%. Already there → no increase. Surges do not count.
+    // 1.7.584 "Set to %" (user, 26 Nov: "have a set button instead of raise to, so I can set the price
+    // to what I want, even lower"): the driver cost becomes the ORIGINAL driver cost (before every change
+    // in the price history: raises, surges, system) + target %. It can go down (0 = back to the original).
+    // Price history or DC not read → nothing. Value 'set:<new DC>:<pct>' (written as an exact amount).
+    function wpSetPctFor(data, target) {
+        if (!data || !data.prices || data.prices.dc === null || data.prices.dc === undefined || !Number.isFinite(Number(data.prices.dc)) || Number(data.prices.dc) <= 0) {
+            return { value: '', note: 'nothing done (CRM prices not loaded)', fail: true };
+        }
+        if (data._historyOk !== true) return { value: '', note: 'nothing done (price history not read — try again)', fail: true };
+        if (!(target >= 0 && target <= 100)) return { value: '', note: 'nothing done (type a % from 0 to 100)', fail: true };
+        const dc = Number(data.prices.dc);
+        let factor = 1;
+        (data.costChanges || []).forEach(function(change) {
+            if (change.field === 'DC' && Number(change.from) > 0 && Number(change.to) > 0) factor *= Number(change.to) / Number(change.from);
+        });
+        const base = Math.round(dc / factor * 100) / 100;
+        const now = Math.round((factor - 1) * 1000) / 10;
+        const next = target === 0 ? base : Math.ceil(base * (1 + target / 100) - 1e-9);
+        if (!(next > 0)) return { value: '', note: 'nothing done (price not worked out)', fail: true };
+        const money = function(v) { return (Math.round(v * 100) / 100) + '€'; };
+        if (Math.abs(next - dc) < 0.05 || Math.abs(now - target) < 0.5) return { value: '', note: 'no change (already +' + now + '%, DC ' + money(dc) + ')', base: base, now: now };
+        return {
+            value: 'set:' + next + ':' + target, base: base, now: now, dc: dc, next: next,
+            note: (next > dc ? 'up' : 'DOWN') + ' from +' + now + '% to +' + target + '% · DC ' + money(dc) + ' → ' + money(next) + ' (original ' + money(base) + ')'
+        };
+    }
+
     function wpCustomRaiseFor(data, target, url) {
         if (!data || !data.prices || !Number.isFinite(Number(data.prices.dc)) || data.prices.dc === null) {
             return { value: '', note: 'no increase (CRM prices not loaded)' };
@@ -20661,6 +20688,8 @@ async function wpTransferAssistantExtensionEnabled() {
         if (suggested) return 'raised to +' + suggested[2] + '% DC/ sent to BC, Group';
         // 1.7.343: Custom amount: the exact new driver cost.
         if (/^eur:[\d.]+$/.test(value)) return 'raised to ' + value.slice(4) + '€ DC/ sent to BC, Group';
+        const setTo = value.match(/^set:([\d.]+):([\d.]+)$/); // 1.7.584: Set to %
+        if (setTo) return 'DC set to +' + setTo[2] + '% (' + setTo[1] + '€)/ sent to BC, Group';
 
         try {
             const config = wpGetManagedCostOptions().find(function(item) {
@@ -25682,6 +25711,8 @@ async function wpTransferAssistantExtensionEnabled() {
             const text = String(task && task.note || '');
             const total = text.match(/total\s*\+?\s*(\d+(?:[.,]\d+)?)\s*%/i);
             if (total) { level = num(total[1]); return; }
+            const setNote = text.match(/\bset\s+to\s+\+?\s*(\d+(?:[.,]\d+)?)\s*%/i); // 1.7.584: "DC set to +X%" = the level now, even lower
+            if (setNote) { level = num(setNote[1]); return; }
             const to = text.match(/raised\s+to\s+\+?\s*(\d+(?:[.,]\d+)?)\s*%/i);
             if (to) { level = Math.max(level, num(to[1])); return; }
             let best = 0;
@@ -32128,7 +32159,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (!id || selects.length < 2) { wpDashLog('Sync: this transfer could not be sent to the box — nothing done', 'warn'); return; }
         let raise = String(selects[0].value || '');
         if (raise === '__amount__') { const amount = bar.querySelector('input.wp-raise-amount') || bar.querySelector('input[type="number"]'); const value = parseFloat(String(amount && amount.value || '').replace(',', '.')); raise = Number.isFinite(value) && value > 0 ? 'eur:' + value : ''; }
-        if (raise === '__to__') { const to = bar.querySelector('input.wp-raise-to'); const value = parseFloat(String(to && to.value || '').replace(',', '.')); if (!(value > 0 && value <= 100)) { wpDashLog('Sync: Raise to % — type the total % first. Nothing sent to the box.', 'warn'); return; } raise = 'to:' + value; } // 1.7.582
+        if (raise === '__to__') { const to = bar.querySelector('input.wp-raise-to'); const value = parseFloat(String(to && to.value || '').replace(',', '.')); if (!(value >= 0 && value <= 100) || String(to && to.value || '').trim() === '') { wpDashLog('Sync: Set to % — type the % first. Nothing sent to the box.', 'warn'); return; } raise = 'to:' + value; } // 1.7.582
         const note = String(selects[1].value || '');
         const customBox = bar.querySelector('input[type="text"]');
         const custom = note === '__custom__' && customBox ? String(customBox.value || '') : '';
@@ -33273,7 +33304,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (toBox) toBox.value = toMatch ? toMatch[1] : '';
         const link = found.row.querySelector('a[href*="/admin/transfers/"]');
         wpDashLog((command.by === 'auto' ? 'Automations · CRM: ' : command.by === 'relay' ? '🔁 Relay: ' : '📱 Phone: ') + labels[command.action] /* 1.7.534: 🔁 Relay = sent through the relay, not from the tablet */ + ' — ' + String(link ? link.textContent : command.item).trim() + // 1.7.533: the automation's own CRM steps say so
-            (amountMatch ? ' · driver cost to ' + amountMatch[1] + '€' : toMatch ? ' · raise to +' + toMatch[1] + '% total' : selects[0].value ? ' · raise ' + selects[0].options[selects[0].selectedIndex].textContent : '') +
+            (amountMatch ? ' · driver cost to ' + amountMatch[1] + '€' : toMatch ? ' · set to +' + toMatch[1] + '%' : selects[0].value ? ' · raise ' + selects[0].options[selects[0].selectedIndex].textContent : '') +
             (note ? ' · note "' + (note === '__custom__' ? String(command.custom || '') : note) + '"' : ''));
         button.click();
     }
@@ -40275,7 +40306,7 @@ async function wpTransferAssistantExtensionEnabled() {
             }
 
             if (customRaiseButton && !customRaiseButton._wpBusy) {
-                customRaiseButton.textContent = (customDcTc ? 'Raise to DC = TC (' : 'Raise to % (') + count + ')'; // 1.7.582: was "Custom raise"
+                customRaiseButton.textContent = (customDcTc ? 'DC = TC (' : 'Set to % (') + count + ')'; // 1.7.584: Set // 1.7.582: was "Custom raise"
                 customRaiseButton.disabled = count === 0;
                 customRaiseButton.style.opacity = count === 0 ? '0.45' : '1';
             }
@@ -40672,8 +40703,8 @@ async function wpTransferAssistantExtensionEnabled() {
         customRaiseInput = document.createElement('input');
         customRaiseInput.type = 'text';
         customRaiseInput.inputMode = 'decimal';
-        customRaiseInput.placeholder = 'to %'; // 1.7.582: same as the quickbar's "Raise to %"
-        customRaiseInput.title = 'Raise TO this % in total (e.g. 15). Already raised (notes or by hand) counts: already +10%, to 15 → +5% more. Already there → no raise.';
+        customRaiseInput.placeholder = 'set %'; // 1.7.584 // 1.7.582: same as the quickbar's "Raise to %"
+        customRaiseInput.title = 'Set each transfer\'s driver cost to its ORIGINAL driver cost + this % (raises and surges in the price history counted). Can go lower; 0 = back to the original.';
         Object.assign(customRaiseInput.style, {
             flex: '0 0 58px', width: '58px', boxSizing: 'border-box', background: '#111416', color: '#ffb347', textAlign: 'center',
             border: '1px solid rgba(255,179,71,0.45)', borderRadius: '9px', padding: '8px 6px', fontSize: '12px', fontWeight: '700', outline: 'none'
@@ -40723,13 +40754,13 @@ async function wpTransferAssistantExtensionEnabled() {
                 return;
             }
             const target = parseFloat(String(customRaiseInput.value || '').replace('%', '').replace(',', '.'));
-            if (!(target > 0 && target <= 100)) {
+            if (!(target >= 0 && target <= 100) || String(customRaiseInput.value || '').trim() === '') { // 1.7.584: 0 allowed (Set)
                 customRaiseInput.style.borderColor = '#ff8a80';
                 try { customRaiseInput.focus(); } catch (_) {}
                 return;
             }
             customRaiseInput.style.borderColor = 'rgba(255,179,71,0.45)';
-            runRaiseBatch(customRaiseButton, function(item, data) { return wpCustomRaiseFor(data, target, item.url); }, true, 'raise to +' + target + '%:');
+            runRaiseBatch(customRaiseButton, function(item, data) { return wpSetPctFor(data, target); }, true, 'set to +' + target + '%:'); // 1.7.584
         });
 
         const broadcastDivider = document.createElement('div');
@@ -49096,6 +49127,8 @@ async function wpTransferAssistantExtensionEnabled() {
             if (label && text.indexOf(label) === 0) text = text.slice(label.length);
             const total = text.match(/total\s*\+?\s*(\d+(?:[.,]\d+)?)\s*%/i);
             if (total) { level = num(total[1]); return; }
+            const setNote = text.match(/\bset\s+to\s+\+?\s*(\d+(?:[.,]\d+)?)\s*%/i); // 1.7.584: "DC set to +X%" = the level now, even lower
+            if (setNote) { level = num(setNote[1]); return; }
             const to = text.match(/raised\s+to\s+\+?\s*(\d+(?:[.,]\d+)?)\s*%/i);
             if (to) { level = Math.max(level, num(to[1])); return; }
             let best = 0;
@@ -49425,10 +49458,10 @@ async function wpTransferAssistantExtensionEnabled() {
             select.appendChild(option);
             optionExists = true;
         }
-        if (!optionExists && /^eur:[\d.]+$/.test(value)) { // 1.7.343: Custom amount
+        if (!optionExists && /^(?:eur:[\d.]+|set:[\d.]+:[\d.]+)$/.test(value)) { // 1.7.343: Custom amount; 1.7.584: Set to %
             const option = document.createElement('option');
             option.value = value;
-            option.textContent = 'DC ' + value.slice(4) + '€';
+            option.textContent = 'DC ' + value.split(':')[1] + '€';
             select.appendChild(option);
             optionExists = true;
         }
