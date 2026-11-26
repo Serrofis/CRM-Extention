@@ -38697,7 +38697,8 @@ async function wpTransferAssistantExtensionEnabled() {
          * popup to the available width on the chosen side rather than
          * moving it into the middle of the viewport.
          */
-        const overviewRect =
+        // 1.7.578: while the list is pinned by Activity, the city's windows are placed around a centred stand-in
+        const overviewRect = overview.dataset.wpDocked ? wpCmCityAnchorRect() :
             overview.getBoundingClientRect();
 
         const gap = 8;
@@ -39069,7 +39070,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (info.textContent !== label) info.textContent = label;
     }
     function wpCityJoin(panel, overview, side) {
-        if (wpCmBgRun()) { wpCityUnjoin(); return; } // 1.7.577: Ask me / Full auto work in the background
+        if (wpCmBgRun() || overview.dataset.wpDocked) { wpCityUnjoin(); return; } // 1.7.577: background runs; 1.7.578: the list stays pinned by Activity
         const actionsWindow = panel._wpActionsWindow;
         const hubWindow = panel._wpHubWindow;
         const detached = panel.classList.contains('wp-actions-detached');
@@ -40123,7 +40124,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // 1.7.577: a city you open: City Manager in the middle of the screen (Ask me / Full auto: stays in the background)
         if (!wpCmBgOpening) {
             document.documentElement.classList.remove('wp-cm-bgrun');
-            try { wpCmCentreForCity(document.getElementById('wp-today-city-window')); } catch (_) {}
+            wpCmCityAnchor = { dx: 0, dy: 0 }; // 1.7.578: each city you open starts in the middle
         }
 
         const panel =
@@ -43674,8 +43675,7 @@ async function wpTransferAssistantExtensionEnabled() {
          * be dragged while open. */
         // 1.7.577 (user, 26 Nov: "when clicking city manager it opens there next to activity always"):
         // the open overview is docked right above the Activity box (wpCmDockTick); a city opens in the middle
-        if (!document.getElementById('wp-today-city-orders-window')) { try { wpCmDockTick(); } catch (_) {} }
-        else { wpTodayCityLoadPosition(windowBox); wpTodayCityCenter(windowBox); }
+        try { wpCmDockGuard(); wpCmDockTick(); } catch (_) {} // 1.7.578: always pinned left of Activity
 
         /* Reflow the other panels; the open Overview itself is not moved. */
         wpDashboardReflowPanels();
@@ -43706,13 +43706,18 @@ async function wpTransferAssistantExtensionEnabled() {
     // 1.7.577 (user, 26 Nov: "bring the small window of city manager above the activity, make it look like activity's box …
     // when suggesting or running on full auto, no need to auto open the full city manager view, do it in the background …
     // when I click on one city city manager expands and pops up in the middle of the screen, dragable still"):
-    // - the open overview (no city open) sits right above the Activity box, same width, Activity's look (class wp-cm-docked);
-    // - a city opened by you: the whole City Manager is centred on the screen and can be dragged; closing the city docks it again;
-    // - a city opened by Ask me / Full auto (City Manager auto, relay Tomorrow / 2-4 days runs) works invisibly
-    //   (html.wp-cm-bgrun: the city windows are transparent and let clicks through); Activity shows what is done.
+    // a city opened by Ask me / Full auto (City Manager auto, relay Tomorrow / 2-4 days runs) works invisibly
+    // (html.wp-cm-bgrun: the city windows are transparent and let clicks through); Activity shows what is done.
+    // 1.7.578 (user, 26 Nov: "its bugged, it teleports right and left … remove the draggable from it, make it stick to the side
+    // of activity, similar fonts, same thin bar to scroll … on the left of activity not on top … gentler" + "make the whole same
+    // width as activity"): the open City Manager list is pinned LEFT of the Activity box, same width and bottom line, never
+    // moved and never dragged (it is no longer pulled into the middle when a city opens). A city you open: its windows
+    // (transfers, Actions, Ops Hub) open centred on the screen and are dragged by the city's header bar (wpCmCityAnchor).
     var wpCmBgOpening = false;
-    const WP_CM_DOCK_PROPS = ['position', 'left', 'top', 'right', 'bottom', 'width', 'max-height', 'overflow', 'transform', 'z-index'];
+    var wpCmCityAnchor = { dx: 0, dy: 0 };
+    const WP_CM_DOCK_PROPS = ['position', 'left', 'top', 'right', 'bottom', 'width', 'height', 'max-height', 'overflow-y', 'overflow-x', 'transform', 'z-index'];
     function wpCmBgRun() { return document.documentElement.classList.contains('wp-cm-bgrun'); }
+    function wpCmDocked() { const o = document.getElementById('wp-today-city-window'); return Boolean(o && o.dataset.wpDocked && !o.classList.contains('is-closed')); }
     function wpCmOpenInBackground(city, tab) {
         document.documentElement.classList.add('wp-cm-bgrun');
         wpCmBgOpening = true;
@@ -43721,22 +43726,24 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpCmDockSet(node, prop, value) {
         if (node.style.getPropertyValue(prop) !== value || node.style.getPropertyPriority(prop) !== 'important') node.style.setProperty(prop, value, 'important');
     }
-    function wpCmDockPlace(overview) {
+    function wpCmTermRect() {
         const term = document.getElementById('wp-dash-term');
-        let rect = null;
-        try { rect = term && term.style.display !== 'none' ? term.getBoundingClientRect() : null; } catch (_) {}
-        let right = 14, bottom = 56, width = 440;
-        if (rect && rect.height && rect.width) {
-            let top = rect.top;
-            try { const mini = document.getElementById('wp-queue-mini'); const r = mini && mini.style.display !== 'none' ? mini.getBoundingClientRect() : null; if (r && r.height && r.top < top && r.top > rect.top - 200) top = r.top; } catch (_) {}
-            right = Math.max(0, Math.round(window.innerWidth - rect.right));
-            bottom = Math.round(window.innerHeight - top + 8);
+        try { const rect = term && term.style.display !== 'none' ? term.getBoundingClientRect() : null; return rect && rect.width && rect.height ? rect : null; } catch (_) { return null; }
+    }
+    function wpCmDockPlace(overview) {
+        const rect = wpCmTermRect();
+        let right = 14, bottom = 56, width = 440, height = 0;
+        if (rect) {
+            right = Math.round(window.innerWidth - rect.left + 10);
+            bottom = Math.max(0, Math.round(window.innerHeight - rect.bottom));
             width = Math.round(rect.width);
+            height = Math.round(rect.height);
         } else {
             try { const footer = document.getElementById('footer'); const bar = footer ? footer.getBoundingClientRect() : null; if (bar && bar.height && bar.top > window.innerHeight / 2) bottom = Math.round(window.innerHeight - bar.top + 8); } catch (_) {}
         }
-        const values = { position: 'fixed', left: 'auto', top: 'auto', right: right + 'px', bottom: bottom + 'px', width: width + 'px',
-            'max-height': Math.max(160, Math.round(window.innerHeight - bottom - 16)) + 'px', overflow: 'auto', transform: 'none', 'z-index': '2147482999' };
+        const maxH = height ? Math.max(200, height) : Math.max(200, Math.min(520, Math.round(window.innerHeight - bottom - 16)));
+        const values = { position: 'fixed', left: 'auto', top: 'auto', right: right + 'px', bottom: bottom + 'px', width: width + 'px', height: 'auto',
+            'max-height': maxH + 'px', 'overflow-y': 'auto', 'overflow-x': 'hidden', transform: 'none', 'z-index': '2147482999' };
         Object.keys(values).forEach(function(prop) { wpCmDockSet(overview, prop, values[prop]); });
         if (!overview.classList.contains('wp-cm-docked')) overview.classList.add('wp-cm-docked');
         overview.dataset.wpDocked = '1';
@@ -43748,18 +43755,14 @@ async function wpTransferAssistantExtensionEnabled() {
         WP_CM_DOCK_PROPS.forEach(function(prop) { overview.style.removeProperty(prop); });
         if (overview.classList.contains('is-closed')) { try { wpTodayCityApplyClosedPosition(overview); } catch (_) {} }
     }
-    // a city you opened: the whole City Manager (list + city + Actions) in the middle of the screen
-    function wpCmCentreForCity(overview) {
-        if (!overview || overview.classList.contains('is-closed')) return;
-        wpCmUndock(overview);
-        const total = 390 + 1046 + 252;
-        const left = Math.max(8, Math.round((window.innerWidth - Math.min(total, window.innerWidth - 16)) / 2));
-        const top = Math.max(8, Math.round((window.innerHeight - Math.min(860, window.innerHeight - 64)) / 2));
-        overview.style.setProperty('position', 'fixed', 'important');
-        overview.style.setProperty('left', left + 'px', 'important');
-        overview.style.setProperty('top', top + 'px', 'important');
-        overview.style.setProperty('right', 'auto', 'important');
-        overview.style.setProperty('bottom', 'auto', 'important');
+    // where a city's windows go while the list is pinned: a stand-in for the list's place, so that the
+    // transfers + Actions + Ops Hub row is centred on the screen (moved by dragging the city's header)
+    function wpCmCityAnchorRect() {
+        const group = 1046 + 8 + 270 + 8 + 236;
+        const ordersLeft = Math.max(8, Math.round((window.innerWidth - Math.min(group, window.innerWidth - 16)) / 2));
+        const right = ordersLeft - 8 + (wpCmCityAnchor.dx || 0);
+        const top = Math.max(8, Math.min(window.innerHeight - 120, Math.round((window.innerHeight - 700) / 2) + (wpCmCityAnchor.dy || 0)));
+        return { left: right - 390, right: right, top: top, bottom: top + 700, width: 390, height: 700 };
     }
     function wpCmDockTick() {
         const root = document.documentElement;
@@ -43768,19 +43771,50 @@ async function wpTransferAssistantExtensionEnabled() {
         if (root.classList.contains('wp-cm-bgrun') && !orders && !wpCmAutoRunning) root.classList.remove('wp-cm-bgrun');
         if (!overview) return;
         if (overview.classList.contains('is-closed')) { wpCmUndock(overview); return; }
-        if (overview.classList.contains('wp-today-city-dragging')) return;
-        if (!orders || wpCmBgRun()) { wpCmDockPlace(overview); return; }
-        if (overview.dataset.wpDocked) { wpCmCentreForCity(overview); try { wpTodayCityPositionOrdersWindow(orders); } catch (_) {} }
+        const wasDocked = Boolean(overview.dataset.wpDocked);
+        wpCmDockPlace(overview);
+        if (!wasDocked && orders) { try { wpTodayCityPositionOrdersWindow(orders); } catch (_) {} }
     }
+    // the list puts itself back the moment anything else writes a position onto it (no jumping)
+    var wpCmDockObs = null;
+    function wpCmDockGuard() {
+        const overview = document.getElementById('wp-today-city-window');
+        if (!overview || overview._wpCmDockObs) return;
+        overview._wpCmDockObs = true;
+        try { new MutationObserver(function() { if (overview.dataset.wpDocked && !overview.classList.contains('is-closed')) wpCmDockPlace(overview); }).observe(overview, { attributes: true, attributeFilter: ['style'] }); } catch (_) {}
+    }
+    // drag a city's windows by the city's header bar (the list itself stays pinned)
+    (function() {
+        let drag = null;
+        document.addEventListener('mousedown', function(event) {
+            if (event.button !== 0 || !wpCmDocked()) return;
+            const head = event.target && event.target.closest ? event.target.closest('#wp-today-city-orders-window .wp-today-city-orders-header') : null;
+            if (!head || event.target.closest('button,input,select,textarea,a,label,.wp-ui-city-hover')) return;
+            drag = { x: event.clientX, y: event.clientY, dx: wpCmCityAnchor.dx || 0, dy: wpCmCityAnchor.dy || 0 };
+            event.preventDefault();
+        }, true);
+        document.addEventListener('mousemove', function(event) {
+            if (!drag) return;
+            wpCmCityAnchor = { dx: drag.dx + event.clientX - drag.x, dy: drag.dy + event.clientY - drag.y };
+            const panel = document.getElementById('wp-today-city-orders-window');
+            if (panel) { try { wpTodayCityPositionOrdersWindow(panel); } catch (_) {} }
+        }, true);
+        document.addEventListener('mouseup', function() { drag = null; }, true);
+    })();
     (function() {
         const style = document.createElement('style');
         style.id = 'wp-cm-dock-style';
-        const id = 'html:not(#wpz) body:not(#wpz) ' + '#wp-today-city-window'.repeat(6);
+        const id = 'html:not(#wpz) body:not(#wpz) ' + '#wp-today-city-window'.repeat(6) + '.wp-cm-docked';
         const hide = ['#wp-today-city-orders-window', '#wp-today-city-actions-window', '#wp-today-city-hub-window', '#wp-cm-frame', '#wp-cm-head']
             .map(function(sel) { return 'html.wp-cm-bgrun:not(#wpz) body:not(#wpz) ' + sel.repeat(6); }).join(',');
         style.textContent = [
-            id + '.wp-cm-docked{background:#1f2529!important;color:#e8ecee!important;border:1px solid rgba(255,255,255,.09)!important;border-radius:14px!important;box-shadow:0 14px 40px rgba(0,0,0,.55)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-sizing:border-box!important;scrollbar-width:thin;scrollbar-color:#4c5358 transparent}',
-            id + '.wp-cm-docked .wp-today-city-window-header{border-bottom:0!important;background:transparent!important}',
+            // Activity's box: dark slate, soft border, round corners, Segoe UI 13px, thin scroll bar
+            id + '{background:#1f2529!important;color:#e8ecee!important;border:1px solid rgba(255,255,255,.09)!important;border-radius:14px!important;box-shadow:0 14px 40px rgba(0,0,0,.55)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-sizing:border-box!important;padding:0 0 6px!important;font:13px/1.4 Segoe UI,system-ui,sans-serif!important}',
+            id + ',' + id + ' *{scrollbar-width:thin!important;scrollbar-color:#4c5358 transparent!important;font-family:Segoe UI,system-ui,sans-serif!important}',
+            id + ' .wp-today-city-window-header{border-bottom:0!important;background:transparent!important;cursor:default!important}',
+            id + ' .wp-today-city-summary{background:transparent!important;padding:2px 8px!important}',
+            id + ' .wp-today-city-stat{background:rgba(255,255,255,.045)!important;border-bottom:0!important;border-radius:9px!important;margin:0 0 4px!important;font-size:13px!important}',
+            id + ' .wp-today-city-stat:hover{background:rgba(255,255,255,.08)!important}',
             hide + '{opacity:0!important;pointer-events:none!important}'
         ].join('\n');
         (document.head || document.documentElement).appendChild(style);
@@ -47033,7 +47067,7 @@ async function wpTransferAssistantExtensionEnabled() {
         return sel + '{' + Object.keys(map).map(function(prop) { return prop + ':' + map[prop] + '!important'; }).join(';') + '}';
     }
     function wpDockLayout() {
-        try { wpCmDockTick(); } catch (_) {} // 1.7.577
+        try { wpCmDockGuard(); wpCmDockTick(); } catch (_) {} // 1.7.577 / 1.7.578
         const root = document.documentElement;
         const sx = window.scrollX || 0, sy = window.scrollY || 0;
         // 1.7.239: the row lives in the CRM's bottom bar (the "Powered by
@@ -47129,7 +47163,9 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         // The suggestion card stands left of the Terminal instead of over it.
         if (termRect && termRect.width && window.innerWidth - termRect.width - 26 - 540 > 240) {
-            rules.push(wpDockRule('wp-director-card', '', { right: Math.round(termRect.width + 28) + 'px' }));
+            let cmRoom = 0; // 1.7.578: and left of the City Manager list pinned beside it
+            try { const cm = city && city.dataset.wpDocked && !city.classList.contains('is-closed') ? city.getBoundingClientRect() : null; if (cm && cm.width) cmRoom = Math.round(cm.width + 10); } catch (_) {}
+            rules.push(wpDockRule('wp-director-card', '', { right: Math.round(termRect.width + 28 + cmRoom) + 'px' }));
         }
         try {
             const orders = document.getElementById('wp-today-city-orders-window');
