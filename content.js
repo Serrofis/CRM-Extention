@@ -43716,7 +43716,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // (transfers, Actions, Ops Hub) open centred on the screen and are dragged by the city's header bar (wpCmCityAnchor).
     var wpCmBgOpening = false;
     var wpCmCityAnchor = { dx: 0, dy: 0 };
-    const WP_CM_DOCK_PROPS = ['position', 'left', 'top', 'right', 'bottom', 'width', 'height', 'max-height', 'overflow-y', 'overflow-x', 'transform', 'z-index'];
+    const WP_CM_DOCK_PROPS = ['margin', 'max-width', 'position', 'left', 'top', 'right', 'bottom', 'width', 'height', 'max-height', 'overflow-y', 'overflow-x', 'transform', 'z-index'];
     function wpCmBgRun() { return document.documentElement.classList.contains('wp-cm-bgrun'); }
     function wpCmDocked() { const o = document.getElementById('wp-today-city-window'); return Boolean(o && o.dataset.wpDocked && !o.classList.contains('is-closed')); }
     function wpCmOpenInBackground(city, tab) {
@@ -43735,7 +43735,10 @@ async function wpTransferAssistantExtensionEnabled() {
         const rect = wpCmTermRect();
         let right = 14, bottom = 56, width = 440, height = 0;
         if (rect) {
-            right = Math.round(window.innerWidth - rect.left); // 1.7.579 (user: "stick the boxes together"): no gap, one body with Activity
+            // 1.7.579 (user: "stick the boxes together"): no gap, one body with Activity
+            // 1.7.581 (user: "they are not stuck together, there is a gap"): 'right' of a fixed box counts from the page's
+            // edge WITHOUT its scroll bar (clientWidth); innerWidth included the scroll bar = the gap
+            right = Math.round((document.documentElement.clientWidth || window.innerWidth) - rect.left);
             bottom = Math.max(0, Math.round(window.innerHeight - rect.bottom));
             width = Math.round(rect.width);
             height = Math.round(rect.height);
@@ -43745,7 +43748,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const maxH = height ? Math.max(200, height) : Math.max(200, Math.min(520, Math.round(window.innerHeight - bottom - 16)));
         // 1.7.579 (user, 26 Nov: "why does it have 2 scroll bars? make them stick"): exactly Activity's height, the box itself
         // never scrolls; only the city list inside does (one thin bar)
-        const values = { position: 'fixed', left: 'auto', top: 'auto', right: right + 'px', bottom: bottom + 'px', width: width + 'px', height: maxH + 'px',
+        const values = { position: 'fixed', left: 'auto', top: 'auto', margin: '0', 'max-width': 'none', right: right + 'px', bottom: bottom + 'px', width: width + 'px', height: maxH + 'px',
             'max-height': maxH + 'px', 'overflow-y': 'hidden', 'overflow-x': 'hidden', transform: 'none', 'z-index': '2147482999' };
         Object.keys(values).forEach(function(prop) { wpCmDockSet(overview, prop, values[prop]); });
         if (!overview.classList.contains('wp-cm-docked')) overview.classList.add('wp-cm-docked');
