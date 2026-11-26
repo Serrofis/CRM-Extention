@@ -22609,6 +22609,12 @@ async function wpTransferAssistantExtensionEnabled() {
     }
 
     function wpSyncAutoRefreshWithTransferOverview(windowBox) {
+        // 1.7.587 (user, 26 Nov: "Stop city manager from stopping the refresh just make sure it does not break with an
+        // autorefresh"): an open City Manager no longer pauses the refresh. The reload waits while a City Manager run is
+        // busy or you are typing in it (wpCmReloadHold), and a city you had open comes back after it with your ticks
+        // (wpCmSaveForReload / wpCmRestoreAfterReload).
+        wpResumeAutoRefreshAfterTransferOverview();
+        if (windowBox !== '__old__') return;
         const isOpen = !!(
             windowBox &&
             !windowBox.classList.contains('is-closed')
@@ -22624,6 +22630,75 @@ async function wpTransferAssistantExtensionEnabled() {
             wpResumeAutoRefreshAfterTransferOverview();
         }
     }
+
+    // 1.7.587: what a refresh must wait for while the City Manager is in use (max 10 min busy, 2 min typing)
+    var wpCmHoldSince = 0;
+    function wpCmReloadHold() {
+        let why = '';
+        try {
+            const panel = document.getElementById('wp-today-city-orders-window');
+            const summary = panel ? panel.querySelector('.wp-ui-batch-summary') : null;
+            const running = Boolean(panel && (panel._wpBroadcastPoll || (typeof panel._wpHubBusy === 'function' && panel._wpHubBusy()) ||
+                (summary && summary.style.display !== 'none' && /\brunning\b/i.test(summary.textContent || ''))));
+            if (wpCmAutoRunning || running || wpCmImagePending) why = 'a run is going';
+            const focus = document.activeElement;
+            const typing = Boolean(focus && /^(INPUT|TEXTAREA|SELECT)$/.test(focus.tagName) && focus.type !== 'checkbox' &&
+                focus.closest && focus.closest('#wp-today-city-window,#wp-today-city-orders-window,#wp-today-city-actions-window,#wp-today-city-hub-window'));
+            if (!why && typing) why = 'you are typing';
+            if (!why && Date.now() - (Number(wpRemoteCmActiveAt) || 0) < 90000) why = 'the tablet is using it';
+            if (!why) { wpCmHoldSince = 0; return ''; }
+            if (!wpCmHoldSince) wpCmHoldSince = Date.now();
+            const limit = why === 'you are typing' ? 2 * 60000 : 10 * 60000;
+            if (Date.now() - wpCmHoldSince > limit) { wpDashLog('Auto-refresh: City Manager held it ' + Math.round(limit / 60000) + ' min (' + why + ') — refreshing anyway', 'warn'); wpCmHoldSince = 0; return ''; }
+        } catch (_) { return ''; }
+        return why;
+    }
+    const WP_CM_RELOAD_KEY = 'wp_cm_reload_v1';
+    function wpCmSaveForReload() {
+        const panel = document.getElementById('wp-today-city-orders-window');
+        const overview = document.getElementById('wp-today-city-window');
+        const args = panel && panel._wpCityArgs;
+        if (!panel || !args || !args.mine || wpCmBgRun() || !overview || overview.classList.contains('is-closed')) { sessionStorage.removeItem(WP_CM_RELOAD_KEY); return; }
+        const rect = overview.getBoundingClientRect();
+        const body = panel._wpOrdersBody || panel;
+        sessionStorage.setItem(WP_CM_RELOAD_KEY, JSON.stringify({ city: args.city, tab: args.tab, sel: wpTodayCitySelectedTab,
+            ids: typeof panel._wpTickedIds === 'function' ? panel._wpTickedIds() : [], scroll: panel.scrollTop || 0, bodyScroll: body.scrollTop || 0,
+            left: Math.round(rect.left), top: Math.round(rect.top), at: Date.now() }));
+    }
+    async function wpCmRestoreAfterReload() {
+        let saved = null;
+        try { saved = JSON.parse(sessionStorage.getItem(WP_CM_RELOAD_KEY) || 'null'); sessionStorage.removeItem(WP_CM_RELOAD_KEY); } catch (_) {}
+        if (!saved || !saved.city || Date.now() - Number(saved.at || 0) > 3 * 60000) return;
+        const pause = function(ms) { return new Promise(function(resolve) { window.setTimeout(resolve, ms); }); };
+        for (let i = 0; i < 60; i++) {
+            const overview = document.getElementById('wp-today-city-window');
+            if (overview && !overview.classList.contains('is-closed')) {
+                if (saved.sel && wpTodayCitySelectedTab !== saved.sel) { wpTodayCitySelectedTab = saved.sel; try { wpTodayCityUpdate(); } catch (_) {} }
+                let ready = false;
+                try { ready = wpTodayCityGetOrdersForCity(saved.city, saved.tab).length > 0; } catch (_) {}
+                if (ready) break;
+            }
+            if (document.getElementById('wp-today-city-orders-window')) return; // something else opened a city meanwhile
+            await pause(1000);
+        }
+        if (document.getElementById('wp-today-city-orders-window')) return;
+        try { wpTodayCityOpenCityWindow(saved.city, saved.tab); } catch (_) { return; }
+        await pause(400);
+        const overview = document.getElementById('wp-today-city-window');
+        const panel = document.getElementById('wp-today-city-orders-window');
+        if (!panel) return;
+        if (overview && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
+            overview.style.setProperty('left', saved.left + 'px', 'important');
+            overview.style.setProperty('top', saved.top + 'px', 'important');
+            overview.style.setProperty('right', 'auto', 'important');
+            overview.style.setProperty('bottom', 'auto', 'important');
+            try { wpTodayCityPositionOrdersWindow(panel); } catch (_) {}
+        }
+        const kept = Array.isArray(saved.ids) && saved.ids.length && typeof panel._wpTickIds === 'function' ? panel._wpTickIds(saved.ids) : 0;
+        try { panel.scrollTop = saved.scroll || 0; (panel._wpOrdersBody || panel).scrollTop = saved.bodyScroll || 0; } catch (_) {}
+        if (saved.ids && saved.ids.length) wpDashLog('City Manager: ' + saved.city + ' open again after the refresh — ' + kept + '/' + saved.ids.length + ' ticks kept' + (kept < saved.ids.length ? ' (the others are no longer in the list)' : ''));
+    }
+    window.setTimeout(function() { wpCmRestoreAfterReload().catch(function() {}); }, 1500);
 
     function wpIsAutoRefreshEnabled() {
 
@@ -22966,7 +23041,14 @@ async function wpTransferAssistantExtensionEnabled() {
                                 wpAutoRefreshInterval = setTimeout(wpWaitForRound, 1000);
                                 return;
                             }
+                            const cmHold = wpCmReloadHold(); // 1.7.587
+                            if (cmHold) {
+                                countdown.textContent = '↻ Refresh after City Manager (' + cmHold + ')';
+                                wpAutoRefreshInterval = setTimeout(wpWaitForRound, 1000);
+                                return;
+                            }
                             if (wpAutoTicking) { try { wpDashLog('wlcm: the check round took over 5 min — refreshing anyway', 'warn'); } catch (_) {} }
+                            try { wpCmSaveForReload(); } catch (_) {}
                             countdown.textContent = '↻ Refreshing…';
                             wpAutoRefreshInterval = setTimeout(wpReloadNow, 100);
                         };
@@ -40235,6 +40317,7 @@ async function wpTransferAssistantExtensionEnabled() {
             'wp-today-city-orders-window';
         panel.className =
             'wp-today-city-orders-window';
+        panel._wpCityArgs = { city: city, tab: tabName, mine: !wpCmBgOpening }; // 1.7.587: brought back after a refresh
 
         /*
          * Append BEFORE positioning so getBoundingClientRect() measures
@@ -41555,6 +41638,17 @@ async function wpTransferAssistantExtensionEnabled() {
             chainKeys.forEach(function(key) { wpActDone(key, chainRan, chainRan ? 'chain ran' : 'chain did not run'); });
             return { count: selected.size, text: chainAfter, taken: taken };
         };
+        // 1.7.587: ticks kept over a refresh (by transfer id) and the Hub-run busy flag for the refresh hold
+        const wpCmTid = function(item) { return item && item.url ? ((String(item.url).match(/transfers\/(\d+)/) || [])[1] || '') : ''; };
+        panel._wpTickedIds = function() { return Array.from(selected).map(function(index) { return wpCmTid(items[index]); }).filter(Boolean); };
+        panel._wpTickIds = function(ids) {
+            selected.clear();
+            items.forEach(function(item, index) { const tid = wpCmTid(item); if (tid && ids.indexOf(tid) >= 0) selected.add(index); });
+            Array.from(panel.querySelectorAll('.wp-city-transfer-select')).forEach(function(input) { input.checked = selected.has(Number(input.dataset.wpIndex)); });
+            try { updateSelectionUI(); } catch (_) {}
+            return selected.size;
+        };
+        panel._wpHubBusy = function() { return hubBusy; };
         // 1.7.352: the phone's Chain: the transfers ticked there, with its price and note (the PC's boxes are left as they are)
         panel._wpRemoteChain = async function(labels, price, note, ids, opts) {
             const clean = function(value) { return String(value || '').replace(/\s+/g, ' ').trim(); };
