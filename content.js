@@ -12105,7 +12105,7 @@ async function wpTransferAssistantExtensionEnabled() {
             let data=null;
             try{ data=await wpFetchTransferCrmDetails(transferUrl,true); }catch(_){}
             const r=wpCustomRaiseFor(data,target,transferUrl);
-            if(!data||!data.prices||/not loaded/.test(r.note)){ wpDashLog(orderLabel()+': Raise to +'+target+'% — CRM prices not read, nothing done ('+label+' not pressed)','error'); return false; }
+            if(!data||!data.prices||/not loaded|not read/.test(r.note)){ wpDashLog(orderLabel()+': Raise to +'+target+'% — CRM prices not read, nothing done ('+label+' not pressed)','error'); return false; }
             toData=data;
             raise.__wpToValue=r.value;
             wpDashLog(orderLabel()+': Raise to +'+target+'%: '+r.note.replace(/^no increase/,'no raise'));
@@ -20633,7 +20633,16 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         const fromNotes = wpDirectorNoteRaised(data);
         const byHand = wpManualRaisePercent(data, url);
-        const already = Math.max(fromNotes, byHand);
+        // 1.7.583 (user: transfers at +11% got +10% more with "raise to"): the level is now ALL driver
+        // cost changes in the price history (surges and system ones too), not only raises by hand and
+        // notes. No price history read → no raise at all (it could not tell what is already there).
+        if (data._historyOk === false) return { value: '', note: 'no increase (price history not read — nothing done, try again)' };
+        let factor = 1;
+        (data.costChanges || []).forEach(function(change) {
+            if (change.field === 'DC' && Number(change.from) > 0 && Number(change.to) > 0) factor *= Number(change.to) / Number(change.from);
+        });
+        const allChanges = Math.round((factor - 1) * 1000) / 10;
+        const already = Math.max(fromNotes, byHand, allChanges);
         if (already >= target - 0.5) {
             return { value: '', note: 'no increase (already +' + already + '%, wanted +' + target + '%)' };
         }
@@ -39470,6 +39479,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // Changeset column lists changes such as drivers_cost: '32.0' ⇒ '38.4'.
         try {
             const js = await historyPromise;
+            data._historyOk = Boolean(js); // 1.7.583: Raise to % needs the price history
             data.costChanges = [];
             data.changes = []; // 1.7.482: every change with its author (colleague watch)
             if (js) {
