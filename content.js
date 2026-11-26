@@ -16691,11 +16691,23 @@ async function wpTransferAssistantExtensionEnabled() {
         const key = wpNormalizeCityKey(city);
         const multi = typeof WP_MULTI_WHATSAPP_GROUPS !== 'undefined' && WP_MULTI_WHATSAPP_GROUPS[key];
         if (multi) {
-            return {
-                targets: Object.keys(multi).map(function(group) {
-                    return { name: city + ' ' + group, code: wpWhatsAppInviteCode(multi[group]), expect: [city] };
-                })
-            };
+            // 1.7.575 (Evan, 26 Nov: "bogota sends twice"): the built-in Bogota "Welcomers" link is Medellin's group and
+            // Medellin's is Cartagena's. Such a link never opened a Bogota group, and the look-up by name then found
+            // Bogota's other group, so it got the message twice. A group link that is ANOTHER city's own link (the
+            // main list) or repeats this city's other group is skipped; your own link ("the whatsapp group for bogota
+            // welcomers is …") replaces it and is used as usual.
+            const seen = {};
+            const targets = [];
+            Object.keys(multi).forEach(function(group) {
+                const code = wpWhatsAppInviteCode(multi[group]);
+                const other = code && Object.keys(WHATSAPP_LINKS).find(function(linkKey) {
+                    return wpNormalizeCityKey(linkKey) !== key && wpWhatsAppInviteCode(WHATSAPP_LINKS[linkKey]) === code;
+                });
+                if (code && (seen[code] || other)) return;
+                if (code) seen[code] = true;
+                targets.push({ name: city + ' ' + group, code: code, expect: [city] });
+            });
+            if (targets.length) return { targets: targets };
         }
         const areas = WP_WA_ISLAND_AREAS[key];
         if (areas) {
@@ -20613,6 +20625,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 try {
                     const url = new URL(item.url, window.location.href);
                     url.searchParams.set('wpAutoRefresh', 'off');
+                    url.searchParams.set('wpOpenOnly', '1'); // 1.7.574: Open all tabs are never closed by mod
                     targetUrl = url.toString();
                 } catch (_) {}
                 try {
@@ -49284,6 +49297,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // tab stays open so the red line is seen). First waits for this tab's
     // details to reach the batch WhatsApp image, if it is part of one.
     async function wpCloseThisTabWhenDone() {
+        if (params.get('wpOpenOnly') === '1') return; // 1.7.574: a City Manager "Open all" tab stays open
         const copyId = params.get('wpBatchCopyId');
         const copyIndex = params.get('wpBatchCopyIndex');
         if (copyId && copyIndex !== null) {
