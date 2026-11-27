@@ -28481,7 +28481,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const item = one.item, fit = one.fit;
             wpAutoSuggestedMark(item.id, 'sending');
             try { wpOutcomeTrack(item.path, { city: city, action: 'suggested' }); } catch (_) {}
-            wpDashLog('wlcm: ' + item.label + ' (' + city + ') — ' + hm(one.tbo) + ' to pickup → sending to ' + fit.length + ' suggested driver' + (fit.length === 1 ? '' : 's') + ': ' + fit.map(function(person) { return person.name; }).join(', ') + ' (note only once WhatsApp confirms)' + (going.length > 1 ? ' (together with ' + (going.length - 1) + ' more of ' + city + ')' : ''));
+            wpDashLog('wlcm: ' + item.label + ' (' + city + ') — ' + (Number.isFinite(one.tbo) ? hm(one.tbo) + ' to pickup' : 'Tomorrow / 2-4 days') /* 1.7.588 */ + ' → sending to ' + fit.length + ' suggested driver' + (fit.length === 1 ? '' : 's') + ': ' + fit.map(function(person) { return person.name; }).join(', ') + ' (note only once WhatsApp confirms)' + (going.length > 1 ? ' (together with ' + (going.length - 1) + ' more of ' + city + ')' : ''));
         });
         const people = Object.keys(byPhone).map(function(phone) {
             const entry = byPhone[phone];
@@ -32817,7 +32817,15 @@ async function wpTransferAssistantExtensionEnabled() {
             if (/\bBC\b[^\n]*?\b(?:group|grp)\b/i.test(text) || /\bBC\s*(?:&|and|,|\/|\+)\s*G\b/i.test(text)) return true; // Today's BC & Group test (wpDetectTransferTag)
             try { const tag = wpDetectTransferTag(text); return Boolean(tag && ['final', 'hero', 'suggested', 'best'].indexOf(tag.type) >= 0); } catch (_) { return false; } // 1.7.575: best = done too
         });
-        return done ? '' : hasEm ? 'bcg' : 'chain'; // 1.7.550: BC & Group already there = nothing, even without EM
+        if (!done) return hasEm ? 'bcg' : 'chain'; // 1.7.550: BC & Group already there = nothing, even without EM
+        // 1.7.588: Evan's order on Tomorrow / 2-4 days (user, 27 Nov): BC & Group there but no "best drivers" note = 'best'
+        // (Ask best drivers only); BC & Group + best drivers but not sent to suggested = 'sugg' (3 suggested, grouped per driver).
+        // A Final BC / hero / suggested note = every step done.
+        const notes = tasks.map(function(task) { return String(task && task.note || ''); });
+        const tagged = function(type) { return notes.some(function(text) { try { const tag = wpDetectTransferTag(text); return Boolean(tag && tag.type === type); } catch (_) { return false; } }); };
+        if (tagged('final') || tagged('hero') || tagged('suggested') || notes.some(function(text) { return wpNoteSaysSuggested(text) || /\bhero(?:es)?\b/i.test(text); })) return '';
+        if (!notes.some(function(text) { return /\bbest\s+drivers?\b/i.test(text); })) return 'best';
+        return 'sugg';
     }
     function wpDayStamp(out, day) {
         if (!out || !Array.isArray(out.rows)) return out;
@@ -32939,7 +32947,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 const before = map[id] && map[id].st;
                 map[id] = Object.assign(map[id] || {}, { st: st === null ? '?' : st, at: Date.now(), d: w.day });
                 if (before !== map[id].st) wpDayDirty[w.day] = true;
-                if (w.fresh && st) wpDashLog('🤖 wlcm · ' + (w.day === 'later' ? '2-4 days' : 'Tomorrow') + ': ' + String(w.row.l || '#' + id) + ' ' + String(w.row.c || '') + ' — new, needs ' + (st === 'chain' ? 'the whole chain (no notes yet)' : 'BC & Group') + (wpDayModes && wpDayModes[w.day] === 'full' ? ': Full auto runs it' : ': asked on the tablet'));
+                if (w.fresh && st) wpDashLog('🤖 wlcm · ' + (w.day === 'later' ? '2-4 days' : 'Tomorrow') + ': ' + String(w.row.l || '#' + id) + ' ' + String(w.row.c || '') + ' — new, needs ' + (st === 'chain' ? 'the whole chain (no notes yet)' : st === 'best' ? 'Ask best drivers' : st === 'sugg' ? 'send to 3 suggested' : 'BC & Group') + (wpDayModes && wpDayModes[w.day] === 'full' ? ': Full auto runs it' : ': asked on the tablet'));
             }
             wpDaySave(WP_DAY_ST_KEY, map);
             // a changed step reaches the relay at once (the list itself is read every 1 / 5 min)
@@ -33660,13 +33668,50 @@ async function wpTransferAssistantExtensionEnabled() {
     // as the City Manager's Chain button (Tag → Price Change when a price is
     // given → Remove Auto-C → Broadcast → Ask best drivers → Enable Auto-C →
     // note → image), with no second click.
+    // 1.7.588: Tomorrow / 2-4 days, last step (user, 27 Nov: "sending the transfers to 3 suggested for each transfer from
+    // the crm ... same procedure as the 5 ones in todays, just 3 and of course grouped together so we do not spam"):
+    // Today's send to suggested on the relay's transfers: notes read fresh (only 'sugg' ones go), the CRM's suggested drivers
+    // (top 3 with WhatsApp, rotation), one message per driver with all of his transfers (wpHeroGroupText), the paced send
+    // plan, note "sent to suggested" once WhatsApp confirms. Already sent / in a plan / Never = left out.
+    async function wpDaySuggestedRun(ids, city, labelOf, name) {
+        const pause = function(ms) { return new Promise(function(resolve) { window.setTimeout(resolve, ms); }); };
+        if (!wpWaReady()) { wpWaReadyOrLog('send to suggested · ' + city); return { ok: false, text: 'WhatsApp is not ready — nothing sent' }; }
+        for (let k = 0; k < 60 && !wpPlanRoom(); k++) await pause(10000); // other sends first (max 10 min)
+        if (!wpPlanRoom()) return { ok: false, text: 'other WhatsApp sends are still going — nothing sent, asked again later' };
+        const sent = wpAutoSuggestedSent(), inPlan = wpPlanIds();
+        const going = [], skipped = [];
+        for (const id of ids) {
+            const label = labelOf(id);
+            if (sent[id] || inPlan[id]) { skipped.push(label + ' (already sent / sending)'); continue; }
+            if (wpNeverHas(id + ':suggested')) { skipped.push(label + ' (Never)'); continue; }
+            const path = '/admin/transfers/' + id;
+            let data = null;
+            try { data = await wpFetchTransferCrmDetails(path, true); } catch (_) {}
+            if (!data) { skipped.push(label + ' (notes not readable)'); continue; }
+            if (data.cancelled || data.assigned) { wpAutoSuggestedMark(id, data.cancelled ? 'cancelled' : 'assigned'); skipped.push(label + (data.cancelled ? ' (cancelled)' : ' (assigned)')); continue; }
+            if (wpDayStepFromData(data) !== 'sugg') { skipped.push(label + ' (notes changed)'); continue; }
+            if (!wpHeroDetailsText(data, city)) { skipped.push(label + ' (details not readable)'); continue; }
+            let list = [];
+            try { list = await wpFetchSuggestedDrivers(path, true) || []; } catch (_) { list = []; }
+            const fit = wpSugRotate(list.filter(function(person) { return person && person.phone; })).slice(0, 3);
+            if (!fit.length) { skipped.push(label + ' (no suggested drivers with WhatsApp yet)'); continue; }
+            going.push({ row: null, item: { id: id, path: path, label: label, city: city }, data: data, fit: fit, tbo: NaN });
+        }
+        const left = skipped.length ? ' · left out: ' + skipped.slice(0, 8).join(', ') + (skipped.length > 8 ? '…' : '') : '';
+        if (!going.length) return { ok: !skipped.some(function(x) { return /no suggested|not readable/.test(x); }), text: 'nothing sent' + left };
+        if (!wpPlanRoom()) return { ok: false, text: 'another WhatsApp send started meanwhile — nothing sent, asked again later' };
+        const people = {};
+        going.forEach(function(one) { one.fit.forEach(function(person) { people[person.phone] = person.name; }); });
+        wpAutoSuggestedGo(going, city, 'wlcm');
+        return { ok: true, text: going.length + ' transfer' + (going.length === 1 ? '' : 's') + ' to ' + Object.keys(people).length + ' driver' + (Object.keys(people).length === 1 ? '' : 's') + ' (one message each): ' + Object.keys(people).map(function(phone) { return people[phone]; }).join(', ') + ' — note "sent to suggested" once WhatsApp confirms' + left };
+    }
     async function wpRemoteCmChain(command) {
         const day = command.day === 'tomorrow' ? 'tomorrow' : command.day === 'later' ? 'later24' : 'today'; // 1.7.544: 2-4 days (the relay)
         if (day === 'later24') { try { await wpLater24Ensure(60000, true); } catch (_) {} }
         let ids = (Array.isArray(command.ids) ? command.ids : []).map(String).filter(function(id) { return /^\d{4,10}$/.test(id); }); // 1.7.544: exact transfers
         const by = command.by === 'relay' ? '🔁 Relay' : '📱 Phone';
         // 1.7.549: the relay's Tomorrow / 2-4 days step ('chain' or 'bcg' = BC & Group, no second tag)
-        const dayStep = command.by === 'relay' && (command.step === 'bcg' || command.step === 'chain') ? command.step : '';
+        const dayStep = command.by === 'relay' && ['bcg', 'chain', 'best', 'sugg'].indexOf(command.step) >= 0 ? command.step : ''; // 1.7.588: + best, sugg
         const city = String(command.city || '');
         const cityName = city.replace('__wp_untagged__', 'UNTAGGED').replace('__wp_tbo_expiring__', 'FINAL').replace('__wp_3days__', '3+ days');
         const pause = function(ms) { return new Promise(function(resolve) { window.setTimeout(resolve, ms); }); };
@@ -33702,7 +33747,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 try { data = await wpFetchTransferCrmDetails('/admin/transfers/' + id, true); } catch (_) {}
                 const st = wpDayStepFromData(data);
                 if (st !== null) { map[id] = Object.assign(map[id] || {}, { st: st, at: Date.now() }); }
-                if (st === dayStep) still.push(id); else notNow.push('#' + id + (st === null ? ' (notes not readable)' : st === '' ? ' (all steps done)' : st === 'bcg' ? ' (tagged meanwhile: BC & Group next)' : ' (no notes)'));
+                if (st === dayStep) still.push(id); else notNow.push('#' + id + (st === null ? ' (notes not readable)' : st === '' ? ' (all steps done)' : st === 'bcg' ? ' (tagged meanwhile: BC & Group next)' : st === 'best' ? ' (Ask best drivers next)' : st === 'sugg' ? ' (suggested next)' : ' (no notes)'));
             }
             wpDaySave(WP_DAY_ST_KEY, map);
             if (notNow.length) wpDashLog(by + ' → ' + cityName + ': left out after reading the notes again — ' + notNow.join(', '));
@@ -33715,6 +33760,16 @@ async function wpTransferAssistantExtensionEnabled() {
             dayKeys = ids.map(function(id) { return dayStep + ':' + id; });
             if (!ids.length) { finish('nothing run — the action list says it is done or running elsewhere', 'warn'); return; }
             acKeep = ids.some(function(id) { return map[id] && map[id].ac; }); // wlcm turned A/C off when it came in: left off
+        }
+        // 1.7.588: the last step: 3 suggested drivers each, one WhatsApp message per driver (Today's send plan, paced)
+        if (dayStep === 'sugg') {
+            const labels = Array.isArray(command.sel) ? command.sel : [];
+            const allIds = (Array.isArray(command.ids) ? command.ids : []).map(String);
+            const out = await wpDaySuggestedRun(ids, city, function(id) { const k = allIds.indexOf(id); return String(k >= 0 && labels[k] ? labels[k] : '#' + id); }, by + ' → ' + cityName + (day === 'later24' ? ' · 2-4 days' : ' · Tomorrow'));
+            dayKeys.forEach(function(key) { wpActDone(key, out.ok, out.text.slice(0, 120)); });
+            wpRemoteCmActiveAt = Date.now();
+            wpDashLog(by + ' → send to suggested (' + cityName + (day === 'later24' ? ' · 2-4 days' : ' · Tomorrow') + '): ' + out.text, out.ok ? undefined : 'warn');
+            return;
         }
         const dayFinish = function(ok, why) { dayKeys.forEach(function(key) { wpActDone(key, ok, why); }); dayKeys = []; if (dayStep) { const map = wpDayLoad(WP_DAY_ST_KEY); ids.forEach(function(id) { if (map[id]) map[id].at = Date.now() - 8 * 60000; }); wpDaySave(WP_DAY_ST_KEY, map); } }; // read again in 2 min
         let panel = document.getElementById('wp-today-city-orders-window');
@@ -33730,7 +33785,7 @@ async function wpTransferAssistantExtensionEnabled() {
         wpRemoteHubLast = { text: 'Chain on ' + wanted.length + ': running in the Hub…', tone: '', at: Date.now(), action: 'Chain' };
         wpRemoteCmPush([100]);
         const note = String(command.note || '').replace(/\s+/g, ' ').trim().slice(0, 280);
-        const result = await panel._wpRemoteChain(wanted, price, note, ids, dayStep ? { noTag: dayStep === 'bcg', acKeep: acKeep, dayRun: true } : null);
+        const result = await panel._wpRemoteChain(wanted, price, note, ids, dayStep ? { noTag: dayStep === 'bcg', askOnly: dayStep === 'best', acKeep: acKeep, dayRun: true } : null); // 1.7.588: + askOnly
         if (result.busy) { dayFinish(false, 'hub busy'); finish('the Hub is busy with another run on the PC — try again when it is done. Nothing was run.', 'warn'); return; }
         if (result.missing) { dayFinish(false, 'not in the city list'); finish(result.missing + ' of the ' + wanted.length + ' selected transfers are no longer in ' + cityName + ' — open the city again on the phone. Nothing was run.', 'warn'); return; }
         const text = String(result.text || '').replace(/\n/g, ' ').trim() || 'Chain: the PC did not say how it went';
@@ -41483,10 +41538,13 @@ async function wpTransferAssistantExtensionEnabled() {
                 // 1.7.537: the City Manager auto found the Hub not answering a moment ago: no Hub steps, straight to the CRM
                 let why = chainHubDown || await step('Select', '', null, null, false);
                 if (why) fail('Select', why);
-                if (!stopped && !opts.noTag) { why = await step('Tag', 'tag', null, false, true); if (why) fail('Tag', why); }
+                let askGo = false; // 1.7.588: BC & Group already there: only Ask best drivers (no Tag, Auto-C, Broadcast, image)
+                if (!stopped && opts.askOnly) { askGo = true; done.push('only Ask best drivers (BC & Group already in the notes)'); }
+                else if (!stopped && !opts.noTag) { why = await step('Tag', 'tag', null, false, true); if (why) fail('Tag', why); }
                 else if (!stopped) done.push('no Tag (EM already there)'); // 1.7.549
-                if (!stopped && plan.price) { why = await step('Price Change', 'price_change', { note: '', price: plan.price }, true, true); if (why) fail('Price Change', why); }
-                if (!stopped && opts.acKeep) done.push('Auto-C left off (wlcm turned it off when the transfer came in)'); // 1.7.549: no Remove / Enable
+                if (!stopped && !askGo && plan.price) { why = await step('Price Change', 'price_change', { note: '', price: plan.price }, true, true); if (why) fail('Price Change', why); }
+                if (askGo) void 0; // 1.7.588
+                else if (!stopped && opts.acKeep) done.push('Auto-C left off (wlcm turned it off when the transfer came in)'); // 1.7.549: no Remove / Enable
                 else if (!stopped) {
                     why = await step('Remove Auto-C', 'remove_auto_c', { note: '', price: null }, true, true);
                     // 1.7.357: every one blocked by a Hub guardrail: Auto-C stays as it is (no Remove,
@@ -41497,11 +41555,11 @@ async function wpTransferAssistantExtensionEnabled() {
                     } else if (why) fail('Remove Auto-C', why);
                     else autoCOff = true;
                 }
-                if (!stopped) { why = await step('Broadcast', 'broadcast', { note: '', price: null }, true, true); if (why) fail('Broadcast', why); else broadcast = true; }
+                if (!stopped && !askGo) { why = await step('Broadcast', 'broadcast', { note: '', price: null }, true, true); if (why) fail('Broadcast', why); else broadcast = true; }
                 // 1.7.348: Ask best drivers after the broadcast (40 at a time, the Hub's limit);
                 // when it does not go through the chain goes on, the note just leaves it out
                 let asked = false;
-                if (broadcast) {
+                if (broadcast || askGo) {
                     const all = ids.slice();
                     for (let from = 0; from < all.length; from += 40) {
                         const part = all.slice(from, from + 40);
@@ -41520,6 +41578,7 @@ async function wpTransferAssistantExtensionEnabled() {
                         else { asked = true; done.push(label + ' ✓'); wpDashLog(logName + ' → Ops Hub chain: ' + label + ' ✓' + (answer.result ? ' — Hub: ' + answer.result : '')); }
                     }
                 }
+                if (askGo && !asked && !stopped) { stopped = 'Ask best drivers did not go through'; stoppedAt = 'Ask best drivers'; } // 1.7.588: asked again later
                 // 1.7.575: the relay's Tomorrow / 2-4 days (user, 26 Nov): its own note "sent to BC and Group", and
                 // "asked best drivers" as a SECOND note when the Hub took it (no custom note needed); by hand unchanged
                 let note2 = '';
@@ -41527,6 +41586,7 @@ async function wpTransferAssistantExtensionEnabled() {
                     if (!String(hubAuto.note || '').trim()) plan.note = plan.note.replace(/sent to BC, Group$/, 'sent to BC and Group');
                     if (asked) note2 = 'asked best drivers';
                 } else if (asked) plan.note = plan.note + ' / asked best drivers';
+                if (askGo) { plan.note = 'asked best drivers'; note2 = ''; } // 1.7.588: the only note
                 if (autoCOff) {
                     if (broadcast) {
                         for (let left = 30; left > 0; left--) { say('Chain · Broadcast sent — Enable Auto-C in ' + left + ' s…'); await new Promise(function(resolve) { window.setTimeout(resolve, 1000); }); }
@@ -41537,7 +41597,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 }
                 // our own note, last — only when the broadcast went out
                 let noted = 0;
-                if (broadcast) {
+                if (broadcast || (askGo && asked)) {
                     const chosen = items.filter(function(item) { const id = (String(item && item.url || '').match(/transfers\/(\d+)/) || [])[1] || ''; return id && ids.indexOf(id) >= 0; });
                     const batch = chosen.length ? wpCreateCityBatch(chosen, tabName) : null;
                     if (batch) {
@@ -41552,16 +41612,17 @@ async function wpTransferAssistantExtensionEnabled() {
                         done.push('note on ' + noted);
                     }
                     // 1.7.346: then the image of only these transfers to the city group
-                    if (chosen.length) { wpGenerateTransfersImage(chosen, tabName, '', true).catch(function() {}); done.push('image of ' + chosen.length); }
+                    if (chosen.length && !askGo) { wpGenerateTransfersImage(chosen, tabName, '', true).catch(function() {}); done.push('image of ' + chosen.length); }
                 }
                 // 1.7.530: the ones the Hub does not have yet: in the CRM, the quickbar's BC & Group with the note
                 // "sent to BC and Group" (as the tablet's BC & Group button), one at a time
                 // 1.7.536: the Hub stopped the chain before the broadcast: those transfers go to the CRM too (user, 22 Nov)
                 // 1.7.537: on every machine (was the box only: on the PC a stopped chain did nothing — 22 Nov 14:20 Budapest)
-                const hubFailed = stopped && !broadcast ? ids.filter(function(id) { return leftOut.indexOf(id) < 0; }) : [];
+                const hubFailed = stopped && !broadcast && !opts.askOnly ? ids.filter(function(id) { return leftOut.indexOf(id) < 0; }) : [];
                 hubFailed.forEach(function(id) { leftOut.push(id); });
                 if (hubFailed.length) wpDashLog(logName + ' → chain: the Hub stopped at ' + stoppedAt + ' (' + stopped + ') — #' + hubFailed.join(', #') + ' go to the CRM instead', 'warn');
-                if (leftOut.length) { // 1.7.537: every machine (was the box only, so the PC's "left out, done in the CRM at the end" never happened)
+                if (leftOut.length && opts.askOnly) { wpDashLog(logName + ' → Ask best drivers: #' + Array.from(new Set(leftOut)).join(', #') + ' not in the Hub — the CRM cannot ask best drivers, left as they are', 'warn'); } // 1.7.588
+                else if (leftOut.length) { // 1.7.537: every machine (was the box only, so the PC's "left out, done in the CRM at the end" never happened)
                     let crmDone = 0;
                     const gone = [];
                     for (const id of Array.from(new Set(leftOut))) {
@@ -49648,6 +49709,26 @@ async function wpTransferAssistantExtensionEnabled() {
     //   2. a Task whose text is just "em"
     // Form fields, dropdown options, the extension's own UI and the CRM's
     // "Em" hailing label are ignored.
+    // 1.7.588: the note texts on this transfer (label cut off), and whether a step note is already among them
+    function wpTabNoteTexts() {
+        return Array.from(document.querySelectorAll('#transfer-task-list td.task-name, table.transfer-tasks td.task-name')).map(function(cell) {
+            const labelEl = cell.querySelector('.task-label');
+            const label = String(labelEl ? labelEl.textContent : '').replace(/\s+/g, ' ').trim();
+            let note = String(cell.textContent || '');
+            if (label && note.indexOf(label) === 0) note = note.slice(label.length);
+            return note.replace(/\s+/g, ' ').trim();
+        });
+    }
+    function wpTabStepNoteThere(note, have) {
+        const n = String(note || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const list = Array.isArray(have) ? have : [];
+        const same = function() { return list.some(function(text) { return String(text).toLowerCase() === n; }); };
+        if (/^sent to bc(?: and |\s*,\s*|\s*&\s*)group$/.test(n)) return list.some(function(text) { return /\bBC\b[^\n]*?\b(?:group|grp)\b/i.test(text) || /\bBC\s*(?:&|and|,|\/|\+)\s*G\b/i.test(text); });
+        if (n === 'sent to bc') return list.some(function(text) { return /\bsent to BC\b/i.test(text); });
+        if (n === 'asked best drivers') return list.some(function(text) { return /\bbest\s+drivers?\b/i.test(text); });
+        if (n === 'sent to suggested' || n === 'sent to heroes') return same();
+        return false;
+    }
     function wpTransferHasEmNote() {
         // The notes live in the CRM's task table (verified on the live CRM):
         //   table#transfer-task-list.transfer-tasks > tr >
@@ -50345,6 +50426,21 @@ async function wpTransferAssistantExtensionEnabled() {
             else if (!wpTransferHasFinalNote()) sequence.push('final BC');
             else wpStep('Already sent to Final — no second Final BC note');
         }
+
+        // 1.7.588: double notes (user, 27 Nov: "also check for double notes" / "still happening"): a step note that is
+        // already on the transfer (BC & Group, BC, best drivers, suggested, heroes) or twice in this run is not written
+        // again — a second write (the 90 s re-check, a re-run, a reload) left the same note twice.
+        try {
+            const have = wpTabNoteTexts();
+            const keepNotes = [];
+            sequence.forEach(function(note) {
+                if (keepNotes.some(function(x) { return sameNote(x, note); })) { wpStep('"' + note + '" twice in this run — written once'); return; }
+                if (wpTabStepNoteThere(note, have)) { wpStep('"' + note + '" is already in the notes — not writing it again'); return; }
+                keepNotes.push(note);
+            });
+            sequence.length = 0;
+            keepNotes.forEach(function(note) { sequence.push(note); });
+        } catch (_) {}
 
         // 1.7.312: whenever mod writes notes, EM comes first unless the
         // transfer already has an EM note. "Untagged" on the dashboard means
