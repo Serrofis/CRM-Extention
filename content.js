@@ -28341,7 +28341,7 @@ async function wpTransferAssistantExtensionEnabled() {
     function wpNotePendingSave(list) { try { localStorage.setItem(WP_NOTE_PENDING_KEY, JSON.stringify(list.slice(-40))); } catch (_) {} }
     function wpNotePendingAdd(entry) { const list = wpNotePendingLoad().filter(function(one) { return !(one.id === entry.id && one.note === entry.note); }); list.push(entry); wpNotePendingSave(list); }
     function wpNotePendingFresh() { const now = Date.now(); return wpNotePendingLoad().some(function(one) { return now - Number(one.at) < 60000; }); }
-    function wpNoteHas(tasks, note) { return (Array.isArray(tasks) ? tasks : []).some(function(task) { const text = String(task && task.note || ''); if (/^sent to BC/i.test(note)) return /\bBC\b/i.test(text) && (!/group/i.test(note) || /group/i.test(text)); return /hero/i.test(note) ? /\bhero(?:es)?\b/i.test(text) : wpNoteSaysSuggested(text); }); }
+    function wpNoteHas(tasks, note) { return (Array.isArray(tasks) ? tasks : []).some(function(task) { const text = String(task && task.note || ''); if (/^sent to BC/i.test(note)) return /\bBC\b/i.test(text) && (!/group/i.test(note) || /\b(?:group|grp)\b/i.test(text) || /\bBC\s*(?:&|and|,|\/|\+)\s*G\b/i.test(text)); /* 1.7.595: "grp" / BC&G count (the tab skips the note then: 1.7.588) */ return /hero/i.test(note) ? /\bhero(?:es)?\b/i.test(text) : wpNoteSaysSuggested(text); }); }
     var wpNotePendingBusy = false;
     async function wpNotePendingTick() {
         if (wpNotePendingBusy || window.top !== window) return;
