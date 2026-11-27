@@ -32882,6 +32882,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // not read yet = '?'. A transfer that newly appears gets A/C Off at once (Ops Hub first, the CRM if not),
     // with Today's checks (cancelled / assigned, a Final BC note, a colleague's AutoCancel change, your rule).
     var WP_DAY_ST_KEY = 'wp_day_st_v1', WP_DAY_SEEN_KEY = 'wp_day_seen_v1', WP_DAY_BASE_KEY = 'wp_day_base_v1';
+    try { if (!localStorage.getItem('wp_day_st_fix590')) { localStorage.removeItem(WP_DAY_ST_KEY); localStorage.setItem('wp_day_st_fix590', '1'); } } catch (_) {} // 1.7.590: steps read from the Dashboard redirect (all 'chain') are dropped
     var wpDayModes = null, wpDayModesAt = 0, wpDayLists = {}, wpDayBusy = false, wpDayLastOut = {}, wpDayDirty = {};
     function wpDayOn(day) { const m = wpDayModes && Date.now() - wpDayModesAt < 5 * 60000 ? wpDayModes[day] : ''; return m === 'ask' || m === 'full'; }
     function wpDayLoad(key) { try { const v = JSON.parse(localStorage.getItem(key) || '{}'); return v && typeof v === 'object' ? v : {}; } catch (_) { return {}; } }
@@ -32932,7 +32933,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // A/C Off on one new transfer: the Ops Hub first (through the relay), the CRM tab if the Hub does not have it
     async function wpDayAcOff(row, day, data) {
         const id = String(row.id), label = String(row.l || '#' + id), city = String(row.c || '');
-        const path = '/admin/transfers/' + id;
+        const path = '/admin/transfers/' + id + '/details_v3'; // 1.7.590
         const name = (day === 'later' ? '2-4 days' : 'Tomorrow') + ': ' + label + (city ? ' ' + city : '');
         if (data.cancelled || data.assigned) return 'closed';
         if (wpTasksHaveFinal(data.tasks)) { wpDashLog('🤖 wlcm · ' + name + ' — new, but a Final BC note is on it: A/C left on'); return 'final'; }
@@ -33767,7 +33768,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const label = labelOf(id);
             if (sent[id] || inPlan[id]) { skipped.push(label + ' (already sent / sending)'); continue; }
             if (wpNeverHas(id + ':suggested')) { skipped.push(label + ' (Never)'); continue; }
-            const path = '/admin/transfers/' + id;
+            const path = '/admin/transfers/' + id + '/details_v3'; // 1.7.590: the bare path redirects to the Dashboard
             let data = null;
             try { data = await wpFetchTransferCrmDetails(path, true); } catch (_) {}
             if (!data) { skipped.push(label + ' (notes not readable)'); continue; }
@@ -39531,6 +39532,9 @@ async function wpTransferAssistantExtensionEnabled() {
             const parsed = new URL(url, location.href);
             if (parsed.origin !== location.origin) return null;
             key = parsed.pathname;
+            // 1.7.590: a bare /admin/transfers/<id> now redirects to the Dashboard (no notes there → every transfer read as
+            // "no notes" = 'chain'); the transfer page is /details_v3
+            if (/^\/admin\/transfers\/\d+\/?$/.test(key)) key = key.replace(/\/?$/, '/details_v3');
         } catch (_) {
             return null;
         }
@@ -39547,6 +39551,7 @@ async function wpTransferAssistantExtensionEnabled() {
         }).catch(function() { return ''; });
         const response = await fetch(key, { credentials: 'same-origin' });
         if (!response.ok) throw new Error('HTTP ' + response.status);
+        if (!/\/admin\/transfers\/\d+/.test(String(response.url || key))) throw new Error('not the transfer page (redirected to ' + String(response.url || '').replace(/^https?:\/\/[^/]+/, '') + ')'); // 1.7.590
         const html = await response.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const text = String(doc.body ? doc.body.textContent : '').replace(/\s+/g, ' ');
