@@ -21289,8 +21289,64 @@ async function wpTransferAssistantExtensionEnabled() {
     // relay's day runs (wpRemoteCmChain: fresh reads, action list, background city). Not now / done: that city's step waits
     // 30 min (suggested: 3 h). Kept in wp_cm_follow_v1.
     var wpCmFollowBusy = false;
+    // 1.7.593 (user, 27 Nov: "it is not leaving the asked best drivers note"): 7 BC & Group runs on Tomorrow stopped right
+    // after Ask best drivers (no Enable Auto-C, no notes, A/C left OFF). Each Tomorrow / 2-4 days run now keeps its progress
+    // in wp_day_run_v1 (ids, Auto-C removed, broadcast, asked, heartbeat); the page refresh waits while it is alive, and a
+    // run that stopped half-way (no heartbeat for 90 s, e.g. a reload or an extension update) is finished on the next round:
+    // Enable Auto-C on the ones it turned off, then the notes it owed ("sent to BC and Group" / "asked best drivers").
+    const WP_DAY_RUN_KEY = 'wp_day_run_v1';
+    function wpDayRunGet() { try { const v = JSON.parse(localStorage.getItem(WP_DAY_RUN_KEY) || 'null'); return v && typeof v === 'object' ? v : null; } catch (_) { return null; } }
+    function wpDayRunStart(rec) { try { localStorage.setItem(WP_DAY_RUN_KEY, JSON.stringify(Object.assign({ at: Date.now(), beat: Date.now() }, rec))); } catch (_) {} }
+    function wpDayRunMark(change) {
+        try {
+            if (change === null) { localStorage.removeItem(WP_DAY_RUN_KEY); return; }
+            const rec = wpDayRunGet();
+            if (!rec) return;
+            Object.assign(rec, change, { beat: Date.now() });
+            localStorage.setItem(WP_DAY_RUN_KEY, JSON.stringify(rec));
+        } catch (_) {}
+    }
+    function wpDayRunAlive() { const rec = wpDayRunGet(); return Boolean(rec && Date.now() - Number(rec.beat || 0) < 90000); }
+    async function wpDayRunRecover() {
+        const rec = wpDayRunGet();
+        if (!rec || Date.now() - Number(rec.beat || 0) < 90000) return false;
+        wpDayRunMark(null);
+        const name = 'Automations · ' + wpAutoDayName(rec.day === 'later' ? 'later' : 'tomorrow') + ' · ' + (rec.city || '') + ': the last run stopped half-way';
+        const labels = {};
+        const hubDo = async function(action, ids) {
+            if (wpIsMainMachine()) {
+                const reply = await wpDayRelayJob({ kind: 'hub', action: action, ids: ids, city: rec.city || '', day: rec.day === 'later' ? 'later24' : 'tomorrow' });
+                const job = reply && reply.job;
+                return Boolean(reply.ok && job && job.state === 'done' && !job.error);
+            }
+            const answer = await new Promise(function(resolve) {
+                try { chrome.runtime.sendMessage({ type: 'WP_HUB_SELECT', ids: ids, action: action, quiet: true, keep: false, runId: 'dayrec' + Date.now().toString(36), auto: { note: '', price: null } }, function(a) { resolve(chrome.runtime.lastError || !a ? { ok: false } : a); }); } catch (_) { resolve({ ok: false }); }
+            });
+            return Boolean(answer && answer.ok && answer.pressed !== false && answer.confirmed !== false);
+        };
+        const removed = Array.isArray(rec.removed) ? rec.removed.map(String) : [];
+        if (removed.length && !rec.enabled) {
+            const ok = await hubDo('enable_auto_c', removed);
+            wpDashLog(name + ' — Enable Auto-C on #' + removed.join(', #') + (ok ? ' ✓' : ' NOT done: turn Auto-C back on by hand'), ok ? 'warn' : 'error');
+        }
+        const sent = Array.isArray(rec.broadcast) ? rec.broadcast.map(String) : [];
+        if (sent.length) {
+            for (const id of sent) {
+                const one = { item: { id: id, path: '/admin/transfers/' + id + '/details_v3', label: labels[id] || '#' + id }, data: { tasks: [{ note: '' }] }, row: null };
+                try { wpAutoSendWriteNote(one, 'sent to BC and Group', true); } catch (_) {}
+                if (rec.asked) { await new Promise(function(r) { window.setTimeout(r, 4000); }); try { wpAutoSendWriteNote(one, 'asked best drivers', true); } catch (_) {} }
+                await new Promise(function(r) { window.setTimeout(r, 4000); });
+            }
+            wpDashLog(name + ' — notes written now on #' + sent.join(', #') + ' ("sent to BC and Group"' + (rec.asked ? ' + "asked best drivers"' : '') + '); the city group image was not sent', 'warn');
+        } else if (rec.step === 'best' && rec.asked) {
+            for (const id of (rec.ids || []).map(String)) { try { wpAutoSendWriteNote({ item: { id: id, path: '/admin/transfers/' + id + '/details_v3', label: '#' + id }, data: { tasks: [{ note: '' }] }, row: null }, 'asked best drivers', true); } catch (_) {} await new Promise(function(r) { window.setTimeout(r, 4000); }); }
+            wpDashLog(name + ' — "asked best drivers" written now', 'warn');
+        }
+        return true;
+    }
     async function wpCmAutoFollowUp(order, hubDays) {
         if (wpCmFollowBusy) return false;
+        if (wpDayRunGet()) { if (wpDayRunAlive()) return false; wpCmFollowBusy = true; try { await wpDayRunRecover(); } finally { wpCmFollowBusy = false; } return true; } // 1.7.593
         const days = order.filter(function(day) { return day === 'tomorrow' || day === 'later'; });
         if (!days.length) return false;
         wpCmFollowBusy = true;
@@ -21450,6 +21506,7 @@ async function wpTransferAssistantExtensionEnabled() {
         let go = claims.filter(function(c) { return c.claim.go; }).map(function(c) { return c.id; });
         if (!go.length) { wpDashLog(name + ': nothing to do (notes changed, or done / running elsewhere)'); return; }
         const runId = 'daybcg' + Date.now().toString(36);
+        wpDayRunStart({ step: 'bcg', day: day, city: 'all cities', ids: go.slice() }); // 1.7.593
         const hub = function(key, list, keep, auto) {
             return new Promise(function(resolve) {
                 try {
@@ -21487,24 +21544,25 @@ async function wpTransferAssistantExtensionEnabled() {
             if (offIds.length) {
                 const r = await hub('remove_auto_c', offIds, true, { note: '', price: null });
                 const w = problem(r, true);
-                if (!w) { removed = true; done.push('Remove Auto-C ✓'); } else if (/guardrail/i.test(w)) done.push('Remove Auto-C skipped (Hub guardrail)'); else why = 'Remove Auto-C: ' + w;
+                if (!w) { removed = true; wpDayRunMark({ removed: offIds.slice() }); done.push('Remove Auto-C ✓'); } else if (/guardrail/i.test(w)) done.push('Remove Auto-C skipped (Hub guardrail)'); else why = 'Remove Auto-C: ' + w;
             }
             if (!why) {
                 const b = await hub('broadcast', go, true, { note: '', price: null });
                 const w = problem(b, true);
-                if (!w) { broadcast = true; done.push('Broadcast ✓'); } else why = 'Broadcast: ' + w;
+                if (!w) { broadcast = true; wpDayRunMark({ broadcast: go.slice() }); done.push('Broadcast ✓'); } else why = 'Broadcast: ' + w;
             }
             if (broadcast) {
                 for (let from = 0; from < go.length; from += 40) {
                     const a = await hub('ask', go.slice(from, from + 40), false, { note: '', price: null });
-                    if (!problem(a, true)) asked = true;
+                    if (!problem(a, true)) { asked = true; wpDayRunMark({ asked: 1 }); }
                 }
                 done.push(asked ? 'Ask best drivers ✓' : 'Ask best drivers — nobody to ask');
             }
             if (removed) {
-                if (broadcast) await pause(30000);
+                if (broadcast) for (let k = 0; k < 6; k++) { wpDayRunMark({}); await pause(5000); }
                 const e = await hub('enable_auto_c', offIds, true, { note: '', price: null });
                 const w = problem(e, true);
+                if (!w) wpDayRunMark({ enabled: 1 });
                 if (w) { done.push('Enable Auto-C NOT done (' + w + ') — Auto-C still OFF on ' + offIds.length + ', turn it back on'); wpDashLog(name + ': Enable Auto-C did NOT go through — ' + w, 'error'); } else done.push('Enable Auto-C ✓');
             }
         } else if (why) done.push('stopped at Select: ' + why);
@@ -21522,6 +21580,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 try { wpAutoSendWriteNote({ item: { id: id, path: path, label: labelOf[id] || '#' + id }, data: { tasks: [{ note: '' }] }, row: null }, 'sent to BC and Group', true); } catch (_) {}
                 if (asked) { await pause(4000); try { wpAutoSendWriteNote({ item: { id: id, path: path, label: labelOf[id] || '#' + id }, data: { tasks: [{ note: '' }] }, row: null }, 'asked best drivers', true); } catch (_) {} }
                 wpActDone('bcg:' + id, true, 'BC & Group (all cities)');
+                wpDayRunMark({ broadcast: go.slice(go.indexOf(id) + 1) }); // 1.7.593: the notes still owed
                 if (map[id]) map[id].at = Date.now() - 8 * 60000;
                 await pause(4000);
             }
@@ -21531,6 +21590,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 await pause(3000);
             }
         }
+        wpDayRunMark(null); // 1.7.593
         // the CRM's BC & Group, one at a time (its own WhatsApp group message per transfer)
         let crm = 0;
         for (const id of leftOut) {
@@ -22902,7 +22962,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const summary = panel ? panel.querySelector('.wp-ui-batch-summary') : null;
             const running = Boolean(panel && (panel._wpBroadcastPoll || (typeof panel._wpHubBusy === 'function' && panel._wpHubBusy()) ||
                 (summary && summary.style.display !== 'none' && /\brunning\b/i.test(summary.textContent || ''))));
-            if (wpCmAutoRunning || running || wpCmImagePending) why = 'a run is going';
+            if (wpCmAutoRunning || running || wpCmImagePending || wpDayRunAlive()) why = 'a run is going'; // 1.7.593: + a Tomorrow / 2-4 days run
             const focus = document.activeElement;
             const typing = Boolean(focus && /^(INPUT|TEXTAREA|SELECT)$/.test(focus.tagName) && focus.type !== 'checkbox' &&
                 focus.closest && focus.closest('#wp-today-city-window,#wp-today-city-orders-window,#wp-today-city-actions-window,#wp-today-city-hub-window'));
@@ -34048,11 +34108,13 @@ async function wpTransferAssistantExtensionEnabled() {
         wpRemoteHubLast = { text: 'Chain on ' + wanted.length + ': running in the Hub…', tone: '', at: Date.now(), action: 'Chain' };
         wpRemoteCmPush([100]);
         const note = String(command.note || '').replace(/\s+/g, ' ').trim().slice(0, 280);
+        if (dayStep) wpDayRunStart({ step: dayStep, day: command.day, city: city, ids: ids.slice() }); // 1.7.593
         const result = await panel._wpRemoteChain(wanted, price, note, ids, dayStep ? { noTag: dayStep === 'bcg', askOnly: dayStep === 'best', acKeep: acKeep, dayRun: true } : null); // 1.7.588: + askOnly
         if (result.busy) { dayFinish(false, 'hub busy'); finish('the Hub is busy with another run on the PC — try again when it is done. Nothing was run.', 'warn'); return; }
         if (result.missing) { dayFinish(false, 'not in the city list'); finish(result.missing + ' of the ' + wanted.length + ' selected transfers are no longer in ' + cityName + ' — open the city again on the phone. Nothing was run.', 'warn'); return; }
         const text = String(result.text || '').replace(/\n/g, ' ').trim() || 'Chain: the PC did not say how it went';
         dayFinish(/^✓|^Chain done/.test(text), text.slice(0, 120));
+        if (dayStep) { const rec = wpDayRunGet(); if (rec && !rec.broadcast && !rec.removed) wpDayRunMark(null); } // 1.7.593: nothing half done
         finish(text, /^✓/.test(text) ? 'ok' : /^Chain( stopped|:)/.test(text) ? 'bad' : 'warn');
     }
     // 1.7.352: phone: City Manager auto (the chain on every city's untagged
@@ -41820,9 +41882,9 @@ async function wpTransferAssistantExtensionEnabled() {
                         done.push('Remove Auto-C skipped (Hub guardrail) — Auto-C left as it was');
                         wpDashLog(logName + ' → Ops Hub chain: Remove Auto-C blocked by a Hub guardrail — broadcasting without touching Auto-C', 'warn');
                     } else if (why) fail('Remove Auto-C', why);
-                    else autoCOff = true;
+                    else { autoCOff = true; if (opts.dayRun) wpDayRunMark({ removed: ids.slice() }); } // 1.7.593
                 }
-                if (!stopped && !askGo) { why = await step('Broadcast', 'broadcast', { note: '', price: null }, true, true); if (why) fail('Broadcast', why); else broadcast = true; }
+                if (!stopped && !askGo) { why = await step('Broadcast', 'broadcast', { note: '', price: null }, true, true); if (why) fail('Broadcast', why); else { broadcast = true; if (opts.dayRun) wpDayRunMark({ broadcast: ids.slice() }); } }
                 // 1.7.348: Ask best drivers after the broadcast (40 at a time, the Hub's limit);
                 // when it does not go through the chain goes on, the note just leaves it out
                 let asked = false;
@@ -41842,7 +41904,7 @@ async function wpTransferAssistantExtensionEnabled() {
                         });
                         const why = problem(answer, true);
                         if (why) { done.push(label + ' — not done: ' + why); wpDashLog(logName + ' → Ops Hub chain: ' + label + ' — NOT done: ' + why, 'warn'); }
-                        else { asked = true; done.push(label + ' ✓'); wpDashLog(logName + ' → Ops Hub chain: ' + label + ' ✓' + (answer.result ? ' — Hub: ' + answer.result : '')); }
+                        else { asked = true; if (opts.dayRun) wpDayRunMark({ asked: 1 }); done.push(label + ' ✓'); wpDashLog(logName + ' → Ops Hub chain: ' + label + ' ✓' + (answer.result ? ' — Hub: ' + answer.result : '')); }
                     }
                 }
                 if (askGo && !asked && !stopped) { stopped = 'Ask best drivers did not go through'; stoppedAt = 'Ask best drivers'; } // 1.7.588: asked again later
@@ -41856,9 +41918,10 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (askGo) { plan.note = 'asked best drivers'; note2 = ''; } // 1.7.588: the only note
                 if (autoCOff) {
                     if (broadcast) {
-                        for (let left = 30; left > 0; left--) { say('Chain · Broadcast sent — Enable Auto-C in ' + left + ' s…'); await new Promise(function(resolve) { window.setTimeout(resolve, 1000); }); }
+                        for (let left = 30; left > 0; left--) { if (opts.dayRun) wpDayRunMark({}); say('Chain · Broadcast sent — Enable Auto-C in ' + left + ' s…'); await new Promise(function(resolve) { window.setTimeout(resolve, 1000); }); }
                     }
                     why = await step('Enable Auto-C', 'enable_auto_c', { note: '', price: null }, true, true);
+                    if (!why && opts.dayRun) wpDayRunMark({ enabled: 1 }); // 1.7.593
                     if (why && !stopped) fail('Enable Auto-C', why);
                     else if (why) stopped += ' · and Enable Auto-C did NOT go through (' + why + ') — Auto-C is still OFF on these, turn it back on';
                 }
@@ -41871,6 +41934,7 @@ async function wpTransferAssistantExtensionEnabled() {
                         batch.broadcastMode = '';
                         batch.noteOnly = true;
                         batch.note2 = note2; // 1.7.575
+                        if (opts.dayRun) wpDayRunMark(null); // 1.7.593: Auto-C back on and the notes on their way: nothing to recover
                         wpOpenCityBatchTransfers(batch, null, plan.note, '');
                         try { startBatchSummary(batch); } catch (_) {}
                         panel.dataset.wpLastBatchId = batch.batchId;
