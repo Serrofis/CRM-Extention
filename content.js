@@ -21332,8 +21332,14 @@ async function wpTransferAssistantExtensionEnabled() {
                     const g = groups[key] = groups[key] || { key: key, city: row.city, step: st, ids: [], labels: [], first: index, rank: st === 'sugg' ? 2 : 1 };
                     g.ids.push(row.id); g.labels.push(row.label || '#' + row.id);
                 });
-                const next = Object.values(groups).sort(function(a, b) { return a.rank - b.rank || a.first - b.first; })[0];
+                let next = Object.values(groups).sort(function(a, b) { return a.rank - b.rank || a.first - b.first; })[0];
                 if (!next) continue;
+                // 1.7.591 (user, 27 Nov: "from the hub it can check boxes and do all transfers together with one go even with
+                // different cities"): Ask best drivers sends no group message, so every city's 'best' transfers go in one Hub run
+                if (next.step === 'best') {
+                    const bests = Object.values(groups).filter(function(g) { return g.step === 'best'; });
+                    next = { key: '', keys: bests.map(function(g) { return g.key; }), city: bests.map(function(g) { return g.city; }).join(', '), step: 'best', ids: [].concat.apply([], bests.map(function(g) { return g.ids; })), labels: [].concat.apply([], bests.map(function(g) { return g.labels; })), all: true };
+                }
                 if (next.step === 'sugg' && !wpPlanRoom()) continue; // WhatsApp sends still going: next round
                 next.ids = next.ids.slice(0, 40); next.labels = next.labels.slice(0, 40);
                 const name = wpAutoDayName(day);
@@ -21346,20 +21352,78 @@ async function wpTransferAssistantExtensionEnabled() {
                         'Not now: asked again in 30 minutes.'
                     ], 'Yes, run it', undefined, 'AUTO');
                     if (!answer || answer.action !== 'yes') {
-                        skip[next.key] = Date.now() + 30 * 60000; saveSkip();
+                        (next.keys || [next.key]).forEach(function(k) { skip[k] = Date.now() + 30 * 60000; }); saveSkip();
                         wpDashLog('Automations · ' + name + ': ' + next.city + ' — ' + what + ': Not now, asked again in 30 min');
                         return true;
                     }
                 }
-                skip[next.key] = Date.now() + (next.step === 'sugg' ? 3 * 3600000 : 30 * 60000); saveSkip();
+                (next.keys || [next.key]).forEach(function(k) { skip[k] = Date.now() + (next.step === 'sugg' ? 3 * 3600000 : 30 * 60000); }); saveSkip();
                 wpDashLog('Automations · ' + name + ': ' + next.city + ' (' + next.ids.length + ') — ' + what);
                 wpCmAutoRunning = true;
-                try { await wpRemoteCmChain({ by: 'auto', step: next.step, city: next.city, day: day, ids: next.ids, sel: next.labels }); }
+                try {
+                    if (next.all) { const labelOf = {}; next.ids.forEach(function(id, k) { labelOf[id] = next.labels[k]; }); await wpDayAskBestAll(next.ids, labelOf, day); }
+                    else await wpRemoteCmChain({ by: 'auto', step: next.step, city: next.city, day: day, ids: next.ids, sel: next.labels });
+                }
                 finally { wpCmAutoRunning = false; }
                 return true;
             }
             return false;
         } finally { wpCmFollowBusy = false; }
+    }
+    // 1.7.591: Ask best drivers on transfers of many cities in one Hub run (40 at a time), each booked on the action list
+    // (best:<id>), notes read fresh first (only 'best' ones go); then the note "asked best drivers" on each, one tab every 4 s
+    async function wpDayAskBestAll(ids, labelOf, day) {
+        const pause = function(ms) { return new Promise(function(resolve) { window.setTimeout(resolve, ms); }); };
+        const name = 'Automations · ' + wpAutoDayName(day) + ' · Ask best drivers (all cities)';
+        const still = [];
+        for (const id of ids) {
+            let data = null;
+            try { data = await wpFetchTransferCrmDetails('/admin/transfers/' + id + '/details_v3', true); } catch (_) {}
+            if (wpDayStepFromData(data) === 'best') still.push(id);
+        }
+        const claims = await Promise.all(still.map(function(id) { return wpActClaim('best:' + id, 'best', id, true).catch(function() { return { go: true }; }).then(function(claim) { return { id: id, claim: claim }; }); }));
+        const go = claims.filter(function(c) { return c.claim.go; }).map(function(c) { return c.id; });
+        if (!go.length) { wpDashLog(name + ': nothing to do (notes changed, or done / running elsewhere)'); return; }
+        const asked = [], failed = [];
+        const askTab = function(part, from) {
+            return new Promise(function(resolve) {
+                try {
+                    chrome.runtime.sendMessage({ type: 'WP_HUB_SELECT', ids: part, action: 'ask', quiet: true, keep: false, runId: 'dayask' + Date.now().toString(36) + from, auto: { note: '', price: null } }, function(answer) {
+                        resolve(chrome.runtime.lastError || !answer ? { ok: false, message: chrome.runtime.lastError ? chrome.runtime.lastError.message : 'the Hub did not answer' } : answer);
+                    });
+                } catch (error) { resolve({ ok: false, message: String(error && error.message || error) }); }
+            });
+        };
+        for (let from = 0; from < go.length; from += 40) {
+            let part = go.slice(from, from + 40);
+            let done = false, why = '';
+            if (wpIsMainMachine()) {
+                const reply = await wpDayRelayJob({ kind: 'ask', ids: part, city: '', day: day === 'later' ? 'later24' : 'tomorrow' });
+                const job = reply && reply.job, res = job && job.result || {};
+                if (reply.ok && job && job.state === 'done' && res.sent) done = true; else why = 'relay: ' + String(reply.error || (job && job.error) || 'not done');
+            }
+            for (let attempt = 0; !done && attempt < 2 && part.length; attempt++) {
+                const answer = await askTab(part, from);
+                const missing = (answer && answer.missing || []).map(String).filter(function(id) { return part.indexOf(id) >= 0; });
+                if (answer && answer.ok && missing.length && missing.length < part.length) { missing.forEach(function(id) { failed.push(id); }); part = part.filter(function(id) { return missing.indexOf(id) < 0; }); continue; }
+                if (answer && answer.ok && !missing.length && answer.pressed !== false && answer.confirmed !== false) done = true;
+                else why = (answer && (answer.message || answer.reason || answer.why)) || 'not done';
+                break;
+            }
+            (done ? asked : failed).push.apply(done ? asked : failed, done ? part : part.filter(function(id) { return failed.indexOf(id) < 0; }));
+            if (!done) wpDashLog(name + ': ' + part.length + ' NOT asked — ' + why, 'warn');
+        }
+        failed.forEach(function(id) { wpActDone('best:' + id, false, 'not asked'); });
+        wpDashLog(name + ': asked on ' + asked.length + (failed.length ? ', not on ' + failed.length + ' (not in the Hub or the Hub refused; tried again in 30 min)' : '') + ' — writing the note "asked best drivers"', failed.length ? 'warn' : undefined);
+        const map = wpDayLoad(WP_DAY_ST_KEY);
+        for (const id of asked) {
+            const path = '/admin/transfers/' + id + '/details_v3';
+            try { wpAutoSendWriteNote({ item: { id: id, path: path, label: labelOf[id] || '#' + id }, data: { tasks: [{ note: '' }] }, row: null }, 'asked best drivers', true); } catch (_) {}
+            wpActDone('best:' + id, true, 'asked best drivers');
+            if (map[id]) map[id].at = Date.now() - 8 * 60000; // read again in 2 min
+            await pause(4000);
+        }
+        wpDaySave(WP_DAY_ST_KEY, map);
     }
     async function wpCmAutoStep(paint) {
         let state = wpCmAutoLoad();
