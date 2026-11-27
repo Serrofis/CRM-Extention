@@ -21281,6 +21281,86 @@ async function wpTransferAssistantExtensionEnabled() {
         return Boolean(state && (state.allowRefresh || state.watching));
     }
     var wpCmAutoWatchTimer = null;
+    // 1.7.589 (user, 27 Nov: "check why it has not started sending the rest of the transfers to best drivers and the new steps"):
+    // the City Manager auto (Automations, Ops Hub days) only ran the chain on untagged transfers; 1.7.588's steps were only
+    // in the tablet's Tomorrow mode. Now, once no untagged are left on Tomorrow / 2-4 days, it reads the tagged ones' notes
+    // (6 a round, again after 10 min) and runs, city by city, with your Yes in Ask me: BC & Group / Ask best drivers first,
+    // and when every tagged transfer of that day has been read, the 3 suggested (one message per driver). Same code as the
+    // relay's day runs (wpRemoteCmChain: fresh reads, action list, background city). Not now / done: that city's step waits
+    // 30 min (suggested: 3 h). Kept in wp_cm_follow_v1.
+    var wpCmFollowBusy = false;
+    async function wpCmAutoFollowUp(order, hubDays) {
+        if (wpCmFollowBusy) return false;
+        const days = order.filter(function(day) { return day === 'tomorrow' || day === 'later'; });
+        if (!days.length) return false;
+        wpCmFollowBusy = true;
+        try {
+            let skip = {};
+            try { skip = JSON.parse(localStorage.getItem('wp_cm_follow_v1') || '{}') || {}; } catch (_) {}
+            const now = Date.now();
+            Object.keys(skip).forEach(function(k) { if (Number(skip[k]) < now) delete skip[k]; });
+            const saveSkip = function() { try { localStorage.setItem('wp_cm_follow_v1', JSON.stringify(skip)); } catch (_) {} };
+            const map = wpDayLoad(WP_DAY_ST_KEY);
+            let reads = 0;
+            for (const day of days) {
+                const tab = wpAutoTabFor(day);
+                if (tab !== 'tomorrow' && tab !== 'later24') continue;
+                let all = [];
+                try { all = wpTodayCityGetTransfers(tab) || []; } catch (_) {}
+                const rows = all.filter(function(item) { return item && item.url && item.city && item.tagged; }).map(function(item) {
+                    return { id: (String(item.url).match(/transfers\/(\d+)/) || [])[1] || '', city: item.city, label: String(item.orderLabel || '').replace(/\s+/g, ' ').trim() };
+                }).filter(function(row) { return row.id; });
+                for (const row of rows) {
+                    if (reads >= 6) break;
+                    const known = map[row.id];
+                    if (known && now - Number(known.at || 0) < 10 * 60000) continue;
+                    let data = null;
+                    try { data = await wpFetchTransferCrmDetails('/admin/transfers/' + row.id, true); } catch (_) {}
+                    reads++;
+                    const st = wpDayStepFromData(data);
+                    if (st !== null) map[row.id] = Object.assign(map[row.id] || {}, { st: st, at: Date.now(), d: day });
+                }
+                wpDaySave(WP_DAY_ST_KEY, map);
+                const allRead = rows.every(function(row) { return map[row.id] && now - Number(map[row.id].at || 0) < 30 * 60000; });
+                const groups = {};
+                rows.forEach(function(row, index) {
+                    const st = map[row.id] && map[row.id].st;
+                    if (['bcg', 'best', 'sugg'].indexOf(st) < 0) return;
+                    if (st === 'sugg' && !allRead) return; // suggested last: after every tagged one was read
+                    const key = day + '|' + row.city + '|' + st;
+                    if (Number(skip[key] || 0) > now) return;
+                    const g = groups[key] = groups[key] || { key: key, city: row.city, step: st, ids: [], labels: [], first: index, rank: st === 'sugg' ? 2 : 1 };
+                    g.ids.push(row.id); g.labels.push(row.label || '#' + row.id);
+                });
+                const next = Object.values(groups).sort(function(a, b) { return a.rank - b.rank || a.first - b.first; })[0];
+                if (!next) continue;
+                if (next.step === 'sugg' && !wpPlanRoom()) continue; // WhatsApp sends still going: next round
+                next.ids = next.ids.slice(0, 40); next.labels = next.labels.slice(0, 40);
+                const name = wpAutoDayName(day);
+                const what = { bcg: 'BC & Group (Broadcast → Ask best drivers → note → image)', best: 'Ask best drivers (Ops Hub, note "asked best drivers")', sugg: 'send to 3 suggested drivers each (one WhatsApp message per driver, paced)' }[next.step];
+                if (hubDays[day] && hubDays[day].ask) {
+                    for (let i = 0; i < 600 && document.getElementById('wp-director-card'); i++) await new Promise(function(resolve) { window.setTimeout(resolve, 1000); });
+                    const answer = await wpDirectorConfirm('automations · ' + name, [
+                        next.city + ' (' + next.ids.length + '): ' + what + '?',
+                        next.labels.slice(0, 8).join(', ') + (next.labels.length > 8 ? '…' : ''),
+                        'Not now: asked again in 30 minutes.'
+                    ], 'Yes, run it', undefined, 'AUTO');
+                    if (!answer || answer.action !== 'yes') {
+                        skip[next.key] = Date.now() + 30 * 60000; saveSkip();
+                        wpDashLog('Automations · ' + name + ': ' + next.city + ' — ' + what + ': Not now, asked again in 30 min');
+                        return true;
+                    }
+                }
+                skip[next.key] = Date.now() + (next.step === 'sugg' ? 3 * 3600000 : 30 * 60000); saveSkip();
+                wpDashLog('Automations · ' + name + ': ' + next.city + ' (' + next.ids.length + ') — ' + what);
+                wpCmAutoRunning = true;
+                try { await wpRemoteCmChain({ by: 'auto', step: next.step, city: next.city, day: day, ids: next.ids, sel: next.labels }); }
+                finally { wpCmAutoRunning = false; }
+                return true;
+            }
+            return false;
+        } finally { wpCmFollowBusy = false; }
+    }
     async function wpCmAutoStep(paint) {
         let state = wpCmAutoLoad();
         if (!state || wpCmAutoRunning) return;
@@ -21301,7 +21381,10 @@ async function wpTransferAssistantExtensionEnabled() {
                 const cities = wpCmAutoNewCities(Object.assign({}, state, { tab: tabName }));
                 if (cities.length) { found = cities; state.day = name; state.tab = tabName; state.ask = Boolean(hubDays[name].ask); break; }
             }
+            // 1.7.589: no untagged left: Tomorrow / 2-4 days go on with the missing steps (BC & Group / best drivers, then 3 suggested)
             if (!found.length) {
+                try { if (await wpCmAutoFollowUp(order, hubDays)) state = wpCmAutoLoad() || state; } catch (error) { wpDashLog('Automations: next steps — ' + String(error && error.message || error), 'warn'); }
+                if (!wpCmAutoLoad()) return; // stopped meanwhile
                 wpCmAutoSave(state);
                 try { wpSyncAutoRefreshWithTransferOverview(document.getElementById('wp-today-city-window')); } catch (_) {} // 1.7.534: watching never holds the refresh
                 if (paint) paint('watching');
@@ -33709,9 +33792,9 @@ async function wpTransferAssistantExtensionEnabled() {
         const day = command.day === 'tomorrow' ? 'tomorrow' : command.day === 'later' ? 'later24' : 'today'; // 1.7.544: 2-4 days (the relay)
         if (day === 'later24') { try { await wpLater24Ensure(60000, true); } catch (_) {} }
         let ids = (Array.isArray(command.ids) ? command.ids : []).map(String).filter(function(id) { return /^\d{4,10}$/.test(id); }); // 1.7.544: exact transfers
-        const by = command.by === 'relay' ? '🔁 Relay' : '📱 Phone';
+        const by = command.by === 'relay' ? '🔁 Relay' : command.by === 'auto' ? 'Automations' : '📱 Phone'; // 1.7.589: + the City Manager auto
         // 1.7.549: the relay's Tomorrow / 2-4 days step ('chain' or 'bcg' = BC & Group, no second tag)
-        const dayStep = command.by === 'relay' && ['bcg', 'chain', 'best', 'sugg'].indexOf(command.step) >= 0 ? command.step : ''; // 1.7.588: + best, sugg
+        const dayStep = (command.by === 'relay' || command.by === 'auto') && ['bcg', 'chain', 'best', 'sugg'].indexOf(command.step) >= 0 ? command.step : ''; // 1.7.588: + best, sugg; 1.7.589: + auto
         const city = String(command.city || '');
         const cityName = city.replace('__wp_untagged__', 'UNTAGGED').replace('__wp_tbo_expiring__', 'FINAL').replace('__wp_3days__', '3+ days');
         const pause = function(ms) { return new Promise(function(resolve) { window.setTimeout(resolve, ms); }); };
@@ -33735,7 +33818,7 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         const cap = price ? 70 : 100;
         if (wanted.length > cap) { finish('the chain takes at most ' + cap + ' transfers at a time' + (price ? ' with a price change' : '') + ' and ' + wanted.length + ' were selected. Nothing was run.', 'warn'); return; }
-        if (wpCmAutoRunning || wpCmAutoLoad()) { finish('City Manager auto is running on the PC — wait for it or stop it first. Nothing was run.', 'warn'); return; }
+        if (command.by !== 'auto' && (wpCmAutoRunning || wpCmAutoLoad())) { finish('City Manager auto is running on the PC — wait for it or stop it first. Nothing was run.', 'warn'); return; }
         // 1.7.549: like Today, every transfer's notes are read fresh first: only the ones that still need this step go;
         // then each is booked on the action list (one done or running elsewhere is left out)
         let dayKeys = [], acKeep = false;
