@@ -1873,6 +1873,16 @@
             }
         }
         title = openTitle;
+        // 1.7.575 (Evan, 26 Nov: "bogota sends twice"): two groups of one city (Bogota Welcomers + Dispatchers) could
+        // land in the SAME chat (a link that opened another city's group, then the look-up by name found the city's
+        // other group) and the same text went there twice: the old check only knew "same target name". Now the same
+        // text (+ image) is never typed into the same chat twice within 10 min, whatever target it was meant for.
+        const chatDupKey = 'chat|' + norm(openTitle) + '|' + hash(job.text) + (job.image ? '|' + hash(job.image) : '');
+        // Reported as done (the text IS in that chat), so nothing retries it later.
+        if (!job.chat && sent[chatDupKey] && Date.now() - sent[chatDupKey] < DUPLICATE_WINDOW) {
+            report(job, true, 'already in "' + openTitle + '" (sent there ' + Math.max(1, Math.round((Date.now() - sent[chatDupKey]) / 60000)) + ' min ago for another target) — not sent twice');
+            return;
+        }
         // 1.7.319: with an image, the text is its caption (one message).
         // "@all" groups keep text first (the mention needs the chat box).
         // 1.7.376: "@all" now goes in the caption as well
@@ -1881,7 +1891,7 @@
             const result = {};
             const imageProblem = await sendImage(job.image, job.text, result);
             if (result.pressed) {
-                sent[dupKey] = Date.now();
+                sent[dupKey] = Date.now(); sent[chatDupKey] = sent[dupKey]; // 1.7.575
                 await setStore(SENT_KEY, sent);
             }
             if (imageProblem) {
@@ -1903,7 +1913,7 @@
             return;
         }
         // The text is out: never resend it, even if the image fails.
-        sent[dupKey] = Date.now();
+        sent[dupKey] = Date.now(); sent[chatDupKey] = sent[dupKey]; // 1.7.575
         await setStore(SENT_KEY, sent);
         if (job.image) {
             progress(job, 'text sent — sending the image');

@@ -11530,7 +11530,8 @@ async function wpTransferAssistantExtensionEnabled() {
         const selects = bar.querySelectorAll('select');
         const custom = bar.querySelector('input[type="text"]');
         const amount = bar.querySelector('input.wp-raise-amount');
-        return { raise: selects[0] ? String(selects[0].value || '') : '', note: selects[1] ? String(selects[1].value || '') : '', custom: custom ? String(custom.value || '') : '', amount: amount ? String(amount.value || '') : '' };
+        const to = bar.querySelector('input.wp-raise-to'); // 1.7.582
+        return { raise: selects[0] ? String(selects[0].value || '') : '', note: selects[1] ? String(selects[1].value || '') : '', custom: custom ? String(custom.value || '') : '', amount: amount ? String(amount.value || '') : '', to: to ? String(to.value || '') : '' };
     }
     // The same choices in another row's own quickbar, then its own button.
     function wpBulkPress(row, label, pick) {
@@ -11550,6 +11551,8 @@ async function wpTransferAssistantExtensionEnabled() {
         if (custom) custom.value = pick.note === '__custom__' ? pick.custom : '';
         const amount = bar.querySelector('input.wp-raise-amount'); // 1.7.343
         if (amount) amount.value = pick.raise === '__amount__' ? (pick.amount || '') : '';
+        const to = bar.querySelector('input.wp-raise-to'); // 1.7.582: each ticked transfer counts its own raises
+        if (to) to.value = pick.raise === '__to__' ? (pick.to || '') : '';
         button.click();
         return true;
     }
@@ -11884,6 +11887,7 @@ async function wpTransferAssistantExtensionEnabled() {
             const pct = String(value).match(/^pct:([\d.]+):([\d.]+)$/);
             if (!config && pct) return '+' + pct[1] + '% (+' + pct[2] + '% total)';
             if (/^eur:/.test(String(value))) return 'to ' + String(value).slice(4) + '€';
+            if (/^set:/.test(String(value))) return (/:up$/.test(String(value)) ? 'raised to +' : 'set to +') + String(value).split(':')[2] + '%';
             return config ? config.label : '+' + value + '%';
         }
 
@@ -12013,7 +12017,15 @@ async function wpTransferAssistantExtensionEnabled() {
             const b=document.createElement('button'); b.type='button'; b.textContent=label; b.title=title;
             Object.assign(b.style,{height:'27px',background:'#111416',color:'#8fffd5',border:'1px solid rgba(143,255,213,.20)',borderRadius:'6px',padding:'4px 9px',fontSize:'11px',fontWeight:'700',cursor:'pointer',whiteSpace:'nowrap',flex:'0 0 auto'});
             // 1.7.327: your own click on a ticked row: the same button on every ticked row
-            b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();const pick=e.isTrusted?wpBulkPick(bar):null;handler();if(pick)try{wpBulkFollow(row,label,pick);}catch(_){}}); return b;
+            b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();const pick=e.isTrusted?wpBulkPick(bar):null;
+                // 1.7.582: Raise to % is worked out per transfer first (box Sync: the box works it out)
+                const usesRaise=/^(Apply|BC|BC&G|Final BC)$/.test(label);
+                if(usesRaise&&raise.value==='__to__'&&!(/^(BC&G|Final BC)$/.test(label)&&wpBoxSyncActive())){
+                    if(b.__wpToBusy)return; b.__wpToBusy=true;
+                    resolveRaiseTo(label).then(function(ok){ b.__wpToBusy=false; if(!ok)return; try{handler();}finally{raise.__wpToValue='';} if(pick)try{wpBulkFollow(row,label,pick);}catch(_){} },function(){ b.__wpToBusy=false; });
+                    return;
+                }
+                handler();if(pick)try{wpBulkFollow(row,label,pick);}catch(_){}}); return b;
         }
 
         const raise=document.createElement('select'); raise.title='Choose a raise percentage';
@@ -12021,12 +12033,22 @@ async function wpTransferAssistantExtensionEnabled() {
         let o=document.createElement('option'); o.value=''; o.textContent='Raise %'; raise.appendChild(o);
         (typeof wpGetManagedCostOptions==='function'?wpGetManagedCostOptions():[]).forEach(config=>{o=document.createElement('option');o.value=String(config.value);o.textContent=String(config.label||('+'+config.value+'%'));raise.appendChild(o);});
         // 1.7.343: Custom amount: last option; type the exact new driver cost.
+        // 1.7.582: Raise to % — the TOTAL raise to reach (same as the City Manager's "Raise to %"):
+        // what is already raised counts, only the difference is added (already +10%, to 15 → +5%).
+        o=document.createElement('option');o.value='__to__';o.textContent='Set to %…';raise.appendChild(o); // 1.7.584: was "Raise to %"; can lower
         o=document.createElement('option');o.value='__amount__';o.textContent='Custom amount…';raise.appendChild(o);
+        const toPct=document.createElement('input'); toPct.type='number'; toPct.min='0'; toPct.max='100'; toPct.step='any'; toPct.placeholder='set %'; toPct.className='wp-raise-to';
+        toPct.title='Set the driver cost to the ORIGINAL driver cost + this % (every change in the price history counted: raises, surges). Can go lower; 0 = back to the original.';
+        Object.assign(toPct.style,{display:'none',height:'27px',width:'62px',boxSizing:'border-box',padding:'3px 6px',background:'#111416',color:'#ffb347',textAlign:'center',border:'1px solid rgba(255,179,71,.45)',borderRadius:'6px',fontSize:'11px',fontWeight:'700',outline:'none',flex:'0 0 auto'});
+        toPct.addEventListener('click',e=>e.stopPropagation());
+        toPct.addEventListener('keydown',e=>e.stopPropagation());
+        let toData=null, toAsked=false;
+        function toTarget(){ const n=parseFloat(String(toPct.value||'').replace('%','').replace(',','.')); return String(toPct.value||'').trim()!==''&&n>=0&&n<=100 ? n : NaN; }
         const customAmount=document.createElement('input'); customAmount.type='number'; customAmount.min='1'; customAmount.step='1'; customAmount.placeholder='DC €'; customAmount.title='Exact new driver cost'; customAmount.className='wp-raise-amount';
         Object.assign(customAmount.style,{display:'none',height:'27px',width:'72px',boxSizing:'border-box',padding:'3px 6px',background:'#111416',color:'#e8eef0',border:'1px solid rgba(143,255,213,.30)',borderRadius:'6px',fontSize:'11px',outline:'none',flex:'0 0 auto'});
         customAmount.addEventListener('click',e=>e.stopPropagation());
         customAmount.addEventListener('keydown',e=>e.stopPropagation());
-        function raiseChoice(){ if(raise.value!=='__amount__') return String(raise.value||'').trim(); const n=parseFloat(String(customAmount.value||'').replace(',','.')); return Number.isFinite(n)&&n>0 ? 'eur:'+(Math.round(n*100)/100) : ''; }
+        function raiseChoice(){ if(raise.value==='__to__') return String(raise.__wpToValue||''); if(raise.value!=='__amount__') return String(raise.value||'').trim(); const n=parseFloat(String(customAmount.value||'').replace(',','.')); return Number.isFinite(n)&&n>0 ? 'eur:'+(Math.round(n*100)/100) : ''; }
 
         // 1.7.264: the driver cost this raise gives, shown as soon as a % is picked
         const priceNote=document.createElement('span'); priceNote.title='Driver cost now and after this raise';
@@ -12034,6 +12056,23 @@ async function wpTransferAssistantExtensionEnabled() {
         let priceData=null, priceAsked=false;
         function showPrice(){
             customAmount.style.display=raise.value==='__amount__'?'':'none';
+            toPct.style.display=raise.value==='__to__'?'':'none';
+            // 1.7.582: Raise to %: what it would add on this transfer (re-read fresh when a button is pressed)
+            if(raise.value==='__to__'){
+                priceNote.style.display='';
+                const target=toTarget();
+                if(!Number.isFinite(target)){ priceNote.textContent='type the % (0-100)'; try{positionBar();}catch(_){} return; }
+                if(!toData){
+                    priceNote.textContent='DC …';
+                    if(!toAsked){ toAsked=true; Promise.resolve().then(function(){ return wpFetchTransferCrmDetails(transferUrl,false); }).then(function(data){ toData=data||{}; showPrice(); },function(){ toData={}; showPrice(); }); }
+                    try{positionBar();}catch(_){}
+                    return;
+                }
+                const r=wpSetPctFor(toData,target);
+                priceNote.textContent=r.note;
+                try{positionBar();}catch(_){}
+                return;
+            }
             const value=raiseChoice();
             if(!value){ priceNote.style.display='none'; try{positionBar();}catch(_){} return; }
             priceNote.style.display='';
@@ -12053,8 +12092,24 @@ async function wpTransferAssistantExtensionEnabled() {
             priceNote.textContent=Number.isFinite(dc)&&Number.isFinite(next)&&next>0 ? 'DC '+money(dc)+' → '+money(next) : 'DC: price not read';
             try{positionBar();}catch(_){}
         }
-        raise.addEventListener('change',function(){ showPrice(); if(raise.value==='__amount__'){ customAmount.value=''; try{customAmount.focus();}catch(_){} } });
+        raise.addEventListener('change',function(){ showPrice(); if(raise.value==='__amount__'){ customAmount.value=''; try{customAmount.focus();}catch(_){} } if(raise.value==='__to__'){ try{toPct.focus();}catch(_){} } });
         customAmount.addEventListener('input',showPrice);
+        toPct.addEventListener('input',function(){ toPct.style.borderColor='rgba(255,179,71,.45)'; showPrice(); });
+        // 1.7.582: before Apply / BC / BC&G / Final BC with Raise to %: this transfer's raises are read
+        // FRESH and only the difference is added. Prices not readable → nothing is done.
+        async function resolveRaiseTo(label){
+            raise.__wpToValue='';
+            const target=toTarget();
+            if(!Number.isFinite(target)){ toPct.style.borderColor='#ff8a80'; try{toPct.focus();}catch(_){} wpDashLog(orderLabel()+': Set to % — type the % first (0-100). Nothing done.','warn'); return false; }
+            let data=null;
+            try{ data=await wpFetchTransferCrmDetails(transferUrl,true); }catch(_){}
+            const r=wpSetPctFor(data,target);
+            if(r.fail){ wpDashLog(orderLabel()+': Set to +'+target+'% — '+r.note+' ('+label+' not pressed)','error'); return false; }
+            toData=data;
+            raise.__wpToValue=r.value;
+            wpDashLog(orderLabel()+': Set to +'+target+'%: '+r.note);
+            return true;
+        }
 
         const note=document.createElement('select'); note.title='Choose a task note';
         Object.assign(note.style,{height:'27px',minWidth:'230px',maxWidth:'340px',padding:'3px 7px',background:'#111416',color:'#8fffd5',border:'1px solid rgba(143,255,213,.20)',borderRadius:'6px',fontSize:'11px',outline:'none',flex:'0 1 300px'});
@@ -12304,6 +12359,7 @@ async function wpTransferAssistantExtensionEnabled() {
         bar.appendChild(copyWrap);
         bar.appendChild(raise);
         bar.appendChild(customAmount);
+        bar.appendChild(toPct); // 1.7.582
         bar.appendChild(priceNote);
         bar.appendChild(note);
         bar.appendChild(customNote);
@@ -13885,13 +13941,8 @@ async function wpTransferAssistantExtensionEnabled() {
     // Special option: increase Driver Cost by 8%, but write the
     // standard 20% text into the task field. This is used when a
     // transfer has already been raised and needs another increase.
+    // 1.7.582: "+8% (task 20%)" removed from the dropdowns (user, 26 Nov); "Raise to %" replaces it.
     const WP_DRIVER_COST_SPECIAL_INCREASES = [
-        {
-            value: '8plus20task',
-            costPercent: 8,
-            taskPercent: 20,
-            label: '+8% (task 20%)'
-        },
         {
             // Driver Cost becomes exactly the Traveler Cost.
             value: 'dctc',
@@ -14264,7 +14315,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 const dcEqualsTc = Boolean(managedCostOption && managedCostOption.dcEqualsTc);
                 const dcBeforeRaise = parseFloat(String(field.value || '').replace(',', '.'));
                 // 1.7.343: Custom amount ('eur:<new DC>'): writes that exact driver cost.
-                const exactAmount = String(select.value).match(/^eur:([\d.]+)$/);
+                const exactAmount = String(select.value).match(/^(?:eur|set):([\d.]+)(?::[\d.]+)?(?::up)?$/); // 1.7.584: + Set to %
 
                 if (exactAmount) {
                     field.value = exactAmount[1];
@@ -16706,11 +16757,23 @@ async function wpTransferAssistantExtensionEnabled() {
         const key = wpNormalizeCityKey(city);
         const multi = typeof WP_MULTI_WHATSAPP_GROUPS !== 'undefined' && WP_MULTI_WHATSAPP_GROUPS[key];
         if (multi) {
-            return {
-                targets: Object.keys(multi).map(function(group) {
-                    return { name: city + ' ' + group, code: wpWhatsAppInviteCode(multi[group]), expect: [city] };
-                })
-            };
+            // 1.7.575 (Evan, 26 Nov: "bogota sends twice"): the built-in Bogota "Welcomers" link is Medellin's group and
+            // Medellin's is Cartagena's. Such a link never opened a Bogota group, and the look-up by name then found
+            // Bogota's other group, so it got the message twice. A group link that is ANOTHER city's own link (the
+            // main list) or repeats this city's other group is skipped; your own link ("the whatsapp group for bogota
+            // welcomers is …") replaces it and is used as usual.
+            const seen = {};
+            const targets = [];
+            Object.keys(multi).forEach(function(group) {
+                const code = wpWhatsAppInviteCode(multi[group]);
+                const other = code && Object.keys(WHATSAPP_LINKS).find(function(linkKey) {
+                    return wpNormalizeCityKey(linkKey) !== key && wpWhatsAppInviteCode(WHATSAPP_LINKS[linkKey]) === code;
+                });
+                if (code && (seen[code] || other)) return;
+                if (code) seen[code] = true;
+                targets.push({ name: city + ' ' + group, code: code, expect: [city] });
+            });
+            if (targets.length) return { targets: targets };
         }
         const areas = WP_WA_ISLAND_AREAS[key];
         if (areas) {
@@ -20126,7 +20189,10 @@ async function wpTransferAssistantExtensionEnabled() {
         const value = String(raiseValue || '').trim();
         if (!value || value === '0') return '';
         if (/^eur:[\d.]+$/.test(value)) return value.slice(4); // 1.7.343: Custom amount
+        if (/^set:[\d.]+:[\d.]+(?::up)?$/.test(value)) return value.split(':')[1]; // 1.7.584: Set to %
         const match = String(oldPrice || '').match(/\d+(?:[.,]\d+)?/);
+        const pctPair = value.match(/^pct:([\d.]+):([\d.]+)$/); // 1.7.582: raise to % / suggested = +<add>% now
+        if (pctPair && match) { const b = parseFloat(match[0].replace(',', '.')), a = Number(pctPair[1]); return Number.isFinite(b) && a > 0 ? String(Math.ceil(b * (1 + a / 100) - 1e-9)) : ''; }
         if (!match) return '';
         const base = parseFloat(match[0].replace(',', '.'));
         const config = wpGetManagedCostOptions().find(function(item) { return String(item.value) === value; });
@@ -20552,6 +20618,33 @@ async function wpTransferAssistantExtensionEnabled() {
     // "DC+10%") or raises by hand in the price history, the higher of the
     // two — and only the difference is added on the current DC: already
     // +10%, target 15 → +5%. Already there → no increase. Surges do not count.
+    // 1.7.584 "Set to %" (user, 26 Nov: "have a set button instead of raise to, so I can set the price
+    // to what I want, even lower"): the driver cost becomes the ORIGINAL driver cost (before every change
+    // in the price history: raises, surges, system) + target %. It can go down (0 = back to the original).
+    // Price history or DC not read → nothing. Value 'set:<new DC>:<pct>' (written as an exact amount).
+    function wpSetPctFor(data, target) {
+        if (!data || !data.prices || data.prices.dc === null || data.prices.dc === undefined || !Number.isFinite(Number(data.prices.dc)) || Number(data.prices.dc) <= 0) {
+            return { value: '', note: 'nothing done (CRM prices not loaded)', fail: true };
+        }
+        if (data._historyOk !== true) return { value: '', note: 'nothing done (price history not read — try again)', fail: true };
+        if (!(target >= 0 && target <= 100)) return { value: '', note: 'nothing done (type a % from 0 to 100)', fail: true };
+        const dc = Number(data.prices.dc);
+        let factor = 1;
+        (data.costChanges || []).forEach(function(change) {
+            if (change.field === 'DC' && Number(change.from) > 0 && Number(change.to) > 0) factor *= Number(change.to) / Number(change.from);
+        });
+        const base = Math.round(dc / factor * 100) / 100;
+        const now = Math.round((factor - 1) * 1000) / 10;
+        const next = target === 0 ? base : Math.ceil(base * (1 + target / 100) - 1e-9);
+        if (!(next > 0)) return { value: '', note: 'nothing done (price not worked out)', fail: true };
+        const money = function(v) { return (Math.round(v * 100) / 100) + '€'; };
+        if (Math.abs(next - dc) < 0.05 || Math.abs(now - target) < 0.5) return { value: '', note: 'no change (already +' + now + '%, DC ' + money(dc) + ')', base: base, now: now };
+        return {
+            value: 'set:' + next + ':' + target + (next > dc ? ':up' : ''), base: base, now: now, dc: dc, next: next,
+            note: (next > dc ? 'up' : 'DOWN') + ' from +' + now + '% to +' + target + '% · DC ' + money(dc) + ' → ' + money(next) + ' (original ' + money(base) + ')'
+        };
+    }
+
     function wpCustomRaiseFor(data, target, url) {
         if (!data || !data.prices || !Number.isFinite(Number(data.prices.dc)) || data.prices.dc === null) {
             return { value: '', note: 'no increase (CRM prices not loaded)' };
@@ -20567,7 +20660,16 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         const fromNotes = wpDirectorNoteRaised(data);
         const byHand = wpManualRaisePercent(data, url);
-        const already = Math.max(fromNotes, byHand);
+        // 1.7.583 (user: transfers at +11% got +10% more with "raise to"): the level is now ALL driver
+        // cost changes in the price history (surges and system ones too), not only raises by hand and
+        // notes. No price history read → no raise at all (it could not tell what is already there).
+        if (data._historyOk === false) return { value: '', note: 'no increase (price history not read — nothing done, try again)' };
+        let factor = 1;
+        (data.costChanges || []).forEach(function(change) {
+            if (change.field === 'DC' && Number(change.from) > 0 && Number(change.to) > 0) factor *= Number(change.to) / Number(change.from);
+        });
+        const allChanges = Math.round((factor - 1) * 1000) / 10;
+        const already = Math.max(fromNotes, byHand, allChanges);
         if (already >= target - 0.5) {
             return { value: '', note: 'no increase (already +' + already + '%, wanted +' + target + '%)' };
         }
@@ -20586,6 +20688,9 @@ async function wpTransferAssistantExtensionEnabled() {
         if (suggested) return 'raised to +' + suggested[2] + '% DC/ sent to BC, Group';
         // 1.7.343: Custom amount: the exact new driver cost.
         if (/^eur:[\d.]+$/.test(value)) return 'raised to ' + value.slice(4) + '€ DC/ sent to BC, Group';
+        const setTo = value.match(/^set:([\d.]+):([\d.]+)(:up)?$/); // 1.7.584: Set to %
+        // 1.7.585 (user: "raised to % or if its not a raise, set to %, no need for the actual price"): up = "raised to", else "set to"
+        if (setTo) return (setTo[3] ? 'raised to +' : 'set to +') + setTo[2] + '% DC/ sent to BC, Group';
 
         try {
             const config = wpGetManagedCostOptions().find(function(item) {
@@ -21264,7 +21369,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 }
             }
             wpTodayCitySelectedTab = state.tab;
-            try { wpTodayCityOpenCityWindow(city, state.tab); } catch (_) {}
+            try { wpCmOpenInBackground(city, state.tab); } catch (_) {} // 1.7.577: in the background
             await pause(1200);
             const panel = document.getElementById('wp-today-city-orders-window');
             state.index = index + 1;
@@ -21321,7 +21426,7 @@ async function wpTransferAssistantExtensionEnabled() {
             wpCmAutoSave(null);
         } finally {
             if (reload) { window.setTimeout(function() { location.reload(); }, 500); }
-            else { wpCmAutoRunning = false; wpDashSetBusy(false); if (paint) paint(''); }
+            else { wpCmAutoRunning = false; wpDashSetBusy(false); if (paint) paint(''); try { wpCmDockTick(); } catch (_) {} }
         }
     }
     // Watches a batch's results (also when its window is closed); all in → refresh.
@@ -22504,6 +22609,12 @@ async function wpTransferAssistantExtensionEnabled() {
     }
 
     function wpSyncAutoRefreshWithTransferOverview(windowBox) {
+        // 1.7.587 (user, 26 Nov: "Stop city manager from stopping the refresh just make sure it does not break with an
+        // autorefresh"): an open City Manager no longer pauses the refresh. The reload waits while a City Manager run is
+        // busy or you are typing in it (wpCmReloadHold), and a city you had open comes back after it with your ticks
+        // (wpCmSaveForReload / wpCmRestoreAfterReload).
+        wpResumeAutoRefreshAfterTransferOverview();
+        if (windowBox !== '__old__') return;
         const isOpen = !!(
             windowBox &&
             !windowBox.classList.contains('is-closed')
@@ -22519,6 +22630,75 @@ async function wpTransferAssistantExtensionEnabled() {
             wpResumeAutoRefreshAfterTransferOverview();
         }
     }
+
+    // 1.7.587: what a refresh must wait for while the City Manager is in use (max 10 min busy, 2 min typing)
+    var wpCmHoldSince = 0;
+    function wpCmReloadHold() {
+        let why = '';
+        try {
+            const panel = document.getElementById('wp-today-city-orders-window');
+            const summary = panel ? panel.querySelector('.wp-ui-batch-summary') : null;
+            const running = Boolean(panel && (panel._wpBroadcastPoll || (typeof panel._wpHubBusy === 'function' && panel._wpHubBusy()) ||
+                (summary && summary.style.display !== 'none' && /\brunning\b/i.test(summary.textContent || ''))));
+            if (wpCmAutoRunning || running || wpCmImagePending) why = 'a run is going';
+            const focus = document.activeElement;
+            const typing = Boolean(focus && /^(INPUT|TEXTAREA|SELECT)$/.test(focus.tagName) && focus.type !== 'checkbox' &&
+                focus.closest && focus.closest('#wp-today-city-window,#wp-today-city-orders-window,#wp-today-city-actions-window,#wp-today-city-hub-window'));
+            if (!why && typing) why = 'you are typing';
+            if (!why && Date.now() - (Number(wpRemoteCmActiveAt) || 0) < 90000) why = 'the tablet is using it';
+            if (!why) { wpCmHoldSince = 0; return ''; }
+            if (!wpCmHoldSince) wpCmHoldSince = Date.now();
+            const limit = why === 'you are typing' ? 2 * 60000 : 10 * 60000;
+            if (Date.now() - wpCmHoldSince > limit) { wpDashLog('Auto-refresh: City Manager held it ' + Math.round(limit / 60000) + ' min (' + why + ') — refreshing anyway', 'warn'); wpCmHoldSince = 0; return ''; }
+        } catch (_) { return ''; }
+        return why;
+    }
+    const WP_CM_RELOAD_KEY = 'wp_cm_reload_v1';
+    function wpCmSaveForReload() {
+        const panel = document.getElementById('wp-today-city-orders-window');
+        const overview = document.getElementById('wp-today-city-window');
+        const args = panel && panel._wpCityArgs;
+        if (!panel || !args || !args.mine || wpCmBgRun() || !overview || overview.classList.contains('is-closed')) { sessionStorage.removeItem(WP_CM_RELOAD_KEY); return; }
+        const rect = overview.getBoundingClientRect();
+        const body = panel._wpOrdersBody || panel;
+        sessionStorage.setItem(WP_CM_RELOAD_KEY, JSON.stringify({ city: args.city, tab: args.tab, sel: wpTodayCitySelectedTab,
+            ids: typeof panel._wpTickedIds === 'function' ? panel._wpTickedIds() : [], scroll: panel.scrollTop || 0, bodyScroll: body.scrollTop || 0,
+            left: Math.round(rect.left), top: Math.round(rect.top), at: Date.now() }));
+    }
+    async function wpCmRestoreAfterReload() {
+        let saved = null;
+        try { saved = JSON.parse(sessionStorage.getItem(WP_CM_RELOAD_KEY) || 'null'); sessionStorage.removeItem(WP_CM_RELOAD_KEY); } catch (_) {}
+        if (!saved || !saved.city || Date.now() - Number(saved.at || 0) > 3 * 60000) return;
+        const pause = function(ms) { return new Promise(function(resolve) { window.setTimeout(resolve, ms); }); };
+        for (let i = 0; i < 60; i++) {
+            const overview = document.getElementById('wp-today-city-window');
+            if (overview && !overview.classList.contains('is-closed')) {
+                if (saved.sel && wpTodayCitySelectedTab !== saved.sel) { wpTodayCitySelectedTab = saved.sel; try { wpTodayCityUpdate(); } catch (_) {} }
+                let ready = false;
+                try { ready = wpTodayCityGetOrdersForCity(saved.city, saved.tab).length > 0; } catch (_) {}
+                if (ready) break;
+            }
+            if (document.getElementById('wp-today-city-orders-window')) return; // something else opened a city meanwhile
+            await pause(1000);
+        }
+        if (document.getElementById('wp-today-city-orders-window')) return;
+        try { wpTodayCityOpenCityWindow(saved.city, saved.tab); } catch (_) { return; }
+        await pause(400);
+        const overview = document.getElementById('wp-today-city-window');
+        const panel = document.getElementById('wp-today-city-orders-window');
+        if (!panel) return;
+        if (overview && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
+            overview.style.setProperty('left', saved.left + 'px', 'important');
+            overview.style.setProperty('top', saved.top + 'px', 'important');
+            overview.style.setProperty('right', 'auto', 'important');
+            overview.style.setProperty('bottom', 'auto', 'important');
+            try { wpTodayCityPositionOrdersWindow(panel); } catch (_) {}
+        }
+        const kept = Array.isArray(saved.ids) && saved.ids.length && typeof panel._wpTickIds === 'function' ? panel._wpTickIds(saved.ids) : 0;
+        try { panel.scrollTop = saved.scroll || 0; (panel._wpOrdersBody || panel).scrollTop = saved.bodyScroll || 0; } catch (_) {}
+        if (saved.ids && saved.ids.length) wpDashLog('City Manager: ' + saved.city + ' open again after the refresh — ' + kept + '/' + saved.ids.length + ' ticks kept' + (kept < saved.ids.length ? ' (the others are no longer in the list)' : ''));
+    }
+    window.setTimeout(function() { wpCmRestoreAfterReload().catch(function() {}); }, 1500);
 
     function wpIsAutoRefreshEnabled() {
 
@@ -22861,7 +23041,14 @@ async function wpTransferAssistantExtensionEnabled() {
                                 wpAutoRefreshInterval = setTimeout(wpWaitForRound, 1000);
                                 return;
                             }
+                            const cmHold = wpCmReloadHold(); // 1.7.587
+                            if (cmHold) {
+                                countdown.textContent = '↻ Refresh after City Manager (' + cmHold + ')';
+                                wpAutoRefreshInterval = setTimeout(wpWaitForRound, 1000);
+                                return;
+                            }
                             if (wpAutoTicking) { try { wpDashLog('wlcm: the check round took over 5 min — refreshing anyway', 'warn'); } catch (_) {} }
+                            try { wpCmSaveForReload(); } catch (_) {}
                             countdown.textContent = '↻ Refreshing…';
                             wpAutoRefreshInterval = setTimeout(wpReloadNow, 100);
                         };
@@ -25607,6 +25794,8 @@ async function wpTransferAssistantExtensionEnabled() {
             const text = String(task && task.note || '');
             const total = text.match(/total\s*\+?\s*(\d+(?:[.,]\d+)?)\s*%/i);
             if (total) { level = num(total[1]); return; }
+            const setNote = text.match(/\bset\s+to\s+\+?\s*(\d+(?:[.,]\d+)?)\s*%/i); // 1.7.584: "DC set to +X%" = the level now, even lower
+            if (setNote) { level = num(setNote[1]); return; }
             const to = text.match(/raised\s+to\s+\+?\s*(\d+(?:[.,]\d+)?)\s*%/i);
             if (to) { level = Math.max(level, num(to[1])); return; }
             let best = 0;
@@ -32053,6 +32242,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (!id || selects.length < 2) { wpDashLog('Sync: this transfer could not be sent to the box — nothing done', 'warn'); return; }
         let raise = String(selects[0].value || '');
         if (raise === '__amount__') { const amount = bar.querySelector('input.wp-raise-amount') || bar.querySelector('input[type="number"]'); const value = parseFloat(String(amount && amount.value || '').replace(',', '.')); raise = Number.isFinite(value) && value > 0 ? 'eur:' + value : ''; }
+        if (raise === '__to__') { const to = bar.querySelector('input.wp-raise-to'); const value = parseFloat(String(to && to.value || '').replace(',', '.')); if (!(value >= 0 && value <= 100) || String(to && to.value || '').trim() === '') { wpDashLog('Sync: Set to % — type the % first. Nothing sent to the box.', 'warn'); return; } raise = 'to:' + value; } // 1.7.582
         const note = String(selects[1].value || '');
         const customBox = bar.querySelector('input[type="text"]');
         const custom = note === '__custom__' && customBox ? String(customBox.value || '') : '';
@@ -33178,7 +33368,8 @@ async function wpTransferAssistantExtensionEnabled() {
         const has = function(select, value) { return Array.from(select.options).some(function(option) { return option.value === value; }); };
         // 1.7.343: the phone's Custom amount comes as 'eur:<new driver cost>'
         const amountMatch = String(command.raise || '').match(/^eur:(\d+(?:\.\d+)?)$/);
-        const raise = amountMatch ? '__amount__' : String(command.raise || '');
+        const toMatch = String(command.raise || '').match(/^to:(\d+(?:\.\d+)?)$/); // 1.7.582: Raise to % (total)
+        const raise = amountMatch ? '__amount__' : toMatch ? '__to__' : String(command.raise || '');
         const note = String(command.note || '');
         if (!has(selects[0], raise) || !has(selects[1], note)) { wpDashLog('📱 Phone: that raise or note is not in the quickbar any more — nothing done', 'warn'); return; }
         // 1.7.266: the phone's BC is the one with the WhatsApp group, as before
@@ -33192,9 +33383,11 @@ async function wpTransferAssistantExtensionEnabled() {
         if (note === '__custom__' && custom) custom.value = String(command.custom || '');
         const amount = bar.querySelector('input.wp-raise-amount');
         if (amount) amount.value = amountMatch ? amountMatch[1] : '';
+        const toBox = bar.querySelector('input.wp-raise-to');
+        if (toBox) toBox.value = toMatch ? toMatch[1] : '';
         const link = found.row.querySelector('a[href*="/admin/transfers/"]');
         wpDashLog((command.by === 'auto' ? 'Automations · CRM: ' : command.by === 'relay' ? '🔁 Relay: ' : '📱 Phone: ') + labels[command.action] /* 1.7.534: 🔁 Relay = sent through the relay, not from the tablet */ + ' — ' + String(link ? link.textContent : command.item).trim() + // 1.7.533: the automation's own CRM steps say so
-            (amountMatch ? ' · driver cost to ' + amountMatch[1] + '€' : selects[0].value ? ' · raise ' + selects[0].options[selects[0].selectedIndex].textContent : '') +
+            (amountMatch ? ' · driver cost to ' + amountMatch[1] + '€' : toMatch ? ' · set to +' + toMatch[1] + '%' : selects[0].value ? ' · raise ' + selects[0].options[selects[0].selectedIndex].textContent : '') +
             (note ? ' · note "' + (note === '__custom__' ? String(command.custom || '') : note) + '"' : ''));
         button.click();
     }
@@ -33527,7 +33720,7 @@ async function wpTransferAssistantExtensionEnabled() {
         let panel = document.getElementById('wp-today-city-orders-window');
         if (!panel || !wpRemoteCmState || wpRemoteCmState.city !== city || wpRemoteCmState.day !== day) {
             await wpRemoteCmManagerOpen();
-            try { wpTodayCityOpenCityWindow(city, day); } catch (_) {}
+            try { if (dayStep) wpCmOpenInBackground(city, day); else wpTodayCityOpenCityWindow(city, day); } catch (_) {} // 1.7.577: relay day runs in the background
             wpRemoteCmState = { city: city, day: day };
             await pause(1200);
             panel = document.getElementById('wp-today-city-orders-window');
@@ -38685,7 +38878,8 @@ async function wpTransferAssistantExtensionEnabled() {
          * popup to the available width on the chosen side rather than
          * moving it into the middle of the viewport.
          */
-        const overviewRect =
+        // 1.7.578: while the list is pinned by Activity, the city's windows are placed around a centred stand-in
+        const overviewRect = overview.dataset.wpDocked ? wpCmCityAnchorRect() :
             overview.getBoundingClientRect();
 
         const gap = 8;
@@ -39057,6 +39251,7 @@ async function wpTransferAssistantExtensionEnabled() {
         if (info.textContent !== label) info.textContent = label;
     }
     function wpCityJoin(panel, overview, side) {
+        if (wpCmBgRun() || overview.dataset.wpDocked) { wpCityUnjoin(); return; } // 1.7.577: background runs; 1.7.578: the list stays pinned by Activity
         const actionsWindow = panel._wpActionsWindow;
         const hubWindow = panel._wpHubWindow;
         const detached = panel.classList.contains('wp-actions-detached');
@@ -39398,6 +39593,7 @@ async function wpTransferAssistantExtensionEnabled() {
         // Changeset column lists changes such as drivers_cost: '32.0' ⇒ '38.4'.
         try {
             const js = await historyPromise;
+            data._historyOk = Boolean(js); // 1.7.583: Raise to % needs the price history
             data.costChanges = [];
             data.changes = []; // 1.7.482: every change with its author (colleague watch)
             if (js) {
@@ -40107,6 +40303,12 @@ async function wpTransferAssistantExtensionEnabled() {
         if (!items.length) {
             return;
         }
+        // 1.7.577: a city you open: City Manager in the middle of the screen (Ask me / Full auto: stays in the background)
+        if (!wpCmBgOpening) {
+            document.documentElement.classList.remove('wp-cm-bgrun');
+            wpCmCityAnchor = { dx: 0, dy: 0 }; // 1.7.578: each city you open starts in the middle
+            try { wpCmExpand(document.getElementById('wp-today-city-window')); } catch (_) {} // 1.7.580: the old one-body City Manager
+        }
 
         const panel =
             document.createElement('div');
@@ -40115,6 +40317,7 @@ async function wpTransferAssistantExtensionEnabled() {
             'wp-today-city-orders-window';
         panel.className =
             'wp-today-city-orders-window';
+        panel._wpCityArgs = { city: city, tab: tabName, mine: !wpCmBgOpening }; // 1.7.587: brought back after a refresh
 
         /*
          * Append BEFORE positioning so getBoundingClientRect() measures
@@ -40187,7 +40390,7 @@ async function wpTransferAssistantExtensionEnabled() {
             }
 
             if (customRaiseButton && !customRaiseButton._wpBusy) {
-                customRaiseButton.textContent = (customDcTc ? 'Custom: DC = TC (' : 'Custom raise (') + count + ')';
+                customRaiseButton.textContent = (customDcTc ? 'DC = TC (' : 'Set to % (') + count + ')'; // 1.7.584: Set // 1.7.582: was "Custom raise"
                 customRaiseButton.disabled = count === 0;
                 customRaiseButton.style.opacity = count === 0 ? '0.45' : '1';
             }
@@ -40474,8 +40677,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 { value: '15', label: '+15%' },
                 { value: '20', label: '+20%' },
                 { value: '25', label: '+25%' },
-                { value: '30', label: '+30%' },
-                { value: '8plus20task', label: '+8% (task 20%)' }
+                { value: '30', label: '+30%' }
             ];
 
         cityManagedCosts.forEach(function(config) {
@@ -40585,8 +40787,8 @@ async function wpTransferAssistantExtensionEnabled() {
         customRaiseInput = document.createElement('input');
         customRaiseInput.type = 'text';
         customRaiseInput.inputMode = 'decimal';
-        customRaiseInput.placeholder = '%';
-        customRaiseInput.title = 'Total raise to reach, in % (e.g. 15)';
+        customRaiseInput.placeholder = 'set %'; // 1.7.584 // 1.7.582: same as the quickbar's "Raise to %"
+        customRaiseInput.title = 'Set each transfer\'s driver cost to its ORIGINAL driver cost + this % (raises and surges in the price history counted). Can go lower; 0 = back to the original.';
         Object.assign(customRaiseInput.style, {
             flex: '0 0 58px', width: '58px', boxSizing: 'border-box', background: '#111416', color: '#ffb347', textAlign: 'center',
             border: '1px solid rgba(255,179,71,0.45)', borderRadius: '9px', padding: '8px 6px', fontSize: '12px', fontWeight: '700', outline: 'none'
@@ -40632,17 +40834,17 @@ async function wpTransferAssistantExtensionEnabled() {
             event.preventDefault();
             event.stopPropagation();
             if (customDcTc) {
-                runRaiseBatch(customRaiseButton, function(item, data) { return wpCustomRaiseFor(data, 'dctc', item.url); }, true, 'custom');
+                runRaiseBatch(customRaiseButton, function(item, data) { return wpCustomRaiseFor(data, 'dctc', item.url); }, true, 'raise to DC = TC:');
                 return;
             }
             const target = parseFloat(String(customRaiseInput.value || '').replace('%', '').replace(',', '.'));
-            if (!(target > 0 && target <= 100)) {
+            if (!(target >= 0 && target <= 100) || String(customRaiseInput.value || '').trim() === '') { // 1.7.584: 0 allowed (Set)
                 customRaiseInput.style.borderColor = '#ff8a80';
                 try { customRaiseInput.focus(); } catch (_) {}
                 return;
             }
             customRaiseInput.style.borderColor = 'rgba(255,179,71,0.45)';
-            runRaiseBatch(customRaiseButton, function(item, data) { return wpCustomRaiseFor(data, target, item.url); }, true, 'custom raise to +' + target + '%:');
+            runRaiseBatch(customRaiseButton, function(item, data) { return wpSetPctFor(data, target); }, true, 'set to +' + target + '%:'); // 1.7.584
         });
 
         const broadcastDivider = document.createElement('div');
@@ -41436,6 +41638,17 @@ async function wpTransferAssistantExtensionEnabled() {
             chainKeys.forEach(function(key) { wpActDone(key, chainRan, chainRan ? 'chain ran' : 'chain did not run'); });
             return { count: selected.size, text: chainAfter, taken: taken };
         };
+        // 1.7.587: ticks kept over a refresh (by transfer id) and the Hub-run busy flag for the refresh hold
+        const wpCmTid = function(item) { return item && item.url ? ((String(item.url).match(/transfers\/(\d+)/) || [])[1] || '') : ''; };
+        panel._wpTickedIds = function() { return Array.from(selected).map(function(index) { return wpCmTid(items[index]); }).filter(Boolean); };
+        panel._wpTickIds = function(ids) {
+            selected.clear();
+            items.forEach(function(item, index) { const tid = wpCmTid(item); if (tid && ids.indexOf(tid) >= 0) selected.add(index); });
+            Array.from(panel.querySelectorAll('.wp-city-transfer-select')).forEach(function(input) { input.checked = selected.has(Number(input.dataset.wpIndex)); });
+            try { updateSelectionUI(); } catch (_) {}
+            return selected.size;
+        };
+        panel._wpHubBusy = function() { return hubBusy; };
         // 1.7.352: the phone's Chain: the transfers ticked there, with its price and note (the PC's boxes are left as they are)
         panel._wpRemoteChain = async function(labels, price, note, ids, opts) {
             const clean = function(value) { return String(value || '').replace(/\s+/g, ' ').trim(); };
@@ -43654,8 +43867,9 @@ async function wpTransferAssistantExtensionEnabled() {
 
         /* Opening puts it in the middle of the screen (1.7.149); it can still
          * be dragged while open. */
-        wpTodayCityLoadPosition(windowBox);
-        wpTodayCityCenter(windowBox);
+        // 1.7.577 (user, 26 Nov: "when clicking city manager it opens there next to activity always"):
+        // the open overview is docked right above the Activity box (wpCmDockTick); a city opens in the middle
+        try { wpCmDockGuard(); wpCmDockTick(); } catch (_) {} // 1.7.578: always pinned left of Activity
 
         /* Reflow the other panels; the open Overview itself is not moved. */
         wpDashboardReflowPanels();
@@ -43682,6 +43896,156 @@ async function wpTransferAssistantExtensionEnabled() {
         // Once more after its content has laid out (its size can change).
         requestAnimationFrame(function() { requestAnimationFrame(place); });
     }
+
+    // 1.7.577 (user, 26 Nov: "bring the small window of city manager above the activity, make it look like activity's box …
+    // when suggesting or running on full auto, no need to auto open the full city manager view, do it in the background …
+    // when I click on one city city manager expands and pops up in the middle of the screen, dragable still"):
+    // a city opened by Ask me / Full auto (City Manager auto, relay Tomorrow / 2-4 days runs) works invisibly
+    // (html.wp-cm-bgrun: the city windows are transparent and let clicks through); Activity shows what is done.
+    // 1.7.578 (user, 26 Nov: "its bugged, it teleports right and left … remove the draggable from it, make it stick to the side
+    // of activity, similar fonts, same thin bar to scroll … on the left of activity not on top … gentler" + "make the whole same
+    // width as activity"): the open City Manager list is pinned LEFT of the Activity box, same width and bottom line, never
+    // moved and never dragged (it is no longer pulled into the middle when a city opens). A city you open: its windows
+    // (transfers, Actions, Ops Hub) open centred on the screen and are dragged by the city's header bar (wpCmCityAnchor).
+    var wpCmBgOpening = false;
+    var wpCmCityAnchor = { dx: 0, dy: 0 };
+    const WP_CM_DOCK_PROPS = ['margin', 'max-width', 'position', 'left', 'top', 'right', 'bottom', 'width', 'height', 'max-height', 'overflow-y', 'overflow-x', 'transform', 'z-index'];
+    function wpCmBgRun() { return document.documentElement.classList.contains('wp-cm-bgrun'); }
+    function wpCmDocked() { const o = document.getElementById('wp-today-city-window'); return Boolean(o && o.dataset.wpDocked && !o.classList.contains('is-closed')); }
+    function wpCmOpenInBackground(city, tab) {
+        document.documentElement.classList.add('wp-cm-bgrun');
+        wpCmBgOpening = true;
+        try { wpTodayCityOpenCityWindow(city, tab); } finally { wpCmBgOpening = false; }
+    }
+    function wpCmDockSet(node, prop, value) {
+        if (node.style.getPropertyValue(prop) !== value || node.style.getPropertyPriority(prop) !== 'important') node.style.setProperty(prop, value, 'important');
+    }
+    function wpCmTermRect() {
+        const term = document.getElementById('wp-dash-term');
+        try { const rect = term && term.style.display !== 'none' ? term.getBoundingClientRect() : null; return rect && rect.width && rect.height ? rect : null; } catch (_) { return null; }
+    }
+    function wpCmDockPlace(overview) {
+        const rect = wpCmTermRect();
+        let right = 14, bottom = 56, width = 440, height = 0;
+        if (rect) {
+            // 1.7.579 (user: "stick the boxes together"): no gap, one body with Activity
+            // 1.7.581 (user: "they are not stuck together, there is a gap"): 'right' of a fixed box counts from the page's
+            // edge WITHOUT its scroll bar (clientWidth); innerWidth included the scroll bar = the gap
+            right = Math.round((document.documentElement.clientWidth || window.innerWidth) - rect.left);
+            bottom = Math.max(0, Math.round(window.innerHeight - rect.bottom));
+            width = Math.round(rect.width);
+            height = Math.round(rect.height);
+        } else {
+            try { const footer = document.getElementById('footer'); const bar = footer ? footer.getBoundingClientRect() : null; if (bar && bar.height && bar.top > window.innerHeight / 2) bottom = Math.round(window.innerHeight - bar.top + 8); } catch (_) {}
+        }
+        const maxH = height ? Math.max(200, height) : Math.max(200, Math.min(520, Math.round(window.innerHeight - bottom - 16)));
+        // 1.7.579 (user, 26 Nov: "why does it have 2 scroll bars? make them stick"): exactly Activity's height, the box itself
+        // never scrolls; only the city list inside does (one thin bar)
+        const values = { position: 'fixed', left: 'auto', top: 'auto', margin: '0', 'max-width': 'none', right: right + 'px', bottom: bottom + 'px', width: width + 'px', height: maxH + 'px',
+            'max-height': maxH + 'px', 'overflow-y': 'hidden', 'overflow-x': 'hidden', transform: 'none', 'z-index': '2147482999' };
+        Object.keys(values).forEach(function(prop) { wpCmDockSet(overview, prop, values[prop]); });
+        if (!overview.classList.contains('wp-cm-docked')) overview.classList.add('wp-cm-docked');
+        overview.dataset.wpDocked = '1';
+        document.documentElement.classList.toggle('wp-cm-stuck', Boolean(rect));
+    }
+    function wpCmUndock(overview) {
+        if (!overview || !overview.dataset.wpDocked) return;
+        delete overview.dataset.wpDocked;
+        overview.classList.remove('wp-cm-docked');
+        document.documentElement.classList.remove('wp-cm-stuck');
+        WP_CM_DOCK_PROPS.forEach(function(prop) { overview.style.removeProperty(prop); });
+        if (overview.classList.contains('is-closed')) { try { wpTodayCityApplyClosedPosition(overview); } catch (_) {} }
+    }
+    // where a city's windows go while the list is pinned: a stand-in for the list's place, so that the
+    // transfers + Actions + Ops Hub row is centred on the screen (moved by dragging the city's header)
+    function wpCmCityAnchorRect() {
+        const group = 1046 + 8 + 270 + 8 + 236;
+        const ordersLeft = Math.max(8, Math.round((window.innerWidth - Math.min(group, window.innerWidth - 16)) / 2));
+        const right = ordersLeft - 8 + (wpCmCityAnchor.dx || 0);
+        const top = Math.max(8, Math.min(window.innerHeight - 120, Math.round((window.innerHeight - 700) / 2) + (wpCmCityAnchor.dy || 0)));
+        return { left: right - 390, right: right, top: top, bottom: top + 700, width: 390, height: 700 };
+    }
+    // 1.7.580 (user, 26 Nov: "when the city manager expands in the middle I want it to look like it used to"): a city you
+    // open takes the list with it into the old one-body City Manager in the middle (draggable, its old look); when the
+    // city is closed the list goes back beside Activity. Only that open/close moves it.
+    var wpCmExpanded = false;
+    function wpCmExpand(overview) {
+        if (!overview || overview.classList.contains('is-closed')) return;
+        wpCmExpanded = true;
+        if (!overview.dataset.wpDocked) return;
+        wpCmUndock(overview);
+        document.documentElement.classList.remove('wp-cm-stuck');
+        try { wpTodayCityCenter(overview); } catch (_) {}
+        requestAnimationFrame(function() { requestAnimationFrame(function() { requestAnimationFrame(function() {
+            const orders = document.getElementById('wp-today-city-orders-window');
+            if (orders) { try { wpTodayCityPositionOrdersWindow(orders); } catch (_) {} }
+        }); }); });
+    }
+    function wpCmDockTick() {
+        const root = document.documentElement;
+        const overview = document.getElementById('wp-today-city-window');
+        const orders = document.getElementById('wp-today-city-orders-window');
+        if (root.classList.contains('wp-cm-bgrun') && !orders && !wpCmAutoRunning) root.classList.remove('wp-cm-bgrun');
+        if (!orders) wpCmExpanded = false;
+        if (!overview) return;
+        if (overview.classList.contains('is-closed')) { wpCmExpanded = false; wpCmUndock(overview); return; }
+        if (wpCmExpanded && orders && !wpCmBgRun()) { if (overview.dataset.wpDocked) wpCmExpand(overview); return; }
+        const wasDocked = Boolean(overview.dataset.wpDocked);
+        wpCmDockPlace(overview);
+        if (!wasDocked && orders) { try { wpTodayCityPositionOrdersWindow(orders); } catch (_) {} }
+    }
+    // the list puts itself back the moment anything else writes a position onto it (no jumping)
+    var wpCmDockObs = null;
+    function wpCmDockGuard() {
+        const overview = document.getElementById('wp-today-city-window');
+        if (!overview || overview._wpCmDockObs) return;
+        overview._wpCmDockObs = true;
+        try { new MutationObserver(function() { if (overview.dataset.wpDocked && !overview.classList.contains('is-closed')) wpCmDockPlace(overview); }).observe(overview, { attributes: true, attributeFilter: ['style'] }); } catch (_) {}
+    }
+    // drag a city's windows by the city's header bar (the list itself stays pinned)
+    (function() {
+        let drag = null;
+        document.addEventListener('mousedown', function(event) {
+            if (event.button !== 0 || !wpCmDocked()) return;
+            const head = event.target && event.target.closest ? event.target.closest('#wp-today-city-orders-window .wp-today-city-orders-header') : null;
+            if (!head || event.target.closest('button,input,select,textarea,a,label,.wp-ui-city-hover')) return;
+            drag = { x: event.clientX, y: event.clientY, dx: wpCmCityAnchor.dx || 0, dy: wpCmCityAnchor.dy || 0 };
+            event.preventDefault();
+        }, true);
+        document.addEventListener('mousemove', function(event) {
+            if (!drag) return;
+            wpCmCityAnchor = { dx: drag.dx + event.clientX - drag.x, dy: drag.dy + event.clientY - drag.y };
+            const panel = document.getElementById('wp-today-city-orders-window');
+            if (panel) { try { wpTodayCityPositionOrdersWindow(panel); } catch (_) {} }
+        }, true);
+        document.addEventListener('mouseup', function() { drag = null; }, true);
+    })();
+    (function() {
+        const style = document.createElement('style');
+        style.id = 'wp-cm-dock-style';
+        const id = 'html:not(#wpz) body:not(#wpz) ' + '#wp-today-city-window'.repeat(6) + '.wp-cm-docked';
+        const hide = ['#wp-today-city-orders-window', '#wp-today-city-actions-window', '#wp-today-city-hub-window', '#wp-cm-frame', '#wp-cm-head']
+            .map(function(sel) { return 'html.wp-cm-bgrun:not(#wpz) body:not(#wpz) ' + sel.repeat(6); }).join(',');
+        style.textContent = [
+            // Activity's box: dark slate, soft border, round corners, Segoe UI 13px, thin scroll bar
+            id + '{background:#1f2529!important;color:#e8ecee!important;border:1px solid rgba(255,255,255,.09)!important;border-radius:14px!important;box-shadow:0 14px 40px rgba(0,0,0,.55)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-sizing:border-box!important;padding:0 0 6px!important;font:13px/1.4 Segoe UI,system-ui,sans-serif!important}',
+            id + ',' + id + ' *{scrollbar-width:thin!important;scrollbar-color:#4c5358 transparent!important;font-family:Segoe UI,system-ui,sans-serif!important}',
+            id + ' .wp-today-city-window-header{border-bottom:0!important;background:transparent!important;cursor:default!important}',
+            id + '{display:flex!important;flex-direction:column!important}', // 1.7.579: one scroll bar (the list), the box fills Activity's height
+            id + ' > *{flex:0 0 auto!important}',
+            id + ' > .wp-today-city-window-content{flex:1 1 auto!important;min-height:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;max-height:none!important}',
+            id + ' .wp-today-city-window-content > *{flex:0 0 auto!important}',
+            id + ' .wp-today-city-window-content > .wp-today-city-summary{flex:1 1 auto!important;min-height:0!important;max-height:none!important;overflow-y:auto!important;overflow-x:hidden!important}',
+            id + ' .wp-today-city-summary{background:transparent!important;padding:2px 8px!important}',
+            id + ' .wp-today-city-stat{background:rgba(255,255,255,.045)!important;border-bottom:0!important;border-radius:9px!important;margin:0 0 4px!important;font-size:13px!important}',
+            id + ' .wp-today-city-stat:hover{background:rgba(255,255,255,.08)!important}',
+            // 1.7.579: stuck to Activity: the two boxes share one edge (square inner corners, one line between them)
+            'html.wp-cm-stuck:not(#wpz) body:not(#wpz) ' + '#wp-today-city-window'.repeat(6) + '.wp-cm-docked{border-right:0!important;border-top-right-radius:0!important;border-bottom-right-radius:0!important;box-shadow:-10px 14px 40px rgba(0,0,0,.45)!important}',
+            'html.wp-cm-stuck:not(#wpz) body:not(#wpz) ' + '#wp-dash-term'.repeat(6) + '{border-top-left-radius:0!important;border-bottom-left-radius:0!important}',
+            hide + '{opacity:0!important;pointer-events:none!important}'
+        ].join('\n');
+        (document.head || document.documentElement).appendChild(style);
+    })();
 
     function wpTodayCitySavePosition(windowBox) {
 
@@ -43793,7 +44157,8 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (
                     event.button !==
                     0 ||
-                    event.target.closest('button')
+                    event.target.closest('button') ||
+                    windowBox.dataset.wpDocked // 1.7.577: docked by Activity
                 ) {
                     return;
                 }
@@ -44779,7 +45144,7 @@ async function wpTransferAssistantExtensionEnabled() {
             autoTab.type = 'button';
             autoTab.className = 'wp-cm-auto';
             autoTab.textContent = 'Automations';
-            if (WP_NO_AUTO) autoTab.style.display = 'none';
+            autoTab.style.display = 'none'; // 1.7.586 (user, 26 Nov: "remove automations from city manager its already shown in activity"): hidden; Automations stay in Activity's Controls, the runner still paints this hidden button
             autoTab.title = 'Ops Hub chain on the untagged transfers of every city in this list, top to bottom (Tag, price from the Hub box, Broadcast, Auto-C back on, note, image to the group). Click twice to start; click again to stop after the current city.';
             let autoArmed = 0;
             const paintAuto = function(where) { autoTab.textContent = where ? 'Auto · ' + where : 'Automations'; autoTab.style.color = where ? '#ffd27a' : ''; };
@@ -46929,6 +47294,7 @@ async function wpTransferAssistantExtensionEnabled() {
         return sel + '{' + Object.keys(map).map(function(prop) { return prop + ':' + map[prop] + '!important'; }).join(';') + '}';
     }
     function wpDockLayout() {
+        try { wpCmDockGuard(); wpCmDockTick(); } catch (_) {} // 1.7.577 / 1.7.578
         const root = document.documentElement;
         const sx = window.scrollX || 0, sy = window.scrollY || 0;
         // 1.7.239: the row lives in the CRM's bottom bar (the "Powered by
@@ -47024,7 +47390,9 @@ async function wpTransferAssistantExtensionEnabled() {
         }
         // The suggestion card stands left of the Terminal instead of over it.
         if (termRect && termRect.width && window.innerWidth - termRect.width - 26 - 540 > 240) {
-            rules.push(wpDockRule('wp-director-card', '', { right: Math.round(termRect.width + 28) + 'px' }));
+            let cmRoom = 0; // 1.7.578: and left of the City Manager list pinned beside it
+            try { const cm = city && city.dataset.wpDocked && !city.classList.contains('is-closed') ? city.getBoundingClientRect() : null; if (cm && cm.width) cmRoom = Math.round(cm.width + 10); } catch (_) {}
+            rules.push(wpDockRule('wp-director-card', '', { right: Math.round(termRect.width + 28 + cmRoom) + 'px' }));
         }
         try {
             const orders = document.getElementById('wp-today-city-orders-window');
@@ -48854,6 +49222,8 @@ async function wpTransferAssistantExtensionEnabled() {
             if (label && text.indexOf(label) === 0) text = text.slice(label.length);
             const total = text.match(/total\s*\+?\s*(\d+(?:[.,]\d+)?)\s*%/i);
             if (total) { level = num(total[1]); return; }
+            const setNote = text.match(/\bset\s+to\s+\+?\s*(\d+(?:[.,]\d+)?)\s*%/i); // 1.7.584: "DC set to +X%" = the level now, even lower
+            if (setNote) { level = num(setNote[1]); return; }
             const to = text.match(/raised\s+to\s+\+?\s*(\d+(?:[.,]\d+)?)\s*%/i);
             if (to) { level = Math.max(level, num(to[1])); return; }
             let best = 0;
@@ -49183,10 +49553,10 @@ async function wpTransferAssistantExtensionEnabled() {
             select.appendChild(option);
             optionExists = true;
         }
-        if (!optionExists && /^eur:[\d.]+$/.test(value)) { // 1.7.343: Custom amount
+        if (!optionExists && /^(?:eur:[\d.]+|set:[\d.]+:[\d.]+(?::up)?)$/.test(value)) { // 1.7.343: Custom amount; 1.7.584: Set to %
             const option = document.createElement('option');
             option.value = value;
-            option.textContent = 'DC ' + value.slice(4) + '€';
+            option.textContent = 'DC ' + value.split(':')[1] + '€';
             select.appendChild(option);
             optionExists = true;
         }
