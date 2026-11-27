@@ -20803,7 +20803,7 @@ async function wpTransferAssistantExtensionEnabled() {
             wpDashLog(label + ': no transfer details could be read — image not generated', 'error');
             return false;
         }
-        wpDashLog('✓ ' + label + ': ' + (total - failed > 4 ? 'image' : 'group text') /* 1.7.593 */ + ' ready (') + (total - failed) + ' transfer' + (total - failed === 1 ? '' : 's') + ')');
+        wpDashLog('✓ ' + label + ': ' + (total - failed > 4 ? 'image' : 'group text') /* 1.7.593 */ + ' ready (' + (total - failed) + ' transfer' + (total - failed === 1 ? '' : 's') + ')');
         // 1.7.318: Generate image (PC or phone) sends the image + text to the
         // city's WhatsApp group straight away, like after a broadcast.
         batch._wpSendNow = true;
