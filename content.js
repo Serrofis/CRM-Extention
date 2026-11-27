@@ -20803,7 +20803,7 @@ async function wpTransferAssistantExtensionEnabled() {
             wpDashLog(label + ': no transfer details could be read — image not generated', 'error');
             return false;
         }
-        wpDashLog('✓ ' + label + ': image ready (' + (total - failed) + ' transfer' + (total - failed === 1 ? '' : 's') + ')');
+        wpDashLog('✓ ' + label + ': ' + (total - failed > 4 ? 'image' : 'group text') /* 1.7.593 */ + ' ready (') + (total - failed) + ' transfer' + (total - failed === 1 ? '' : 's') + ')');
         // 1.7.318: Generate image (PC or phone) sends the image + text to the
         // city's WhatsApp group straight away, like after a broadcast.
         batch._wpSendNow = true;
@@ -20945,7 +20945,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // 1.7.347: City Manager auto mode: every city of the list, top to bottom,
     // that has untagged transfers: open it, tick only the untagged ones, run the
     // Ops Hub chain (Tag → Price Change from the box → Remove Auto-C → Broadcast
-    // → Ask best drivers → Enable Auto-C → note → image to the group), wait for
+    // → Ask best drivers → Enable Auto-C → note → group message (text; image if 5+) to the group), wait for
     // its note + image, then the next city.
     // 1.7.348: the whole page is refreshed after each city; where it is (the
     // cities, the next one) is kept in wp_cm_auto_v1 and it goes on after the
@@ -21399,7 +21399,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (next.step === 'sugg' && !wpPlanRoom()) continue; // WhatsApp sends still going: next round
                 next.ids = next.ids.slice(0, 40); next.labels = next.labels.slice(0, 40);
                 const name = wpAutoDayName(day);
-                const what = { bcg: 'BC & Group (Broadcast → Ask best drivers → note → image)', best: 'Ask best drivers (Ops Hub, note "asked best drivers")', sugg: 'send to 3 suggested drivers each (one WhatsApp message per driver, paced)' }[next.step];
+                const what = { bcg: 'BC & Group (Broadcast → Ask best drivers → note → group message (text; image if 5+))', best: 'Ask best drivers (Ops Hub, note "asked best drivers")', sugg: 'send to 3 suggested drivers each (one WhatsApp message per driver, paced)' }[next.step];
                 if (hubDays[day] && hubDays[day].ask) {
                     for (let i = 0; i < 600 && document.getElementById('wp-director-card'); i++) await new Promise(function(resolve) { window.setTimeout(resolve, 1000); });
                     const answer = await wpDirectorConfirm('automations · ' + name, [
@@ -21675,7 +21675,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 for (let i = 0; i < 600 && document.getElementById('wp-director-card'); i++) await pause(1000);
                 const answer = await wpDirectorConfirm('automations · ' + wpAutoDayName(state.day), [
                     'Run the Ops Hub chain on ' + city + ' (' + (fresh[city] || 0) + ' untagged)?',
-                    'Tag → price from the Hub box → Remove Auto-C → Broadcast → Ask best drivers → Enable Auto-C → note → image.',
+                    'Tag → price from the Hub box → Remove Auto-C → Broadcast → Ask best drivers → Enable Auto-C → note → group message (text; image if 5+).',
                     'Not now: ' + city + ' is skipped for 30 minutes.'
                 ], 'Yes, run it', undefined, 'AUTO');
                 if (!answer || answer.action !== 'yes') {
@@ -22484,7 +22484,7 @@ async function wpTransferAssistantExtensionEnabled() {
             // Automatic hand-off: send through WhatsApp Web when it is on.
             // The button click stays a manual copy + open. Several transfers:
             // the header text, then the generated image.
-            const bulk = batch.orderedItems.length > 1;
+            const bulk = batch.orderedItems.length > 4; // 1.7.593 (user, 27 Nov): 1-4 transfers = the text message, 5+ = the image (as the quickbar's group message)
             const sendText = bulk ? String(text).split('\n\n')[0] : text;
             let sendImage = '';
             if (bulk) {
@@ -33990,7 +33990,7 @@ async function wpTransferAssistantExtensionEnabled() {
     // 1.7.352: phone: the whole Ops Hub chain on the transfers ticked there,
     // as the City Manager's Chain button (Tag → Price Change when a price is
     // given → Remove Auto-C → Broadcast → Ask best drivers → Enable Auto-C →
-    // note → image), with no second click.
+    // note → group message (text; image if 5+)), with no second click.
     // 1.7.588: Tomorrow / 2-4 days, last step (user, 27 Nov: "sending the transfers to 3 suggested for each transfer from
     // the crm ... same procedure as the 5 ones in todays, just 3 and of course grouped together so we do not spam"):
     // Today's send to suggested on the relay's transfers: notes read fresh (only 'sugg' ones go), the CRM's suggested drivers
