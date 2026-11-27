@@ -21336,9 +21336,9 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (!next) continue;
                 // 1.7.591 (user, 27 Nov: "from the hub it can check boxes and do all transfers together with one go even with
                 // different cities"): Ask best drivers sends no group message, so every city's 'best' transfers go in one Hub run
-                if (next.step === 'best') {
-                    const bests = Object.values(groups).filter(function(g) { return g.step === 'best'; });
-                    next = { key: '', keys: bests.map(function(g) { return g.key; }), city: bests.map(function(g) { return g.city; }).join(', '), step: 'best', ids: [].concat.apply([], bests.map(function(g) { return g.ids; })), labels: [].concat.apply([], bests.map(function(g) { return g.labels; })), all: true };
+                if (next.step === 'best' || (next.step === 'bcg' && !wpIsMainMachine())) { // 1.7.592: + BC & Group (Hub tab on the PC)
+                    const bests = Object.values(groups).filter(function(g) { return g.step === next.step; });
+                    next = { key: '', keys: bests.map(function(g) { return g.key; }), city: bests.map(function(g) { return g.city; }).join(', '), step: next.step, ids: [].concat.apply([], bests.map(function(g) { return g.ids; })), labels: [].concat.apply([], bests.map(function(g) { return g.labels; })), all: true };
                 }
                 if (next.step === 'sugg' && !wpPlanRoom()) continue; // WhatsApp sends still going: next round
                 next.ids = next.ids.slice(0, 40); next.labels = next.labels.slice(0, 40);
@@ -21361,8 +21361,11 @@ async function wpTransferAssistantExtensionEnabled() {
                 wpDashLog('Automations · ' + name + ': ' + next.city + ' (' + next.ids.length + ') — ' + what);
                 wpCmAutoRunning = true;
                 try {
-                    if (next.all) { const labelOf = {}; next.ids.forEach(function(id, k) { labelOf[id] = next.labels[k]; }); await wpDayAskBestAll(next.ids, labelOf, day); }
-                    else await wpRemoteCmChain({ by: 'auto', step: next.step, city: next.city, day: day, ids: next.ids, sel: next.labels });
+                    let failedAll = false;
+                    if (next.all) { const labelOf = {}; next.ids.forEach(function(id, k) { labelOf[id] = next.labels[k]; }); failedAll = (next.step === 'bcg' ? await wpDayBcgAll(next.ids, labelOf, day) : await wpDayAskBestAll(next.ids, labelOf, day)) === false; }
+                    // 1.7.592: a run that did nothing at all (e.g. the extension updated mid-run) is asked again next round, not in 30 min
+                    if (failedAll) { (next.keys || []).forEach(function(k) { delete skip[k]; }); saveSkip(); }
+                    if (!next.all) await wpRemoteCmChain({ by: 'auto', step: next.step, city: next.city, day: day, ids: next.ids, sel: next.labels });
                 }
                 finally { wpCmAutoRunning = false; }
                 return true;
@@ -21385,6 +21388,7 @@ async function wpTransferAssistantExtensionEnabled() {
         const go = claims.filter(function(c) { return c.claim.go; }).map(function(c) { return c.id; });
         if (!go.length) { wpDashLog(name + ': nothing to do (notes changed, or done / running elsewhere)'); return; }
         const asked = [], failed = [];
+        let contextGone = false;
         const askTab = function(part, from) {
             return new Promise(function(resolve) {
                 try {
@@ -21411,7 +21415,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 break;
             }
             (done ? asked : failed).push.apply(done ? asked : failed, done ? part : part.filter(function(id) { return failed.indexOf(id) < 0; }));
-            if (!done) wpDashLog(name + ': ' + part.length + ' NOT asked — ' + why, 'warn');
+            if (!done) { wpDashLog(name + ': ' + part.length + ' NOT asked — ' + why, 'warn'); if (/context invalidated/i.test(why)) contextGone = true; }
         }
         failed.forEach(function(id) { wpActDone('best:' + id, false, 'not asked'); });
         wpDashLog(name + ': asked on ' + asked.length + (failed.length ? ', not on ' + failed.length + ' (not in the Hub or the Hub refused; tried again in 30 min)' : '') + ' — writing the note "asked best drivers"', failed.length ? 'warn' : undefined);
@@ -21424,6 +21428,117 @@ async function wpTransferAssistantExtensionEnabled() {
             await pause(4000);
         }
         wpDaySave(WP_DAY_ST_KEY, map);
+        if (!asked.length && contextGone) return false; // 1.7.592
+    }
+    // 1.7.592 (user, 27 Nov: "from the hub it can check boxes and do all transfers together with one go even with different
+    // cities. just the messages need to be sent to the correct groups"): BC & Group for every city's 'bcg' transfers in ONE
+    // Hub run (PC, Hub tab): Select → Remove Auto-C (not where wlcm turned A/C off) → Broadcast → Ask best drivers (40 a
+    // time) → 30 s → Enable Auto-C; then per transfer the notes "sent to BC and Group" + "asked best drivers", and per CITY
+    // the transfers image to that city's own WhatsApp group. Not in the Hub / the Hub stopped: the CRM's BC & Group per transfer.
+    async function wpDayBcgAll(ids, labelOf, day) {
+        const pause = function(ms) { return new Promise(function(resolve) { window.setTimeout(resolve, ms); }); };
+        const name = 'Automations · ' + wpAutoDayName(day) + ' · BC & Group (all cities)';
+        const tab = wpAutoTabFor(day);
+        const map = wpDayLoad(WP_DAY_ST_KEY);
+        const still = [];
+        for (const id of ids) {
+            let data = null;
+            try { data = await wpFetchTransferCrmDetails('/admin/transfers/' + id + '/details_v3', true); } catch (_) {}
+            if (wpDayStepFromData(data) === 'bcg') still.push(id);
+        }
+        const claims = await Promise.all(still.map(function(id) { return wpActClaim('bcg:' + id, 'bcg', id, true).catch(function() { return { go: true }; }).then(function(claim) { return { id: id, claim: claim }; }); }));
+        let go = claims.filter(function(c) { return c.claim.go; }).map(function(c) { return c.id; });
+        if (!go.length) { wpDashLog(name + ': nothing to do (notes changed, or done / running elsewhere)'); return; }
+        const runId = 'daybcg' + Date.now().toString(36);
+        const hub = function(key, list, keep, auto) {
+            return new Promise(function(resolve) {
+                try {
+                    const request = { type: 'WP_HUB_SELECT', ids: list, action: key, quiet: true, keep: keep === true, runId: runId + key.replace(/_/g, '') };
+                    if (auto) request.auto = auto;
+                    chrome.runtime.sendMessage(request, function(answer) { resolve(chrome.runtime.lastError || !answer ? { ok: false, message: chrome.runtime.lastError ? chrome.runtime.lastError.message : 'the Hub did not answer' } : answer); });
+                } catch (error) { resolve({ ok: false, message: String(error && error.message || error) }); }
+            });
+        };
+        const problem = function(answer, needsConfirm) {
+            if (!answer || !answer.ok) return (answer && (answer.message || answer.reason)) || 'not done';
+            if ((answer.missing || []).length) return 'missing';
+            if (needsConfirm === null) return '';
+            if (!answer.pressed) return answer.actionError || 'the button was not pressed';
+            if (needsConfirm && !answer.confirmed) return answer.why || 'the Hub dialog was not confirmed';
+            return '';
+        };
+        const leftOut = [];
+        const done = [];
+        // Select: the ones not in the Hub list go to the CRM
+        let sel = await hub('', go, false, null);
+        if (sel && sel.ok && (sel.missing || []).length) {
+            const missing = sel.missing.map(String).filter(function(id) { return go.indexOf(id) >= 0; });
+            missing.forEach(function(id) { leftOut.push(id); });
+            go = go.filter(function(id) { return missing.indexOf(id) < 0; });
+            if (go.length) sel = await hub('', go, false, null);
+        }
+        let why = go.length ? problem(sel, null) : '';
+        if (/context invalidated/i.test(why)) { claims.forEach(function(c) { wpActDone('bcg:' + c.id, false, 'extension updated'); }); wpDashLog(name + ': stopped — ' + why + ' (tried again next round)', 'warn'); return false; }
+        let broadcast = false, asked = false;
+        const offIds = go.filter(function(id) { return !(map[id] && map[id].ac); });
+        let removed = false;
+        if (go.length && !why) {
+            done.push('Select ' + go.length + ' ✓');
+            if (offIds.length) {
+                const r = await hub('remove_auto_c', offIds, true, { note: '', price: null });
+                const w = problem(r, true);
+                if (!w) { removed = true; done.push('Remove Auto-C ✓'); } else if (/guardrail/i.test(w)) done.push('Remove Auto-C skipped (Hub guardrail)'); else why = 'Remove Auto-C: ' + w;
+            }
+            if (!why) {
+                const b = await hub('broadcast', go, true, { note: '', price: null });
+                const w = problem(b, true);
+                if (!w) { broadcast = true; done.push('Broadcast ✓'); } else why = 'Broadcast: ' + w;
+            }
+            if (broadcast) {
+                for (let from = 0; from < go.length; from += 40) {
+                    const a = await hub('ask', go.slice(from, from + 40), false, { note: '', price: null });
+                    if (!problem(a, true)) asked = true;
+                }
+                done.push(asked ? 'Ask best drivers ✓' : 'Ask best drivers — nobody to ask');
+            }
+            if (removed) {
+                if (broadcast) await pause(30000);
+                const e = await hub('enable_auto_c', offIds, true, { note: '', price: null });
+                const w = problem(e, true);
+                if (w) { done.push('Enable Auto-C NOT done (' + w + ') — Auto-C still OFF on ' + offIds.length + ', turn it back on'); wpDashLog(name + ': Enable Auto-C did NOT go through — ' + w, 'error'); } else done.push('Enable Auto-C ✓');
+            }
+        } else if (why) done.push('stopped at Select: ' + why);
+        if (!broadcast) go.forEach(function(id) { if (leftOut.indexOf(id) < 0) leftOut.push(id); });
+        wpDashLog(name + ': ' + done.join(' · ') + (why ? ' — ' + why : ''), why ? 'warn' : undefined);
+        // notes, then one image per city to its own group
+        if (broadcast) {
+            const byCity = {};
+            let items = [];
+            try { items = wpTodayCityGetTransfers(tab) || []; } catch (_) {}
+            for (const id of go) {
+                const path = '/admin/transfers/' + id + '/details_v3';
+                const item = items.find(function(it) { return it && it.url && (String(it.url).match(/transfers\/(\d+)/) || [])[1] === id; });
+                if (item && item.city) (byCity[item.city] = byCity[item.city] || []).push(item);
+                try { wpAutoSendWriteNote({ item: { id: id, path: path, label: labelOf[id] || '#' + id }, data: { tasks: [{ note: '' }] }, row: null }, 'sent to BC and Group', true); } catch (_) {}
+                if (asked) { await pause(4000); try { wpAutoSendWriteNote({ item: { id: id, path: path, label: labelOf[id] || '#' + id }, data: { tasks: [{ note: '' }] }, row: null }, 'asked best drivers', true); } catch (_) {} }
+                wpActDone('bcg:' + id, true, 'BC & Group (all cities)');
+                if (map[id]) map[id].at = Date.now() - 8 * 60000;
+                await pause(4000);
+            }
+            wpDaySave(WP_DAY_ST_KEY, map);
+            for (const city of Object.keys(byCity)) {
+                try { await wpGenerateTransfersImage(byCity[city], tab, '', true); } catch (_) {}
+                await pause(3000);
+            }
+        }
+        // the CRM's BC & Group, one at a time (its own WhatsApp group message per transfer)
+        let crm = 0;
+        for (const id of leftOut) {
+            if (!wpRemoteRowFor(id)) { wpActDone('bcg:' + id, false, 'no longer unassigned'); continue; }
+            try { wpRemoteQuick({ item: id, action: 'bc', raise: '', note: 'sent to BC and Group', custom: '', by: 'auto' }); crm++; wpActDone('bcg:' + id, true, 'CRM BC & Group'); } catch (_) { wpActDone('bcg:' + id, false, 'CRM failed'); }
+            await pause(9000);
+        }
+        if (crm) wpDashLog(name + ': ' + crm + ' done in the CRM instead (not in the Hub or the Hub stopped)');
     }
     async function wpCmAutoStep(paint) {
         let state = wpCmAutoLoad();
