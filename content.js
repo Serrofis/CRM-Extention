@@ -21378,11 +21378,14 @@ async function wpTransferAssistantExtensionEnabled() {
                 }
                 wpDaySave(WP_DAY_ST_KEY, map);
                 const allRead = rows.every(function(row) { return map[row.id] && now - Number(map[row.id].at || 0) < 30 * 60000; });
+                // 1.7.594 (user, 27 Nov: suggested started while transfers still lacked best drivers): suggested waits while any
+                // transfer still needs BC & Group / best drivers, even on its 30 min skip; one offered/run twice no longer holds it (e.g. not in the Hub)
+                const earlyLeft = rows.some(function(row) { const m = map[row.id]; return m && (m.st === 'bcg' || m.st === 'best') && Number(m.tries || 0) < 2; });
                 const groups = {};
                 rows.forEach(function(row, index) {
                     const st = map[row.id] && map[row.id].st;
                     if (['bcg', 'best', 'sugg'].indexOf(st) < 0) return;
-                    if (st === 'sugg' && !allRead) return; // suggested last: after every tagged one was read
+                    if (st === 'sugg' && (!allRead || earlyLeft)) return; // suggested last: after every tagged one was read and has best drivers
                     const key = day + '|' + row.city + '|' + st;
                     if (Number(skip[key] || 0) > now) return;
                     const g = groups[key] = groups[key] || { key: key, city: row.city, step: st, ids: [], labels: [], first: index, rank: st === 'sugg' ? 2 : 1 };
@@ -21399,6 +21402,7 @@ async function wpTransferAssistantExtensionEnabled() {
                 if (next.step === 'sugg' && !wpPlanRoom()) continue; // WhatsApp sends still going: next round
                 next.ids = next.ids.slice(0, 40); next.labels = next.labels.slice(0, 40);
                 const name = wpAutoDayName(day);
+                if (next.step !== 'sugg') { next.ids.forEach(function(id) { if (map[id]) map[id].tries = Number(map[id].tries || 0) + 1; }); wpDaySave(WP_DAY_ST_KEY, map); } // 1.7.594
                 const what = { bcg: 'BC & Group (Broadcast → Ask best drivers → note → group message (text; image if 5+))', best: 'Ask best drivers (Ops Hub, note "asked best drivers")', sugg: 'send to 3 suggested drivers each (one WhatsApp message per driver, paced)' }[next.step];
                 if (hubDays[day] && hubDays[day].ask) {
                     for (let i = 0; i < 600 && document.getElementById('wp-director-card'); i++) await new Promise(function(resolve) { window.setTimeout(resolve, 1000); });
